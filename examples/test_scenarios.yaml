@@ -1,0 +1,320 @@
+# Test Scenarios for Router Simulator
+scenarios:
+  - name: basic_connectivity_test
+    description: "Test basic router connectivity and interface configuration"
+    version: "1.0"
+    timeout_ms: 60000
+    enabled: true
+    steps:
+      - type: configure_interface
+        name: configure_eth0
+        description: "Configure eth0 interface"
+        parameters:
+          name: eth0
+          ip_address: 192.168.1.1
+          subnet_mask: 255.255.255.0
+          bandwidth_mbps: 1000
+        timeout_ms: 5000
+        required: true
+        
+      - type: configure_interface
+        name: configure_eth1
+        description: "Configure eth1 interface"
+        parameters:
+          name: eth1
+          ip_address: 10.0.0.1
+          subnet_mask: 255.255.255.0
+          bandwidth_mbps: 1000
+        timeout_ms: 5000
+        required: true
+        
+      - type: start_protocol
+        name: start_bgp
+        description: "Start BGP protocol"
+        parameters:
+          protocol: bgp
+          as_number: 65001
+          router_id: 1.1.1.1
+        timeout_ms: 10000
+        required: true
+        
+      - type: start_protocol
+        name: start_ospf
+        description: "Start OSPF protocol"
+        parameters:
+          protocol: ospf
+          area_id: 0.0.0.0
+          router_id: 1.1.1.1
+        timeout_ms: 10000
+        required: true
+        
+      - type: wait
+        name: wait_for_convergence
+        description: "Wait for routing protocols to converge"
+        parameters:
+          duration: 30000
+        timeout_ms: 35000
+        required: true
+        
+      - type: verify_route
+        name: verify_default_route
+        description: "Verify default route is present"
+        parameters:
+          network: 0.0.0.0/0
+          protocol: bgp
+        timeout_ms: 5000
+        required: true
+        
+      - type: verify_neighbor
+        name: verify_bgp_neighbors
+        description: "Verify BGP neighbors are established"
+        parameters:
+          protocol: bgp
+          expected_count: 2
+        timeout_ms: 5000
+        required: false
+
+  - name: traffic_shaping_test
+    description: "Test traffic shaping and QoS features"
+    version: "1.0"
+    timeout_ms: 120000
+    enabled: true
+    steps:
+      - type: configure_interface
+        name: configure_test_interface
+        description: "Configure test interface"
+        parameters:
+          name: eth0
+          ip_address: 192.168.1.1
+          subnet_mask: 255.255.255.0
+          bandwidth_mbps: 1000
+        timeout_ms: 5000
+        required: true
+        
+      - type: configure_traffic_shaping
+        name: enable_token_bucket
+        description: "Enable token bucket rate limiting"
+        parameters:
+          interface: eth0
+          rate_bps: 100000000  # 100 Mbps
+          burst_size: 1000000  # 1 MB
+        timeout_ms: 5000
+        required: true
+        
+      - type: configure_traffic_shaping
+        name: enable_wfq
+        description: "Enable Weighted Fair Queueing"
+        parameters:
+          interface: eth0
+          enable_wfq: true
+          num_queues: 8
+        timeout_ms: 5000
+        required: true
+        
+      - type: send_packet
+        name: send_test_packets
+        description: "Send test packets for traffic shaping"
+        parameters:
+          interface: eth0
+          packet_count: 1000
+          packet_size: 1500
+          rate: 200000000  # 200 Mbps (exceeds limit)
+        timeout_ms: 30000
+        required: true
+        
+      - type: verify_statistics
+        name: verify_shaping_stats
+        description: "Verify traffic shaping statistics"
+        parameters:
+          interface: eth0
+          expected_packets_passed: 800
+          expected_packets_dropped: 200
+        timeout_ms: 5000
+        required: true
+
+  - name: network_impairments_test
+    description: "Test network impairments and netem integration"
+    version: "1.0"
+    timeout_ms: 90000
+    enabled: true
+    steps:
+      - type: configure_interface
+        name: configure_test_interface
+        description: "Configure test interface"
+        parameters:
+          name: eth0
+          ip_address: 192.168.1.1
+          subnet_mask: 255.255.255.0
+          bandwidth_mbps: 1000
+        timeout_ms: 5000
+        required: true
+        
+      - type: configure_impairments
+        name: enable_delay_impairment
+        description: "Enable delay impairment"
+        parameters:
+          interface: eth0
+          enable_delay: true
+          delay_ms: 100
+          enable_jitter: true
+          jitter_ms: 20
+        timeout_ms: 5000
+        required: true
+        
+      - type: configure_impairments
+        name: enable_loss_impairment
+        description: "Enable packet loss impairment"
+        parameters:
+          interface: eth0
+          enable_loss: true
+          loss_percent: 5.0
+        timeout_ms: 5000
+        required: true
+        
+      - type: send_packet
+        name: send_test_packets
+        description: "Send test packets through impaired interface"
+        parameters:
+          interface: eth0
+          packet_count: 1000
+          packet_size: 1500
+        timeout_ms: 30000
+        required: true
+        
+      - type: verify_statistics
+        name: verify_impairment_stats
+        description: "Verify impairment statistics"
+        parameters:
+          interface: eth0
+          expected_packets_processed: 950
+          expected_packets_dropped: 50
+        timeout_ms: 5000
+        required: true
+        
+      - type: clear_impairments
+        name: clear_impairments
+        description: "Clear all impairments"
+        parameters:
+          interface: eth0
+        timeout_ms: 5000
+        required: true
+
+  - name: protocol_convergence_test
+    description: "Test routing protocol convergence and failover"
+    version: "1.0"
+    timeout_ms: 180000
+    enabled: true
+    steps:
+      - type: configure_interface
+        name: configure_primary_interface
+        description: "Configure primary interface"
+        parameters:
+          name: eth0
+          ip_address: 192.168.1.1
+          subnet_mask: 255.255.255.0
+          bandwidth_mbps: 1000
+        timeout_ms: 5000
+        required: true
+        
+      - type: configure_interface
+        name: configure_backup_interface
+        description: "Configure backup interface"
+        parameters:
+          name: eth1
+          ip_address: 192.168.2.1
+          subnet_mask: 255.255.255.0
+          bandwidth_mbps: 1000
+        timeout_ms: 5000
+        required: true
+        
+      - type: start_protocol
+        name: start_bgp_primary
+        description: "Start BGP on primary interface"
+        parameters:
+          protocol: bgp
+          as_number: 65001
+          router_id: 1.1.1.1
+          interfaces: [eth0]
+        timeout_ms: 10000
+        required: true
+        
+      - type: start_protocol
+        name: start_ospf_backup
+        description: "Start OSPF on backup interface"
+        parameters:
+          protocol: ospf
+          area_id: 0.0.0.0
+          router_id: 1.1.1.1
+          interfaces: [eth1]
+        timeout_ms: 10000
+        required: true
+        
+      - type: wait
+        name: wait_for_convergence
+        description: "Wait for initial convergence"
+        parameters:
+          duration: 30000
+        timeout_ms: 35000
+        required: true
+        
+      - type: verify_route
+        name: verify_primary_routes
+        description: "Verify primary routes are active"
+        parameters:
+          network: 0.0.0.0/0
+          protocol: bgp
+          next_hop: 192.168.1.2
+        timeout_ms: 5000
+        required: true
+        
+      - type: custom_command
+        name: simulate_link_failure
+        description: "Simulate primary link failure"
+        parameters:
+          command: "interface eth0 down"
+        timeout_ms: 5000
+        required: true
+        
+      - type: wait
+        name: wait_for_failover
+        description: "Wait for failover to backup"
+        parameters:
+          duration: 30000
+        timeout_ms: 35000
+        required: true
+        
+      - type: verify_route
+        name: verify_backup_routes
+        description: "Verify backup routes are active"
+        parameters:
+          network: 0.0.0.0/0
+          protocol: ospf
+          next_hop: 192.168.2.2
+        timeout_ms: 5000
+        required: true
+        
+      - type: custom_command
+        name: restore_primary_link
+        description: "Restore primary link"
+        parameters:
+          command: "interface eth0 up"
+        timeout_ms: 5000
+        required: true
+        
+      - type: wait
+        name: wait_for_restoration
+        description: "Wait for restoration to primary"
+        parameters:
+          duration: 30000
+        timeout_ms: 35000
+        required: true
+        
+      - type: verify_route
+        name: verify_primary_restored
+        description: "Verify primary routes are restored"
+        parameters:
+          network: 0.0.0.0/0
+          protocol: bgp
+          next_hop: 192.168.1.2
+        timeout_ms: 5000
+        required: true

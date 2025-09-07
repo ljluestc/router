@@ -1,0 +1,291 @@
+name: "Traffic Shaping and Impairments Test"
+description: "Test traffic shaping algorithms and network impairments"
+version: "1.0"
+author: "Router Simulator Team"
+
+# Test configuration
+test:
+  duration: 600  # seconds
+  timeout: 60    # seconds per step
+  iterations: 3
+  parallel: false
+
+# Router configuration
+routers:
+  - id: "router1"
+    hostname: "R1"
+    interfaces:
+      - name: "eth0"
+        ip: "192.168.1.1"
+        mask: "255.255.255.0"
+        mtu: 1500
+      - name: "eth1"
+        ip: "192.168.2.1"
+        mask: "255.255.255.0"
+        mtu: 1500
+
+# Traffic shaping configuration
+traffic_shaping:
+  - interface: "eth0"
+    algorithm: "token_bucket"
+    rate_bps: 1000000000  # 1 Gbps
+    burst_bytes: 1000000  # 1 MB
+    queue_size: 1000
+    enable_red: true
+    red_min_threshold: 0.5
+    red_max_threshold: 0.8
+    red_max_probability: 0.1
+
+  - interface: "eth1"
+    algorithm: "weighted_fair_queuing"
+    rate_bps: 500000000   # 500 Mbps
+    queue_size: 2000
+    flows:
+      - flow_id: 1
+        weight: 50
+        priority: 1
+      - flow_id: 2
+        weight: 30
+        priority: 2
+      - flow_id: 3
+        weight: 20
+        priority: 3
+    enable_red: true
+    red_min_threshold: 0.6
+    red_max_threshold: 0.9
+    red_max_probability: 0.2
+
+# Network impairments configuration
+impairments:
+  - interface: "eth0"
+    enabled: true
+    delay:
+      enabled: true
+      base_delay_ms: 10
+      jitter_ms: 5
+      distribution: "normal"
+    loss:
+      enabled: true
+      percentage: 1.0
+      model: "random"
+    bandwidth:
+      enabled: true
+      limit_bps: 800000000  # 800 Mbps
+      buffer_size: 1000
+    reorder:
+      enabled: true
+      percentage: 0.5
+      gap: 10
+    duplicate:
+      enabled: true
+      percentage: 0.1
+    corrupt:
+      enabled: true
+      percentage: 0.05
+
+  - interface: "eth1"
+    enabled: true
+    delay:
+      enabled: true
+      base_delay_ms: 20
+      jitter_ms: 10
+      distribution: "pareto"
+    loss:
+      enabled: true
+      percentage: 2.0
+      model: "burst"
+      burst_length: 5
+    bandwidth:
+      enabled: true
+      limit_bps: 400000000  # 400 Mbps
+      buffer_size: 2000
+
+# Test steps
+steps:
+  - name: "Initialize router"
+    action: "start_router"
+    router: "router1"
+    timeout: 10
+
+  - name: "Configure interfaces"
+    action: "configure_interfaces"
+    router: "router1"
+    interfaces: ["eth0", "eth1"]
+    timeout: 15
+
+  - name: "Apply traffic shaping"
+    action: "configure_traffic_shaping"
+    router: "router1"
+    timeout: 20
+
+  - name: "Apply network impairments"
+    action: "configure_impairments"
+    router: "router1"
+    timeout: 20
+
+  - name: "Start traffic generation"
+    action: "start_traffic_generation"
+    flows:
+      - name: "high_priority_flow"
+        source: "192.168.1.10"
+        destination: "192.168.2.10"
+        protocol: "tcp"
+        port: 80
+        rate: 1000000  # 1M pps
+        size: 1500
+        flow_id: 1
+        priority: 1
+      - name: "medium_priority_flow"
+        source: "192.168.1.20"
+        destination: "192.168.2.20"
+        protocol: "tcp"
+        port: 443
+        rate: 500000   # 500K pps
+        size: 1024
+        flow_id: 2
+        priority: 2
+      - name: "low_priority_flow"
+        source: "192.168.1.30"
+        destination: "192.168.2.30"
+        protocol: "udp"
+        port: 53
+        rate: 100000   # 100K pps
+        size: 512
+        flow_id: 3
+        priority: 3
+
+  - name: "Run token bucket test"
+    action: "test_token_bucket"
+    interface: "eth0"
+    duration: 60
+    expected_rate: 1000000000  # 1 Gbps
+    tolerance: 0.1  # 10%
+
+  - name: "Run WFQ test"
+    action: "test_wfq"
+    interface: "eth1"
+    duration: 60
+    flows:
+      - flow_id: 1
+        expected_share: 0.5  # 50%
+        tolerance: 0.1
+      - flow_id: 2
+        expected_share: 0.3  # 30%
+        tolerance: 0.1
+      - flow_id: 3
+        expected_share: 0.2  # 20%
+        tolerance: 0.1
+
+  - name: "Test delay impairments"
+    action: "test_delay_impairments"
+    interface: "eth0"
+    duration: 30
+    expected_delay: 10  # ms
+    tolerance: 2  # ms
+
+  - name: "Test loss impairments"
+    action: "test_loss_impairments"
+    interface: "eth0"
+    duration: 30
+    expected_loss: 1.0  # percent
+    tolerance: 0.5  # percent
+
+  - name: "Test bandwidth impairments"
+    action: "test_bandwidth_impairments"
+    interface: "eth0"
+    duration: 30
+    expected_bandwidth: 800000000  # 800 Mbps
+    tolerance: 0.1  # 10%
+
+  - name: "Test RED functionality"
+    action: "test_red"
+    interface: "eth0"
+    duration: 60
+    queue_utilization_threshold: 0.7
+    expected_drops: true
+
+  - name: "Test flow fairness"
+    action: "test_flow_fairness"
+    interface: "eth1"
+    duration: 60
+    flows: [1, 2, 3]
+    fairness_threshold: 0.8
+
+  - name: "Test burst handling"
+    action: "test_burst_handling"
+    interface: "eth0"
+    burst_size: 10000  # packets
+    burst_rate: 2000000  # 2M pps
+    duration: 10
+
+  - name: "Test congestion control"
+    action: "test_congestion_control"
+    interface: "eth1"
+    duration: 120
+    overload_factor: 2.0  # 200% of capacity
+
+# Performance metrics
+metrics:
+  - name: "throughput"
+    description: "Packets per second"
+    unit: "pps"
+    collection_interval: 1  # seconds
+  - name: "latency"
+    description: "End-to-end latency"
+    unit: "ms"
+    collection_interval: 1
+  - name: "packet_loss"
+    description: "Packet loss rate"
+    unit: "percent"
+    collection_interval: 1
+  - name: "queue_length"
+    description: "Queue length"
+    unit: "packets"
+    collection_interval: 1
+  - name: "flow_rates"
+    description: "Per-flow rates"
+    unit: "bps"
+    collection_interval: 1
+
+# Expected results
+expected_results:
+  token_bucket:
+    throughput: 1000000000  # 1 Gbps
+    burst_handling: true
+    rate_limiting: true
+  wfq:
+    flow_fairness: 0.8  # minimum fairness index
+    weight_respect: true
+    starvation_prevention: true
+  impairments:
+    delay_accuracy: 0.9  # 90% of packets within tolerance
+    loss_accuracy: 0.9   # 90% accuracy
+    bandwidth_accuracy: 0.9  # 90% accuracy
+  red:
+    drop_probability: 0.1  # 10% max drop probability
+    queue_stability: true
+  overall:
+    max_packet_loss: 5.0  # percent
+    max_latency: 200      # milliseconds
+    min_throughput: 0.8   # 80% of configured rate
+
+# Monitoring and logging
+monitoring:
+  enabled: true
+  log_level: "debug"
+  pcap_capture: true
+  pcap_file: "traffic_shaping_test.pcap"
+  statistics_interval: 1  # seconds
+  detailed_logging: true
+
+# Cleanup
+cleanup:
+  - action: "stop_traffic_generation"
+  - action: "remove_traffic_shaping"
+    router: "router1"
+    interfaces: ["eth0", "eth1"]
+  - action: "remove_impairments"
+    router: "router1"
+    interfaces: ["eth0", "eth1"]
+  - action: "stop_router"
+    router: "router1"
