@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Multi-Protocol Router Simulator - Build and Demo Script
-# This script builds the project and starts the demo
+# This script builds the complete router simulator and starts the demo
 
 set -e
 
@@ -10,26 +10,9 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Function to print colored output
-print_header() {
-    echo -e "${PURPLE}╔══════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${PURPLE}║                    Multi-Protocol Router Simulator v1.0.0                   ║${NC}"
-    echo -e "${PURPLE}║                                                                              ║${NC}"
-    echo -e "${PURPLE}║  Features:                                                                   ║${NC}"
-    echo -e "${PURPLE}║  • FRR Integration (BGP/OSPF/ISIS)                                          ║${NC}"
-    echo -e "${PURPLE}║  • Traffic Shaping (Token Bucket/WFQ)                                       ║${NC}"
-    echo -e "${PURPLE}║  • Network Impairments (tc/netem)                                           ║${NC}"
-    echo -e "${PURPLE}║  • Comprehensive Testing (gtest/pcap diff)                                  ║${NC}"
-    echo -e "${PURPLE}║  • CLI & YAML Scenario Support                                              ║${NC}"
-    echo -e "${PURPLE}║  • Cloud Networking Concepts                                                ║${NC}"
-    echo -e "${PURPLE}╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
-    echo
-}
-
 print_status() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -46,195 +29,304 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-print_step() {
-    echo -e "${CYAN}[STEP]${NC} $1"
+# Function to check if command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
 }
 
-# Check if we're in the right directory
-if [ ! -f "CMakeLists.txt" ]; then
-    print_error "CMakeLists.txt not found. Please run this script from the project root."
-    exit 1
-fi
-
-print_header
-
-# Parse command line arguments
-BUILD_TYPE="Release"
-CLEAN_BUILD=false
-RUN_TESTS=false
-START_DEMO=false
-SKIP_BUILD=false
-VERBOSE=false
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -d|--debug)
-            BUILD_TYPE="Debug"
-            shift
-            ;;
-        -c|--clean)
-            CLEAN_BUILD=true
-            shift
-            ;;
-        -t|--test)
-            RUN_TESTS=true
-            shift
-            ;;
-        --demo)
-            START_DEMO=true
-            shift
-            ;;
-        --skip-build)
-            SKIP_BUILD=true
-            shift
-            ;;
-        -v|--verbose)
-            VERBOSE=true
-            shift
-            ;;
-        -h|--help)
-            echo "Usage: $0 [OPTIONS]"
-            echo "Options:"
-            echo "  -d, --debug       Build in Debug mode (default: Release)"
-            echo "  -c, --clean       Clean build directory before building"
-            echo "  -t, --test        Run tests after building"
-            echo "  --demo            Start web demo after building"
-            echo "  --skip-build      Skip building, just start demo"
-            echo "  -v, --verbose     Verbose output"
-            echo "  -h, --help        Show this help message"
-            exit 0
-            ;;
-        *)
-            print_error "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
-
-# Check dependencies
-print_step "Checking dependencies..."
-
-# Check for required tools
-command -v cmake >/dev/null 2>&1 || { print_error "cmake is required but not installed. Aborting."; exit 1; }
-command -v make >/dev/null 2>&1 || { print_error "make is required but not installed. Aborting."; exit 1; }
-command -v g++ >/dev/null 2>&1 || { print_error "g++ is required but not installed. Aborting."; exit 1; }
-
-# Check for optional dependencies
-if ! pkg-config --exists libpcap; then
-    print_warning "libpcap not found. PCAP functionality will be limited."
-fi
-
-if ! pkg-config --exists yaml-cpp; then
-    print_warning "yaml-cpp not found. YAML configuration will not be available."
-fi
-
-if ! pkg-config --exists frr; then
-    print_warning "FRR not found. FRR integration will be disabled."
-fi
-
-if ! pkg-config --exists libzmq; then
-    print_warning "ZeroMQ not found. ZMQ functionality will be limited."
-fi
-
-# Build the project
-if [ "$SKIP_BUILD" = false ]; then
-    print_step "Building Multi-Protocol Router Simulator"
-    print_status "Build type: $BUILD_TYPE"
+# Function to check dependencies
+check_dependencies() {
+    print_status "Checking dependencies..."
     
-    # Clean build directory if requested
-    if [ "$CLEAN_BUILD" = true ]; then
-        print_status "Cleaning build directory..."
-        rm -rf build
+    local missing_deps=()
+    
+    # Check for required tools
+    if ! command_exists cmake; then
+        missing_deps+=("cmake")
     fi
     
+    if ! command_exists make; then
+        missing_deps+=("make")
+    fi
+    
+    if ! command_exists g++; then
+        missing_deps+=("g++")
+    fi
+    
+    if ! command_exists pkg-config; then
+        missing_deps+=("pkg-config")
+    fi
+    
+    if ! command_exists cargo; then
+        missing_deps+=("cargo")
+    fi
+    
+    if ! command_exists python3; then
+        missing_deps+=("python3")
+    fi
+    
+    # Check for required libraries
+    if ! pkg-config --exists libpcap; then
+        missing_deps+=("libpcap-dev")
+    fi
+    
+    if ! pkg-config --exists yaml-cpp; then
+        missing_deps+=("libyaml-cpp-dev")
+    fi
+    
+    if ! pkg-config --exists frr; then
+        missing_deps+=("frr")
+    fi
+    
+    if [ ${#missing_deps[@]} -ne 0 ]; then
+        print_error "Missing dependencies: ${missing_deps[*]}"
+        print_status "Please install them using:"
+        print_status "sudo apt-get update && sudo apt-get install -y ${missing_deps[*]}"
+        exit 1
+    fi
+    
+    print_success "All dependencies are installed"
+}
+
+# Function to build C++ components
+build_cpp() {
+    print_status "Building C++ components..."
+    
     # Create build directory
-    print_status "Creating build directory..."
     mkdir -p build
     cd build
     
     # Configure with CMake
     print_status "Configuring with CMake..."
-    CMAKE_ARGS="-DCMAKE_BUILD_TYPE=$BUILD_TYPE"
-    
-    if [ "$VERBOSE" = true ]; then
-        CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_VERBOSE_MAKEFILE=ON"
-    fi
-    
-    cmake .. $CMAKE_ARGS
+    cmake -DCMAKE_BUILD_TYPE=Release \
+          -DENABLE_COVERAGE=ON \
+          -DENABLE_TESTING=ON \
+          ..
     
     # Build
-    print_status "Building..."
-    if [ "$VERBOSE" = true ]; then
-        make VERBOSE=1 -j$(nproc)
+    print_status "Building with make..."
+    make -j$(nproc)
+    
+    # Run tests
+    print_status "Running tests..."
+    if [ -f "router_sim_test" ]; then
+        ./router_sim_test
+        print_success "All tests passed"
     else
-        make -j$(nproc)
+        print_warning "Test executable not found, skipping tests"
     fi
     
-    print_success "Build completed successfully!"
-    
-    # Run tests if requested
-    if [ "$RUN_TESTS" = true ]; then
-        print_step "Running tests..."
-        if [ -f "./router_tests" ]; then
-            ./router_tests
-            print_success "Tests completed!"
-        else
-            print_warning "Test executable not found. Skipping tests."
-        fi
-    fi
-    
-    # Go back to project root
     cd ..
-fi
+    print_success "C++ build completed"
+}
 
-# Start demo if requested
-if [ "$START_DEMO" = true ]; then
-    print_step "Starting web demo..."
+# Function to build Rust components
+build_rust() {
+    print_status "Building Rust components..."
     
-    # Check if Python is available
-    if command -v python3 >/dev/null 2>&1; then
-        PYTHON_CMD="python3"
-    elif command -v python >/dev/null 2>&1; then
-        PYTHON_CMD="python"
-    else
-        print_error "Python is required to run the web demo. Please install Python 3."
-        exit 1
-    fi
+    cd rust
+    
+    # Build Rust library
+    print_status "Building Rust library..."
+    cargo build --release
+    
+    # Run Rust tests
+    print_status "Running Rust tests..."
+    cargo test
+    
+    cd ..
+    print_success "Rust build completed"
+}
+
+# Function to start demo
+start_demo() {
+    print_status "Starting demo..."
     
     # Check if demo files exist
-    if [ ! -f "docs/index.html" ]; then
-        print_error "Demo files not found. Please make sure docs/index.html exists."
+    if [ ! -f "demo/index.html" ]; then
+        print_error "Demo files not found"
         exit 1
     fi
     
-    print_status "Starting demo server..."
-    print_status "The demo will open in your default web browser."
-    print_status "Press Ctrl+C to stop the demo server."
-    echo
+    # Start Python HTTP server
+    print_status "Starting HTTP server on port 8080..."
+    print_status "Open your browser and go to: http://localhost:8080/demo/"
     
-    # Start the demo server
-    $PYTHON_CMD scripts/serve_demo.py
-fi
+    # Start the server in background
+    python3 -m http.server 8080 &
+    local server_pid=$!
+    
+    # Wait for user to stop
+    print_status "Press Ctrl+C to stop the demo"
+    trap "kill $server_pid; exit" INT
+    
+    # Keep script running
+    wait $server_pid
+}
 
-# Show build summary
-print_step "Build Summary:"
-echo "  Build type: $BUILD_TYPE"
-echo "  Build directory: $(pwd)/build"
-echo "  Executables:"
-if [ -f "build/router_sim" ]; then
-    echo "    - router_sim"
-fi
-if [ -f "build/router_tests" ]; then
-    echo "    - router_tests"
-fi
+# Function to run router simulator
+run_simulator() {
+    print_status "Starting router simulator..."
+    
+    if [ ! -f "build/router_sim" ]; then
+        print_error "Router simulator not found. Please build first."
+        exit 1
+    fi
+    
+    # Check if running as root (needed for network operations)
+    if [ "$EUID" -ne 0 ]; then
+        print_warning "Running without root privileges. Some features may not work."
+        print_status "Consider running with sudo for full functionality."
+    fi
+    
+    # Start the simulator
+    cd build
+    ./router_sim -i
+}
 
-print_success "Build and demo script completed successfully!"
+# Function to show help
+show_help() {
+    echo "Multi-Protocol Router Simulator - Build and Demo Script"
+    echo ""
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    echo "  -d, --demo          Start the web demo"
+    echo "  -r, --run           Run the router simulator"
+    echo "  -b, --build         Build all components"
+    echo "  -c, --clean         Clean build artifacts"
+    echo "  -t, --test          Run tests only"
+    echo "  -a, --all           Build and start demo (default)"
+    echo ""
+    echo "Examples:"
+    echo "  $0                  # Build and start demo"
+    echo "  $0 -d               # Start demo only"
+    echo "  $0 -r               # Run simulator only"
+    echo "  $0 -b               # Build only"
+    echo "  $0 -c               # Clean build"
+}
 
-# Show usage information
-echo
-print_status "Usage examples:"
-echo "  ./build/router_sim --help"
-echo "  ./build/router_sim -s scenarios/bgp_convergence.yaml"
-echo "  ./build/router_sim --daemon"
-echo "  ./build/router_tests"
-echo "  python3 scripts/serve_demo.py"
+# Function to clean build artifacts
+clean_build() {
+    print_status "Cleaning build artifacts..."
+    
+    if [ -d "build" ]; then
+        rm -rf build
+        print_success "Build directory cleaned"
+    fi
+    
+    if [ -d "rust/target" ]; then
+        cd rust
+        cargo clean
+        cd ..
+        print_success "Rust target directory cleaned"
+    fi
+    
+    print_success "Clean completed"
+}
+
+# Function to run tests only
+run_tests() {
+    print_status "Running tests..."
+    
+    # Run C++ tests
+    if [ -f "build/router_sim_test" ]; then
+        print_status "Running C++ tests..."
+        cd build
+        ./router_sim_test
+        cd ..
+        print_success "C++ tests completed"
+    else
+        print_warning "C++ test executable not found"
+    fi
+    
+    # Run Rust tests
+    if [ -d "rust" ]; then
+        print_status "Running Rust tests..."
+        cd rust
+        cargo test
+        cd ..
+        print_success "Rust tests completed"
+    else
+        print_warning "Rust directory not found"
+    fi
+}
+
+# Main function
+main() {
+    local action="all"
+    
+    # Parse command line arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -d|--demo)
+                action="demo"
+                shift
+                ;;
+            -r|--run)
+                action="run"
+                shift
+                ;;
+            -b|--build)
+                action="build"
+                shift
+                ;;
+            -c|--clean)
+                action="clean"
+                shift
+                ;;
+            -t|--test)
+                action="test"
+                shift
+                ;;
+            -a|--all)
+                action="all"
+                shift
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Execute based on action
+    case $action in
+        "all")
+            check_dependencies
+            build_cpp
+            build_rust
+            start_demo
+            ;;
+        "demo")
+            start_demo
+            ;;
+        "run")
+            run_simulator
+            ;;
+        "build")
+            check_dependencies
+            build_cpp
+            build_rust
+            ;;
+        "clean")
+            clean_build
+            ;;
+        "test")
+            run_tests
+            ;;
+        *)
+            print_error "Unknown action: $action"
+            exit 1
+            ;;
+    esac
+}
+
+# Run main function with all arguments
+main "$@"

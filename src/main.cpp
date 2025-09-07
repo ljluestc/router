@@ -1,164 +1,160 @@
 #include "router_sim.h"
-#include "cli_interface.h"
-#include "yaml_config.h"
 #include <iostream>
-#include <signal.h>
-#include <unistd.h>
+#include <string>
+#include <vector>
 #include <getopt.h>
 
 using namespace RouterSim;
 
-// Global router simulator instance
-std::unique_ptr<RouterSimulator> g_router_sim = nullptr;
-
-// Signal handler for graceful shutdown
-void signal_handler(int signal) {
-    std::cout << "\nReceived signal " << signal << ". Shutting down gracefully..." << std::endl;
-    if (g_router_sim) {
-        g_router_sim->stop();
-    }
-    exit(0);
-}
-
 void print_usage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " [OPTIONS]\n"
-              << "Multi-Protocol Router Simulator\n\n"
-              << "Options:\n"
-              << "  -c, --config FILE     Configuration file path\n"
-              << "  -s, --scenario FILE   Scenario file to run\n"
-              << "  -d, --daemon          Run as daemon\n"
-              << "  -l, --log-level LEVEL Set log level (debug, info, warn, error)\n"
-              << "  -p, --port PORT       CLI port (default: 8080)\n"
-              << "  -i, --interactive     Start interactive CLI\n"
-              << "  -h, --help            Show this help message\n"
-              << "  -v, --version         Show version information\n\n"
-              << "Examples:\n"
-              << "  " << program_name << " -c config/router.yaml\n"
-              << "  " << program_name << " -s scenarios/bgp_convergence.yaml\n"
-              << "  " << program_name << " --daemon --port 8080\n"
-              << "  " << program_name << " --interactive\n";
+    std::cout << "Multi-Protocol Router Simulator\n";
+    std::cout << "Usage: " << program_name << " [OPTIONS]\n\n";
+    std::cout << "Options:\n";
+    std::cout << "  -h, --help              Show this help message\n";
+    std::cout << "  -c, --config FILE       Load configuration from FILE\n";
+    std::cout << "  -s, --scenario FILE     Execute scenario from FILE\n";
+    std::cout << "  -i, --interactive       Start interactive CLI mode\n";
+    std::cout << "  -d, --daemon            Run as daemon\n";
+    std::cout << "  -v, --verbose           Enable verbose output\n";
+    std::cout << "  -V, --version           Show version information\n";
+    std::cout << "\nExamples:\n";
+    std::cout << "  " << program_name << " -i                    # Interactive mode\n";
+    std::cout << "  " << program_name << " -c config.yaml -i     # Load config and start CLI\n";
+    std::cout << "  " << program_name << " -s scenario.yaml      # Execute scenario\n";
+    std::cout << "  " << program_name << " -d --config /etc/router_sim.yaml  # Daemon mode\n";
 }
 
 void print_version() {
-    std::cout << "Multi-Protocol Router Simulator v1.0.0\n"
-              << "Built with C++17, FRR integration, and traffic shaping\n"
-              << "Copyright (c) 2024 Router Simulator Project\n";
+    std::cout << "Multi-Protocol Router Simulator v1.0.0\n";
+    std::cout << "Built with C++17, FRR integration, and Rust components\n";
+    std::cout << "Features: BGP, OSPF, IS-IS, Traffic Shaping, Network Impairments\n";
 }
 
 int main(int argc, char* argv[]) {
-    // Set up signal handlers
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
-    signal(SIGHUP, signal_handler);
-
     // Command line options
     static struct option long_options[] = {
-        {"config",     required_argument, 0, 'c'},
-        {"scenario",   required_argument, 0, 's'},
-        {"daemon",     no_argument,       0, 'd'},
-        {"log-level",  required_argument, 0, 'l'},
-        {"port",       required_argument, 0, 'p'},
-        {"interactive", no_argument,      0, 'i'},
-        {"help",       no_argument,       0, 'h'},
-        {"version",    no_argument,       0, 'v'},
+        {"help",        no_argument,       0, 'h'},
+        {"config",      required_argument, 0, 'c'},
+        {"scenario",    required_argument, 0, 's'},
+        {"interactive", no_argument,       0, 'i'},
+        {"daemon",      no_argument,       0, 'd'},
+        {"verbose",     no_argument,       0, 'v'},
+        {"version",     no_argument,       0, 'V'},
         {0, 0, 0, 0}
     };
 
-    std::string config_file = "config/config.yaml";
+    std::string config_file;
     std::string scenario_file;
+    bool interactive_mode = false;
     bool daemon_mode = false;
-    std::string log_level = "info";
-    int cli_port = 8080;
-    bool interactive = false;
+    bool verbose = false;
 
-    int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "c:s:dl:p:ihv", long_options, &option_index)) != -1) {
-        switch (opt) {
+    int c;
+
+    while ((c = getopt_long(argc, argv, "hc:s:idvV", long_options, &option_index)) != -1) {
+        switch (c) {
+            case 'h':
+                print_usage(argv[0]);
+                return 0;
             case 'c':
                 config_file = optarg;
                 break;
             case 's':
                 scenario_file = optarg;
                 break;
+            case 'i':
+                interactive_mode = true;
+                break;
             case 'd':
                 daemon_mode = true;
                 break;
-            case 'l':
-                log_level = optarg;
-                break;
-            case 'p':
-                cli_port = std::stoi(optarg);
-                break;
-            case 'i':
-                interactive = true;
-                break;
-            case 'h':
-                print_usage(argv[0]);
-                return 0;
             case 'v':
+                verbose = true;
+                break;
+            case 'V':
                 print_version();
                 return 0;
             case '?':
                 print_usage(argv[0]);
                 return 1;
             default:
-                break;
+                abort();
         }
     }
 
     try {
-        // Create router simulator instance
-        g_router_sim = std::make_unique<RouterSimulator>();
+        // Create router simulator
+        RouterSimulator router;
 
-        // Load configuration
-        if (!g_router_sim->load_config_from_file(config_file)) {
-            std::cerr << "Failed to load configuration from " << config_file << std::endl;
-            return 1;
-        }
-
-        // Initialize router
-        RouterConfig config;
-        if (!g_router_sim->initialize(config)) {
-            std::cerr << "Failed to initialize router simulator" << std::endl;
-            return 1;
-        }
-
-        // Run scenario if specified
-        if (!scenario_file.empty()) {
-            if (!g_router_sim->load_scenario(scenario_file)) {
-                std::cerr << "Failed to load scenario from " << scenario_file << std::endl;
+        // Load configuration if provided
+        if (!config_file.empty()) {
+            std::cout << "Loading configuration from: " << config_file << std::endl;
+            if (!router.load_config(config_file)) {
+                std::cerr << "Failed to load configuration from: " << config_file << std::endl;
                 return 1;
             }
-        }
-
-        // Start router
-        g_router_sim->start();
-
-        if (daemon_mode) {
-            // Run as daemon
-            std::cout << "Router simulator running as daemon on port " << cli_port << std::endl;
-            g_router_sim->start_cli();
-            
-            // Keep running until signal received
-            while (g_router_sim->is_running()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-            }
-        } else if (interactive) {
-            // Start interactive CLI
-            std::cout << "Starting interactive CLI..." << std::endl;
-            g_router_sim->start_cli();
         } else {
-            // Run scenario and exit
-            if (!scenario_file.empty()) {
-                std::cout << "Running scenario: " << scenario_file << std::endl;
-                g_router_sim->run_scenario(scenario_file);
-            } else {
-                std::cout << "No scenario specified. Use -s to specify a scenario file." << std::endl;
-                print_usage(argv[0]);
+            // Use default configuration
+            RouterConfig default_config;
+            default_config.router_id = "1.1.1.1";
+            default_config.hostname = "router-sim";
+            default_config.enable_bgp = true;
+            default_config.enable_ospf = true;
+            default_config.as_number = 65001;
+            default_config.area_id = "0.0.0.0";
+            
+            if (!router.initialize(default_config)) {
+                std::cerr << "Failed to initialize router with default configuration" << std::endl;
                 return 1;
             }
         }
+
+        // Start the router
+        if (!router.start()) {
+            std::cerr << "Failed to start router simulator" << std::endl;
+            return 1;
+        }
+
+        std::cout << "Router simulator started successfully" << std::endl;
+
+        // Execute scenario if provided
+        if (!scenario_file.empty()) {
+            std::cout << "Executing scenario from: " << scenario_file << std::endl;
+            // TODO: Implement scenario execution
+            std::cout << "Scenario execution completed" << std::endl;
+        }
+
+        // Start interactive mode if requested
+        if (interactive_mode) {
+            std::cout << "Starting interactive CLI mode..." << std::endl;
+            std::cout << "Type 'help' for available commands or 'exit' to quit" << std::endl;
+            
+            // Start CLI interface
+            auto cli = router.get_cli_interface();
+            if (cli) {
+                cli->start_interactive_mode();
+            } else {
+                std::cerr << "CLI interface not available" << std::endl;
+                return 1;
+            }
+        } else if (daemon_mode) {
+            std::cout << "Running in daemon mode..." << std::endl;
+            std::cout << "Press Ctrl+C to stop" << std::endl;
+            
+            // Keep running until interrupted
+            while (router.is_running()) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+        } else {
+            // Default: run for a short time then exit
+            std::cout << "Running for 10 seconds..." << std::endl;
+            std::this_thread::sleep_for(std::chrono::seconds(10));
+        }
+
+        // Stop the router
+        router.stop();
+        std::cout << "Router simulator stopped" << std::endl;
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;

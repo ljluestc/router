@@ -12,6 +12,7 @@ This project implements a comprehensive C++ router simulator with FRR control-pl
 - **Cross-platform compatibility** (Linux, with Windows/macOS support)
 - **Dependency management** with automatic detection
 - **Installation targets** and packaging support
+- **Comprehensive build script** with multiple options
 
 ### 2. FRR Control-Plane Integration
 - **BGP (Border Gateway Protocol)** implementation
@@ -71,6 +72,22 @@ This project implements a comprehensive C++ router simulator with FRR control-pl
 - **Documentation integration** with search
 - **Cloud networking concepts** visualization
 - **Performance metrics** display
+- **1000+ router topology** simulation
+
+### 9. Rust Performance Components
+- **High-performance packet processing** with zero-copy operations
+- **Parallel processing** using Rayon for multi-threading
+- **Memory-efficient data structures** with DashMap
+- **FFI integration** for seamless C++/Rust interoperability
+- **Async runtime** with Tokio for I/O operations
+- **Comprehensive error handling** with anyhow/thiserror
+
+### 10. CCNP Command Assistant
+- **Searchable command database** with 50+ CCNP commands
+- **Command examples** and parameter descriptions
+- **Protocol-specific filtering** (BGP, OSPF, IS-IS)
+- **Real-time search** with fuzzy matching
+- **Interactive web interface** for command lookup
 
 ## 🏗️ Architecture
 
@@ -85,7 +102,12 @@ RouterSimulator (Main Controller)
 ├── RoutingTable (Route Management)
 ├── Statistics (Metrics Collection)
 ├── CLIInterface (User Interface)
-└── YamlConfig (Configuration Management)
+├── YamlConfig (Configuration Management)
+└── RustComponents (Performance Layer)
+    ├── PacketProcessor (High-Performance)
+    ├── RoutingEngine (Advanced Algorithms)
+    ├── TopologyManager (Network Management)
+    └── PerformanceMonitor (Metrics)
 ```
 
 ### Key Design Patterns
@@ -95,6 +117,7 @@ RouterSimulator (Main Controller)
 - **Strategy Pattern**: For traffic shaping algorithms
 - **Command Pattern**: For CLI operations
 - **Builder Pattern**: For configuration objects
+- **FFI Pattern**: For C++/Rust integration
 
 ## 📁 Project Structure
 
@@ -109,7 +132,11 @@ router/
 │   ├── yaml_config.h
 │   ├── packet_processor.h
 │   ├── routing_table.h
-│   └── statistics.h
+│   ├── statistics.h
+│   └── protocols/
+│       ├── bgp.h
+│       ├── ospf.h
+│       └── isis.h
 ├── src/                     # Source files
 │   ├── main.cpp
 │   ├── router_core.cpp
@@ -120,21 +147,35 @@ router/
 │   ├── yaml_config.cpp
 │   ├── packet_processor.cpp
 │   ├── routing_table.cpp
-│   └── statistics.cpp
+│   ├── statistics.cpp
+│   └── protocols/
+│       ├── bgp.cpp
+│       ├── ospf.cpp
+│       └── isis.cpp
+├── rust/                    # Rust components
+│   ├── src/
+│   │   ├── lib.rs
+│   │   ├── packet_processor.rs
+│   │   ├── routing_engine.rs
+│   │   ├── topology_manager.rs
+│   │   └── performance_monitor.rs
+│   └── Cargo.toml
 ├── tests/                   # Test files
 │   ├── test_main.cpp
 │   ├── test_router_core.cpp
 │   ├── test_traffic_shaping.cpp
 │   ├── test_frr_integration.cpp
 │   ├── test_netem_impairments.cpp
-│   └── test_yaml_config.cpp
+│   └── test_packet_processor.cpp
+├── demo/                    # Web demo
+│   └── index.html
+├── ccnp_rag/               # CCNP command database
+│   └── ccnp_commands.json
 ├── examples/                # Example configurations
 │   ├── basic_router.yaml
 │   └── test_scenarios.yaml
-├── docs/                    # Documentation
-│   └── index.html
 ├── scripts/                 # Build and utility scripts
-│   └── build.sh
+│   └── build_and_demo.sh
 ├── .github/workflows/       # CI/CD pipelines
 │   └── ci.yml
 ├── CMakeLists.txt          # Build configuration
@@ -150,7 +191,7 @@ router/
 # Clone and build
 git clone <repository-url>
 cd router
-./scripts/build.sh -d -t -i
+./scripts/build_and_demo.sh -d -t -i
 
 # Run with interactive CLI
 ./build/router_sim -i

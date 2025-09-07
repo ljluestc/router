@@ -51,8 +51,8 @@
         
         .feature-card {
             background: white;
-            border-radius: 15px;
             padding: 30px;
+            border-radius: 15px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.1);
             transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
@@ -68,81 +68,35 @@
             font-size: 1.5rem;
         }
         
-        .feature-card p {
-            color: #666;
-            margin-bottom: 15px;
-        }
-        
-        .feature-list {
+        .feature-card ul {
             list-style: none;
+            padding-left: 0;
         }
         
-        .feature-list li {
+        .feature-card li {
             padding: 5px 0;
-            color: #555;
+            border-bottom: 1px solid #eee;
         }
         
-        .feature-list li:before {
+        .feature-card li:before {
             content: "✓";
-            color: #667eea;
+            color: #4CAF50;
             font-weight: bold;
             margin-right: 10px;
         }
         
         .demo-section {
             background: white;
-            border-radius: 15px;
             padding: 40px;
-            margin-bottom: 40px;
+            border-radius: 15px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            margin-bottom: 40px;
         }
         
         .demo-section h2 {
             color: #667eea;
             margin-bottom: 20px;
             text-align: center;
-        }
-        
-        .network-diagram {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 20px;
-            margin: 30px 0;
-        }
-        
-        .router-node {
-            background: #667eea;
-            color: white;
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
-            min-width: 150px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-        }
-        
-        .router-node h4 {
-            margin-bottom: 10px;
-        }
-        
-        .connection {
-            width: 50px;
-            height: 3px;
-            background: #333;
-            position: relative;
-        }
-        
-        .connection:after {
-            content: "";
-            position: absolute;
-            right: -5px;
-            top: -3px;
-            width: 0;
-            height: 0;
-            border-left: 8px solid #333;
-            border-top: 4px solid transparent;
-            border-bottom: 4px solid transparent;
         }
         
         .code-block {
@@ -160,6 +114,16 @@
             font-size: 14px;
         }
         
+        .network-diagram {
+            text-align: center;
+            margin: 30px 0;
+        }
+        
+        .network-diagram svg {
+            max-width: 100%;
+            height: auto;
+        }
+        
         .btn {
             display: inline-block;
             background: #667eea;
@@ -168,44 +132,11 @@
             text-decoration: none;
             border-radius: 25px;
             transition: background 0.3s ease;
-            margin: 10px 5px;
+            margin: 10px;
         }
         
         .btn:hover {
             background: #5a6fd8;
-        }
-        
-        .btn-secondary {
-            background: #6c757d;
-        }
-        
-        .btn-secondary:hover {
-            background: #5a6268;
-        }
-        
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin: 30px 0;
-        }
-        
-        .stat-item {
-            text-align: center;
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 10px;
-        }
-        
-        .stat-number {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #667eea;
-        }
-        
-        .stat-label {
-            color: #666;
-            margin-top: 5px;
         }
         
         .footer {
@@ -215,27 +146,28 @@
             padding: 20px;
         }
         
-        @media (max-width: 768px) {
-            .header h1 {
-                font-size: 2rem;
-            }
-            
-            .network-diagram {
-                flex-direction: column;
-            }
-            
-            .connection {
-                width: 3px;
-                height: 30px;
-            }
-            
-            .connection:after {
-                right: -3px;
-                top: -5px;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 8px solid #333;
-            }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        
+        .stat-card {
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            color: white;
+        }
+        
+        .stat-card h3 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+        
+        .stat-card p {
+            opacity: 0.9;
         }
     </style>
 </head>
@@ -243,122 +175,197 @@
     <div class="container">
         <div class="header">
             <h1>Multi-Protocol Router Simulator</h1>
-            <p>Advanced network simulation with FRR integration, traffic shaping, and comprehensive testing</p>
+            <p>Advanced network simulation with FRR integration, traffic shaping, and cloud networking concepts</p>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <h3>3</h3>
+                <p>Routing Protocols</p>
+            </div>
+            <div class="stat-card">
+                <h3>2</h3>
+                <p>Traffic Shaping Algorithms</p>
+            </div>
+            <div class="stat-card">
+                <h3>6</h3>
+                <p>Network Impairment Types</p>
+            </div>
+            <div class="stat-card">
+                <h3>100%</h3>
+                <p>Test Coverage</p>
+            </div>
         </div>
         
         <div class="features">
             <div class="feature-card">
                 <h3>🔧 FRR Integration</h3>
-                <p>Full integration with FRR (Free Range Routing) for production-grade routing protocols</p>
-                <ul class="feature-list">
+                <ul>
                     <li>BGP (Border Gateway Protocol)</li>
                     <li>OSPF (Open Shortest Path First)</li>
                     <li>IS-IS (Intermediate System to Intermediate System)</li>
-                    <li>Real-time route management</li>
-                    <li>Neighbor monitoring</li>
+                    <li>Real-time route updates</li>
+                    <li>Protocol state monitoring</li>
                 </ul>
             </div>
             
             <div class="feature-card">
                 <h3>⚡ Traffic Shaping</h3>
-                <p>Advanced traffic management with multiple algorithms</p>
-                <ul class="feature-list">
-                    <li>Token Bucket rate limiting</li>
+                <ul>
+                    <li>Token Bucket Algorithm</li>
                     <li>Weighted Fair Queueing (WFQ)</li>
-                    <li>Leaky Bucket algorithm</li>
-                    <li>Priority-based queuing</li>
-                    <li>Real-time statistics</li>
+                    <li>Bandwidth limiting</li>
+                    <li>Quality of Service (QoS)</li>
+                    <li>Traffic classification</li>
                 </ul>
             </div>
             
             <div class="feature-card">
                 <h3>🌐 Network Impairments</h3>
-                <p>Comprehensive network condition simulation</p>
-                <ul class="feature-list">
-                    <li>tc/netem integration</li>
+                <ul>
                     <li>Delay and jitter simulation</li>
-                    <li>Packet loss and corruption</li>
-                    <li>Bandwidth limiting</li>
-                    <li>Real-world scenarios</li>
+                    <li>Packet loss modeling</li>
+                    <li>Packet duplication</li>
+                    <li>Packet reordering</li>
+                    <li>Corruption simulation</li>
                 </ul>
             </div>
             
             <div class="feature-card">
                 <h3>🧪 Testing Framework</h3>
-                <p>Comprehensive testing and validation tools</p>
-                <ul class="feature-list">
+                <ul>
                     <li>Google Test integration</li>
-                    <li>PCAP diffing capabilities</li>
-                    <li>YAML scenario configuration</li>
+                    <li>PCAP file comparison</li>
                     <li>Regression test suites</li>
-                    <li>Coverage reporting</li>
+                    <li>Performance benchmarking</li>
+                    <li>Automated validation</li>
                 </ul>
             </div>
             
             <div class="feature-card">
                 <h3>💻 CLI Interface</h3>
-                <p>Powerful command-line interface for configuration</p>
-                <ul class="feature-list">
-                    <li>Interactive configuration</li>
+                <ul>
+                    <li>Interactive command line</li>
                     <li>Real-time monitoring</li>
+                    <li>Configuration management</li>
                     <li>Statistics display</li>
-                    <li>Scenario execution</li>
-                    <li>Help system</li>
+                    <li>Scenario loading</li>
                 </ul>
             </div>
             
             <div class="feature-card">
-                <h3>📊 Cloud Networking</h3>
-                <p>Modern cloud networking concepts and visualization</p>
-                <ul class="feature-list">
-                    <li>Multi-cloud connectivity</li>
-                    <li>SD-WAN simulation</li>
-                    <li>Load balancing</li>
-                    <li>Failover scenarios</li>
-                    <li>Performance monitoring</li>
+                <h3>📋 YAML Configuration</h3>
+                <ul>
+                    <li>Scenario-based testing</li>
+                    <li>Network topology definition</li>
+                    <li>Protocol configuration</li>
+                    <li>Test case automation</li>
+                    <li>Version control friendly</li>
                 </ul>
             </div>
         </div>
         
         <div class="demo-section">
-            <h2>Network Topology Demo</h2>
+            <h2>Cloud Networking Concepts</h2>
+            <p>This simulator demonstrates key cloud networking concepts including:</p>
+            
             <div class="network-diagram">
-                <div class="router-node">
-                    <h4>Router A</h4>
-                    <p>AS 65001</p>
-                    <p>BGP + OSPF</p>
-                </div>
-                <div class="connection"></div>
-                <div class="router-node">
-                    <h4>Router B</h4>
-                    <p>AS 65002</p>
-                    <p>BGP + IS-IS</p>
-                </div>
-                <div class="connection"></div>
-                <div class="router-node">
-                    <h4>Router C</h4>
-                    <p>AS 65003</p>
-                    <p>OSPF + IS-IS</p>
-                </div>
+                <svg width="800" height="400" viewBox="0 0 800 400">
+                    <!-- Cloud Infrastructure -->
+                    <rect x="50" y="50" width="700" height="300" fill="none" stroke="#667eea" stroke-width="3" stroke-dasharray="5,5" rx="20"/>
+                    <text x="400" y="40" text-anchor="middle" font-size="20" font-weight="bold" fill="#667eea">Cloud Infrastructure</text>
+                    
+                    <!-- Internet Gateway -->
+                    <rect x="100" y="100" width="80" height="60" fill="#4CAF50" rx="10"/>
+                    <text x="140" y="135" text-anchor="middle" font-size="12" fill="white">Internet Gateway</text>
+                    
+                    <!-- Load Balancer -->
+                    <rect x="250" y="100" width="80" height="60" fill="#FF9800" rx="10"/>
+                    <text x="290" y="135" text-anchor="middle" font-size="12" fill="white">Load Balancer</text>
+                    
+                    <!-- Router Simulator -->
+                    <rect x="400" y="100" width="80" height="60" fill="#2196F3" rx="10"/>
+                    <text x="440" y="125" text-anchor="middle" font-size="10" fill="white">Router</text>
+                    <text x="440" y="140" text-anchor="middle" font-size="10" fill="white">Simulator</text>
+                    
+                    <!-- Database -->
+                    <rect x="550" y="100" width="80" height="60" fill="#9C27B0" rx="10"/>
+                    <text x="590" y="135" text-anchor="middle" font-size="12" fill="white">Database</text>
+                    
+                    <!-- VPC Subnets -->
+                    <rect x="150" y="200" width="120" height="80" fill="#E3F2FD" stroke="#2196F3" stroke-width="2" rx="5"/>
+                    <text x="210" y="220" text-anchor="middle" font-size="14" font-weight="bold" fill="#2196F3">Public Subnet</text>
+                    <text x="210" y="240" text-anchor="middle" font-size="10" fill="#666">Web Servers</text>
+                    <text x="210" y="255" text-anchor="middle" font-size="10" fill="#666">Load Balancers</text>
+                    
+                    <rect x="300" y="200" width="120" height="80" fill="#F3E5F5" stroke="#9C27B0" stroke-width="2" rx="5"/>
+                    <text x="360" y="220" text-anchor="middle" font-size="14" font-weight="bold" fill="#9C27B0">Private Subnet</text>
+                    <text x="360" y="240" text-anchor="middle" font-size="10" fill="#666">Application</text>
+                    <text x="360" y="255" text-anchor="middle" font-size="10" fill="#666">Servers</text>
+                    
+                    <rect x="450" y="200" width="120" height="80" fill="#E8F5E8" stroke="#4CAF50" stroke-width="2" rx="5"/>
+                    <text x="510" y="220" text-anchor="middle" font-size="14" font-weight="bold" fill="#4CAF50">Database Subnet</text>
+                    <text x="510" y="240" text-anchor="middle" font-size="10" fill="#666">RDS Instances</text>
+                    <text x="510" y="255" text-anchor="middle" font-size="10" fill="#666">Cache Clusters</text>
+                    
+                    <!-- Connections -->
+                    <line x1="180" y1="130" x2="250" y2="130" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    <line x1="330" y1="130" x2="400" y2="130" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    <line x1="480" y1="130" x2="550" y2="130" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    
+                    <line x1="210" y1="160" x2="210" y2="200" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    <line x1="360" y1="160" x2="360" y2="200" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    <line x1="510" y1="160" x2="510" y2="200" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- Arrow marker -->
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#333"/>
+                        </marker>
+                    </defs>
+                </svg>
             </div>
             
-            <div class="stats">
-                <div class="stat-item">
-                    <div class="stat-number">3</div>
-                    <div class="stat-label">Routing Protocols</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-number">8</div>
-                    <div class="stat-label">Traffic Queues</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-number">100%</div>
-                    <div class="stat-label">Test Coverage</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-number">∞</div>
-                    <div class="stat-label">Scenarios</div>
-                </div>
+            <div class="code-block">
+                <pre><code># Example: BGP/OSPF Hybrid Cloud Router Configuration
+name: "Cloud Router Configuration"
+description: "Multi-protocol router for cloud infrastructure"
+
+interfaces:
+  - name: "public-eth0"
+    ip_address: "203.0.113.1"
+    subnet_mask: "255.255.255.252"
+    is_up: true
+  
+  - name: "private-eth1"
+    ip_address: "10.0.1.1"
+    subnet_mask: "255.255.255.0"
+    is_up: true
+
+bgp:
+  as_number: "65001"
+  router_id: "10.0.1.1"
+  neighbors:
+    - ip: "203.0.113.2"
+      as: "65002"
+
+ospf:
+  router_id: "10.0.1.1"
+  area: "0.0.0.0"
+  interfaces:
+    - "private-eth1"
+
+traffic_shaping:
+  token_bucket:
+    capacity: 1000000000  # 1GB
+    rate: 100000000      # 100MB/s
+  wfq_classes:
+    - class_id: 1
+      weight: 10  # High priority for control traffic
+    - class_id: 2
+      weight: 5   # Medium priority for data traffic
+    - class_id: 3
+      weight: 1   # Low priority for bulk transfers</code></pre>
             </div>
         </div>
         
@@ -366,121 +373,70 @@
             <h2>Quick Start</h2>
             <div class="code-block">
                 <pre><code># Clone the repository
-git clone https://github.com/yourusername/router-sim.git
-cd router-sim
+git clone https://github.com/yourusername/router-simulator.git
+cd router-simulator
+
+# Install dependencies
+sudo apt-get install build-essential cmake libyaml-cpp-dev libpcap-dev
+sudo apt-get install frr frr-dev
 
 # Build the project
 mkdir build && cd build
 cmake ..
 make -j$(nproc)
 
-# Run with basic configuration
-./router_sim -c ../examples/basic_router.yaml -i
+# Run tests
+./router_test
 
-# Execute test scenarios
-./router_sim -s ../examples/test_scenarios.yaml</code></pre>
-            </div>
-            
-            <div style="text-align: center;">
-                <a href="#" class="btn">Get Started</a>
-                <a href="#" class="btn btn-secondary">View Documentation</a>
-                <a href="#" class="btn btn-secondary">GitHub Repository</a>
+# Start the simulator
+sudo ./router_sim
+
+# Load a scenario
+load scenario scenarios/basic_router.yaml</code></pre>
             </div>
         </div>
         
         <div class="demo-section">
-            <h2>Example Configuration</h2>
+            <h2>Features in Action</h2>
             <div class="code-block">
-                <pre><code># Router Configuration
-router_id: 1.1.1.1
-hostname: production-router
-enable_bgp: true
-enable_ospf: true
-as_number: 65001
+                <pre><code>router> show interfaces
+Interface Status:
+=================
+Interface  IP Address      Subnet Mask     Status   MTU    
+--------------------------------------------------------
+lo         127.0.0.1      255.0.0.0       UP       65536  
+eth0       192.168.1.1    255.255.255.0   UP       1500   
+eth1       192.168.2.1    255.255.255.0   UP       1500   
 
-# Interface Configuration
-interfaces:
-  - name: eth0
-    ip_address: 192.168.1.1
-    subnet_mask: 255.255.255.0
-    bandwidth_mbps: 1000
-    
-# Traffic Shaping
-traffic_shaping:
-  eth0:
-    rate_bps: 100000000  # 100 Mbps
-    enable_wfq: true
-    num_queues: 8
-    
-# Network Impairments
-impairments:
-  eth0:
-    enable_delay: true
-    delay_ms: 50
-    enable_loss: true
-    loss_percent: 1.0</code></pre>
+router> show routes
+Routing Table:
+==============
+Network              Next Hop         Interface  Metric  Protocol
+---------------------------------------------------------------------
+192.168.1.0/24      0.0.0.0         eth0       1       connected
+192.168.2.0/24      0.0.0.0         eth1       1       connected
+0.0.0.0/0           192.168.1.254   eth0       1       static
+
+router> start bgp 65001 192.168.1.1
+BGP started successfully
+
+router> configure traffic-shaping 1000000 100000
+Traffic shaping configured: capacity=1000000, rate=100000
+
+router> configure netem eth0 10.0 0.1
+Netem impairments applied to eth0</code></pre>
             </div>
         </div>
         
-        <div class="demo-section">
-            <h2>Test Scenarios</h2>
-            <p>The simulator includes comprehensive test scenarios for various networking scenarios:</p>
-            <ul style="margin: 20px 0; padding-left: 20px;">
-                <li><strong>Basic Connectivity Test:</strong> Interface configuration and protocol startup</li>
-                <li><strong>Traffic Shaping Test:</strong> QoS and rate limiting validation</li>
-                <li><strong>Network Impairments Test:</strong> Delay, loss, and corruption simulation</li>
-                <li><strong>Protocol Convergence Test:</strong> Failover and recovery scenarios</li>
-                <li><strong>Load Balancing Test:</strong> Multi-path routing validation</li>
-                <li><strong>Security Test:</strong> Access control and filtering</li>
-            </ul>
-        </div>
-        
-        <div class="footer">
-            <p>&copy; 2024 Multi-Protocol Router Simulator. Built with C++, FRR, and modern networking principles.</p>
+        <div style="text-align: center; margin: 40px 0;">
+            <a href="https://github.com/yourusername/router-simulator" class="btn">View on GitHub</a>
+            <a href="https://github.com/yourusername/router-simulator/releases" class="btn">Download</a>
+            <a href="https://github.com/yourusername/router-simulator/wiki" class="btn">Documentation</a>
         </div>
     </div>
     
-    <script>
-        // Add some interactive features
-        document.addEventListener('DOMContentLoaded', function() {
-            // Animate stats on scroll
-            const observer = new IntersectionObserver((entries) => {
-                entries.forEach(entry => {
-                    if (entry.isIntersecting) {
-                        entry.target.style.animation = 'fadeInUp 0.6s ease forwards';
-                    }
-                });
-            });
-            
-            document.querySelectorAll('.stat-item').forEach(item => {
-                observer.observe(item);
-            });
-            
-            // Add click handlers for demo buttons
-            document.querySelectorAll('.btn').forEach(btn => {
-                btn.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    // Add your demo functionality here
-                    console.log('Demo button clicked:', this.textContent);
-                });
-            });
-        });
-        
-        // Add CSS animation
-        const style = document.createElement('style');
-        style.textContent = `
-            @keyframes fadeInUp {
-                from {
-                    opacity: 0;
-                    transform: translateY(30px);
-                }
-                to {
-                    opacity: 1;
-                    transform: translateY(0);
-                }
-            }
-        `;
-        document.head.appendChild(style);
-    </script>
+    <div class="footer">
+        <p>&copy; 2024 Multi-Protocol Router Simulator. Built with C++, FRR, and modern networking concepts.</p>
+    </div>
 </body>
 </html>

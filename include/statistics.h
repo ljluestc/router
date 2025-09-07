@@ -1,207 +1,231 @@
 #pragma once
 
 #include <string>
-#include <vector>
 #include <map>
-#include <memory>
+#include <vector>
 #include <mutex>
 #include <chrono>
 #include <atomic>
+#include <thread>
 
 namespace RouterSim {
 
-// Statistics categories
-enum class StatCategory {
-    INTERFACE,
-    PROTOCOL,
-    TRAFFIC_SHAPING,
-    NETEM_IMPAIRMENTS,
-    PACKET_PROCESSING,
-    ROUTING,
-    SYSTEM
+// Forward declarations
+enum class StatCategory;
+
+// Statistics counter
+class StatCounter {
+public:
+    StatCounter(const std::string& name, const std::string& description, StatCategory category);
+    ~StatCounter() = default;
+    
+    void increment(uint64_t value = 1);
+    void decrement(uint64_t value = 1);
+    void set_value(uint64_t value);
+    uint64_t get_value() const;
+    void reset();
+    
+    std::string get_name() const { return name_; }
+    std::string get_description() const { return description_; }
+    StatCategory get_category() const { return category_; }
+    std::chrono::steady_clock::time_point get_last_update() const { return last_update_; }
+    
+private:
+    std::string name_;
+    std::string description_;
+    StatCategory category_;
+    std::atomic<uint64_t> value_;
+    std::chrono::steady_clock::time_point last_update_;
 };
 
-// Statistics data types
-enum class StatType {
-    COUNTER,
-    GAUGE,
-    HISTOGRAM,
-    RATE
+// Statistics gauge
+class StatGauge {
+public:
+    StatGauge(const std::string& name, const std::string& description, StatCategory category);
+    ~StatGauge() = default;
+    
+    void set_value(uint64_t value);
+    uint64_t get_value() const;
+    void reset();
+    
+    std::string get_name() const { return name_; }
+    std::string get_description() const { return description_; }
+    StatCategory get_category() const { return category_; }
+    std::chrono::steady_clock::time_point get_last_update() const { return last_update_; }
+    
+private:
+    std::string name_;
+    std::string description_;
+    StatCategory category_;
+    std::atomic<uint64_t> value_;
+    std::chrono::steady_clock::time_point last_update_;
 };
 
-// Individual statistic
-struct Statistic {
-    std::string name;
-    std::string description;
-    StatType type;
-    StatCategory category;
-    uint64_t value;
-    std::chrono::steady_clock::time_point timestamp;
-    std::map<std::string, std::string> tags;
+// Statistics histogram
+class StatHistogram {
+public:
+    StatHistogram(const std::string& name, const std::string& description, StatCategory category,
+                  const std::vector<double>& buckets);
+    ~StatHistogram() = default;
+    
+    void observe(double value);
+    void reset();
+    
+    std::string get_name() const { return name_; }
+    std::string get_description() const { return description_; }
+    StatCategory get_category() const { return category_; }
+    
+    uint64_t get_count() const;
+    double get_sum() const;
+    std::vector<uint64_t> get_bucket_counts() const;
+    std::vector<double> get_buckets() const;
+    double get_percentile(double percentile) const;
+    
+private:
+    std::string name_;
+    std::string description_;
+    StatCategory category_;
+    std::vector<double> buckets_;
+    std::atomic<uint64_t> count_;
+    std::atomic<double> sum_;
+    std::vector<std::atomic<uint64_t>> bucket_counts_;
+    mutable std::mutex mutex_;
 };
 
-// Statistics collector class
+// Statistics summary
+class StatSummary {
+public:
+    StatSummary(const std::string& name, const std::string& description, StatCategory category);
+    ~StatSummary() = default;
+    
+    void observe(double value);
+    void reset();
+    
+    std::string get_name() const { return name_; }
+    std::string get_description() const { return description_; }
+    StatCategory get_category() const { return category_; }
+    
+    uint64_t get_count() const;
+    double get_sum() const;
+    double get_min() const;
+    double get_max() const;
+    double get_mean() const;
+    double get_std_dev() const;
+    double get_percentile(double percentile) const;
+    
+private:
+    std::string name_;
+    std::string description_;
+    StatCategory category_;
+    std::atomic<uint64_t> count_;
+    std::atomic<double> sum_;
+    std::atomic<double> min_;
+    std::atomic<double> max_;
+    std::vector<double> values_;
+    mutable std::mutex mutex_;
+};
+
+// Main statistics collector
 class Statistics {
 public:
     Statistics();
-    ~Statistics() = default;
-
-    // Counter operations
+    ~Statistics();
+    
+    // Counter management
+    bool register_counter(const std::string& name, const std::string& description, StatCategory category);
+    bool unregister_counter(const std::string& name);
+    StatCounter* get_counter(const std::string& name) const;
     void increment_counter(const std::string& name, uint64_t value = 1);
     void decrement_counter(const std::string& name, uint64_t value = 1);
-    void set_counter(const std::string& name, uint64_t value);
-
-    // Gauge operations
-    void set_gauge(const std::string& name, uint64_t value);
-    void increment_gauge(const std::string& name, uint64_t value = 1);
-    void decrement_gauge(const std::string& name, uint64_t value = 1);
-
-    // Histogram operations
-    void record_histogram(const std::string& name, uint64_t value);
-    void record_histogram_bucket(const std::string& name, uint64_t value, uint64_t count);
-
-    // Rate operations
-    void record_rate(const std::string& name, uint64_t value);
-    void record_rate_per_second(const std::string& name, uint64_t value);
-
-    // Statistic queries
-    uint64_t get_counter(const std::string& name) const;
-    uint64_t get_gauge(const std::string& name) const;
-    std::map<uint64_t, uint64_t> get_histogram(const std::string& name) const;
-    double get_rate(const std::string& name) const;
-
-    // Bulk operations
+    void set_counter_value(const std::string& name, uint64_t value);
+    uint64_t get_counter_value(const std::string& name) const;
+    
+    // Gauge management
+    bool register_gauge(const std::string& name, const std::string& description, StatCategory category);
+    bool unregister_gauge(const std::string& name);
+    StatGauge* get_gauge(const std::string& name) const;
+    void set_gauge_value(const std::string& name, uint64_t value);
+    uint64_t get_gauge_value(const std::string& name) const;
+    
+    // Histogram management
+    bool register_histogram(const std::string& name, const std::string& description, StatCategory category,
+                           const std::vector<double>& buckets);
+    bool unregister_histogram(const std::string& name);
+    StatHistogram* get_histogram(const std::string& name) const;
+    void observe_histogram(const std::string& name, double value);
+    
+    // Summary management
+    bool register_summary(const std::string& name, const std::string& description, StatCategory category);
+    bool unregister_summary(const std::string& name);
+    StatSummary* get_summary(const std::string& name) const;
+    void observe_summary(const std::string& name, double value);
+    
+    // Statistics retrieval
     std::map<std::string, uint64_t> get_all_counters() const;
     std::map<std::string, uint64_t> get_all_gauges() const;
-    std::map<std::string, std::map<uint64_t, uint64_t>> get_all_histograms() const;
-    std::map<std::string, double> get_all_rates() const;
-
-    // Category filtering
+    std::map<std::string, std::vector<uint64_t>> get_all_histograms() const;
+    std::map<std::string, std::map<std::string, double>> get_all_summaries() const;
+    
+    // Category-based retrieval
     std::map<std::string, uint64_t> get_counters_by_category(StatCategory category) const;
     std::map<std::string, uint64_t> get_gauges_by_category(StatCategory category) const;
-
-    // Statistics management
-    void reset_statistics();
-    void reset_statistics_by_category(StatCategory category);
-    void reset_statistic(const std::string& name);
-
-    // Statistics registration
-    void register_counter(const std::string& name, const std::string& description, 
-                         StatCategory category, const std::map<std::string, std::string>& tags = {});
-    void register_gauge(const std::string& name, const std::string& description,
-                       StatCategory category, const std::map<std::string, std::string>& tags = {});
-    void register_histogram(const std::string& name, const std::string& description,
-                           StatCategory category, const std::map<std::string, std::string>& tags = {});
-    void register_rate(const std::string& name, const std::string& description,
-                      StatCategory category, const std::map<std::string, std::string>& tags = {});
-
+    std::map<std::string, std::vector<uint64_t>> get_histograms_by_category(StatCategory category) const;
+    std::map<std::string, std::map<std::string, double>> get_summaries_by_category(StatCategory category) const;
+    
     // Statistics export
-    std::string export_json() const;
-    std::string export_prometheus() const;
-    std::string export_csv() const;
+    std::string export_to_json() const;
+    std::string export_to_prometheus() const;
+    std::string export_to_csv() const;
     bool export_to_file(const std::string& filename, const std::string& format = "json") const;
-
+    
     // Statistics import
-    bool import_from_file(const std::string& filename, const std::string& format = "json");
-    bool import_json(const std::string& json_data);
-    bool import_prometheus(const std::string& prometheus_data);
-
-    // Statistics aggregation
-    std::map<std::string, uint64_t> aggregate_counters(const std::vector<std::string>& names) const;
-    double calculate_average_rate(const std::string& name, uint32_t window_seconds = 60) const;
-    uint64_t calculate_total(const std::vector<std::string>& names) const;
-
-    // Statistics validation
-    bool is_valid_statistic(const std::string& name) const;
-    bool is_counter(const std::string& name) const;
-    bool is_gauge(const std::string& name) const;
-    bool is_histogram(const std::string& name) const;
-    bool is_rate(const std::string& name) const;
-
-private:
-    // Internal storage
-    std::map<std::string, Statistic> statistics_;
-    mutable std::mutex statistics_mutex_;
-
-    // Rate calculation
-    struct RateData {
-        std::vector<std::pair<std::chrono::steady_clock::time_point, uint64_t>> samples;
-        std::chrono::steady_clock::time_point last_calculation;
-        double current_rate;
-    };
-    std::map<std::string, RateData> rate_data_;
-
-    // Helper methods
-    void update_timestamp(const std::string& name);
-    double calculate_rate(const std::string& name) const;
-    void cleanup_old_rate_samples(const std::string& name);
-};
-
-// Statistics utilities
-class StatisticsUtils {
-public:
-    // Formatting
-    static std::string format_number(uint64_t value);
-    static std::string format_bytes(uint64_t bytes);
-    static std::string format_rate(double rate);
-    static std::string format_percentage(double percentage);
-
-    // Conversion
-    static std::string category_to_string(StatCategory category);
-    static std::string type_to_string(StatType type);
-    static StatCategory string_to_category(const std::string& str);
-    static StatType string_to_type(const std::string& str);
-
-    // Validation
-    static bool is_valid_category(const std::string& category);
-    static bool is_valid_type(const std::string& type);
-    static bool is_valid_statistic_name(const std::string& name);
-
-    // Aggregation
-    static uint64_t sum_counters(const std::map<std::string, uint64_t>& counters);
-    static double average_gauges(const std::map<std::string, uint64_t>& gauges);
-    static uint64_t max_value(const std::map<std::string, uint64_t>& values);
-    static uint64_t min_value(const std::map<std::string, uint64_t>& values);
-};
-
-// Statistics monitor for real-time monitoring
-class StatisticsMonitor {
-public:
-    StatisticsMonitor(std::shared_ptr<Statistics> stats);
-    ~StatisticsMonitor();
-
-    // Monitoring control
-    void start_monitoring(uint32_t interval_ms = 1000);
+    bool import_from_json(const std::string& json_data);
+    bool import_from_file(const std::string& filename);
+    
+    // Statistics management
+    void reset_all();
+    void reset_by_category(StatCategory category);
+    void reset_by_name(const std::string& name);
+    
+    // Monitoring
+    void start_monitoring();
     void stop_monitoring();
     bool is_monitoring() const;
-
-    // Alert configuration
-    void set_counter_alert(const std::string& name, uint64_t threshold, 
-                          std::function<void(const std::string&, uint64_t)> callback);
-    void set_gauge_alert(const std::string& name, uint64_t threshold,
-                        std::function<void(const std::string&, uint64_t)> callback);
-    void set_rate_alert(const std::string& name, double threshold,
-                       std::function<void(const std::string&, double)> callback);
-
-    // Monitoring callbacks
-    void register_monitoring_callback(std::function<void(const std::map<std::string, uint64_t>&)> callback);
-
+    
+    // Statistics snapshot
+    struct StatisticsSnapshot {
+        std::map<std::string, uint64_t> counters;
+        std::map<std::string, uint64_t> gauges;
+        std::map<std::string, std::vector<uint64_t>> histograms;
+        std::map<std::string, std::map<std::string, double>> summaries;
+        std::chrono::steady_clock::time_point timestamp;
+    };
+    
+    StatisticsSnapshot get_snapshot() const;
+    std::vector<StatisticsSnapshot> get_snapshots(uint32_t count) const;
+    
 private:
-    std::shared_ptr<Statistics> statistics_;
+    std::map<std::string, std::unique_ptr<StatCounter>> counters_;
+    std::map<std::string, std::unique_ptr<StatGauge>> gauges_;
+    std::map<std::string, std::unique_ptr<StatHistogram>> histograms_;
+    std::map<std::string, std::unique_ptr<StatSummary>> summaries_;
+    
     std::atomic<bool> monitoring_;
     std::thread monitoring_thread_;
-    uint32_t interval_ms_;
-
-    // Alert configuration
-    std::map<std::string, std::pair<uint64_t, std::function<void(const std::string&, uint64_t)>>> counter_alerts_;
-    std::map<std::string, std::pair<uint64_t, std::function<void(const std::string&, uint64_t)>>> gauge_alerts_;
-    std::map<std::string, std::pair<double, std::function<void(const std::string&, double)>>> rate_alerts_;
-
-    // Monitoring callbacks
-    std::function<void(const std::map<std::string, uint64_t>&)> monitoring_callback_;
-
+    std::vector<StatisticsSnapshot> snapshots_;
+    mutable std::mutex counters_mutex_;
+    mutable std::mutex gauges_mutex_;
+    mutable std::mutex histograms_mutex_;
+    mutable std::mutex summaries_mutex_;
+    mutable std::mutex snapshots_mutex_;
+    
+    // Internal methods
     void monitoring_loop();
-    void check_alerts();
+    void take_snapshot();
+    std::string serialize_counter(const StatCounter& counter) const;
+    std::string serialize_gauge(const StatGauge& gauge) const;
+    std::string serialize_histogram(const StatHistogram& histogram) const;
+    std::string serialize_summary(const StatSummary& summary) const;
 };
 
 } // namespace RouterSim

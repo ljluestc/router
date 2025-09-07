@@ -1,0 +1,94 @@
+name: "IS-IS Service Provider Network"
+description: "Service provider router with IS-IS for internal routing"
+
+interfaces:
+  - name: "eth0"
+    ip_address: "172.16.1.1"
+    subnet_mask: "255.255.255.0"
+    is_up: true
+    mtu: 1500
+  
+  - name: "eth1"
+    ip_address: "172.16.2.1"
+    subnet_mask: "255.255.255.0"
+    is_up: true
+    mtu: 1500
+  
+  - name: "eth2"
+    ip_address: "172.16.3.1"
+    subnet_mask: "255.255.255.0"
+    is_up: true
+    mtu: 1500
+
+routes:
+  - network: "172.16.1.0/24"
+    next_hop: "0.0.0.0"
+    interface: "eth0"
+    metric: 1
+    protocol: "connected"
+    is_active: true
+  
+  - network: "172.16.2.0/24"
+    next_hop: "0.0.0.0"
+    interface: "eth1"
+    metric: 1
+    protocol: "connected"
+    is_active: true
+  
+  - network: "172.16.3.0/24"
+    next_hop: "0.0.0.0"
+    interface: "eth2"
+    metric: 1
+    protocol: "connected"
+    is_active: true
+
+isis:
+  system_id: "0000.0000.0001"
+  area_id: "49.0001"
+  interfaces:
+    - name: "eth0"
+      level: 2
+    - name: "eth1"
+      level: 2
+    - name: "eth2"
+      level: 2
+
+traffic_shaping:
+  token_bucket:
+    capacity: 100000000
+    rate: 10000000
+  wfq_classes:
+    - class_id: 1
+      weight: 1
+    - class_id: 2
+      weight: 5
+    - class_id: 3
+      weight: 10
+    - class_id: 4
+      weight: 20
+
+netem:
+  - interface: "eth0"
+    delay_ms: 5.0
+    jitter_ms: 1.0
+    loss_percent: 0.01
+    rate_bps: 10000000000
+  
+  - interface: "eth1"
+    delay_ms: 3.0
+    jitter_ms: 0.5
+    loss_percent: 0.005
+    rate_bps: 10000000000
+  
+  - interface: "eth2"
+    delay_ms: 8.0
+    jitter_ms: 2.0
+    loss_percent: 0.02
+    rate_bps: 10000000000
+
+test_commands:
+  - "show interfaces"
+  - "show routes"
+  - "start isis 0000.0000.0001 49.0001"
+  - "configure traffic-shaping 100000000 10000000"
+  - "configure netem eth0 5.0 0.01"

@@ -5,370 +5,296 @@
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+echo "🔧 Multi-Protocol Router Simulator Build Script"
+echo "================================================"
 
-# Configuration
-BUILD_TYPE=${BUILD_TYPE:-Release}
-BUILD_DIR=${BUILD_DIR:-build}
-INSTALL_PREFIX=${INSTALL_PREFIX:-/usr/local}
-ENABLE_COVERAGE=${ENABLE_COVERAGE:-OFF}
-ENABLE_TESTS=${ENABLE_TESTS:-ON}
-ENABLE_DOCS=${ENABLE_DOCS:-OFF}
-
-# Function to print colored output
-print_status() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+# Check if running as root for system dependencies
+if [[ $EUID -eq 0 ]]; then
+   echo "❌ Please do not run this script as root"
+   exit 1
+fi
 
 # Function to check if command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Function to check dependencies
-check_dependencies() {
-    print_status "Checking dependencies..."
+# Function to install dependencies based on OS
+install_dependencies() {
+    echo "📦 Installing dependencies..."
     
-    local missing_deps=()
-    
-    # Check for required commands
-    if ! command_exists cmake; then
-        missing_deps+=("cmake")
+    if command_exists apt-get; then
+        # Ubuntu/Debian
+        echo "Detected Ubuntu/Debian system"
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake libyaml-cpp-dev libpcap-dev
+        sudo apt-get install -y frr frr-dev
+        sudo apt-get install -y valgrind cppcheck
+        sudo apt-get install -y doxygen graphviz
+        
+    elif command_exists yum; then
+        # CentOS/RHEL
+        echo "Detected CentOS/RHEL system"
+        sudo yum install -y gcc-c++ cmake yaml-cpp-devel libpcap-devel
+        sudo yum install -y frr frr-devel
+        sudo yum install -y valgrind cppcheck
+        sudo yum install -y doxygen graphviz
+        
+    elif command_exists brew; then
+        # macOS
+        echo "Detected macOS system"
+        brew install cmake yaml-cpp libpcap
+        brew install --cask frr
+        
+    else
+        echo "❌ Unsupported operating system"
+        echo "Please install the following dependencies manually:"
+        echo "  - CMake 3.16+"
+        echo "  - C++17 compiler (GCC 7+ or Clang 5+)"
+        echo "  - yaml-cpp"
+        echo "  - libpcap"
+        echo "  - FRR (Free Range Routing)"
+        exit 1
     fi
-    
-    if ! command_exists make; then
-        missing_deps+=("make")
-    fi
-    
-    if ! command_exists g++; then
-        missing_deps+=("g++")
-    fi
-    
-    # Check for required libraries
-    if ! pkg-config --exists libpcap; then
-        missing_deps+=("libpcap-dev")
-    fi
-    
-    if ! pkg-config --exists yaml-cpp; then
-        missing_deps+=("libyaml-cpp-dev")
-    fi
-    
-    if ! command_exists tc; then
-        missing_deps+=("iproute2")
-    fi
+}
+
+# Function to check FRR installation
+check_frr() {
+    echo "🔍 Checking FRR installation..."
     
     if ! command_exists vtysh; then
-        missing_deps+=("frr")
-    fi
-    
-    if [ ${#missing_deps[@]} -ne 0 ]; then
-        print_error "Missing dependencies: ${missing_deps[*]}"
-        print_status "Install them with:"
-        print_status "sudo apt-get install -y ${missing_deps[*]}"
+        echo "❌ FRR not found. Please install FRR routing suite."
+        echo "On Ubuntu/Debian: sudo apt-get install frr frr-dev"
+        echo "On CentOS/RHEL: sudo yum install frr frr-devel"
         exit 1
     fi
     
-    print_success "All dependencies found"
+    echo "✅ FRR found: $(vtysh --version 2>&1 | head -n1)"
 }
 
-# Function to install dependencies
-install_dependencies() {
-    print_status "Installing dependencies..."
+# Function to check netem module
+check_netem() {
+    echo "🔍 Checking netem module..."
     
-    if command_exists apt-get; then
-        sudo apt-get update
-        sudo apt-get install -y \
-            build-essential \
-            cmake \
-            libpcap-dev \
-            libyaml-cpp-dev \
-            frr \
-            iproute2 \
-            net-tools \
-            pkg-config
-    elif command_exists yum; then
-        sudo yum install -y \
-            gcc-c++ \
-            cmake \
-            libpcap-devel \
-            yaml-cpp-devel \
-            frr \
-            iproute \
-            net-tools \
-            pkgconfig
-    elif command_exists brew; then
-        brew install cmake libpcap yaml-cpp
+    if ! lsmod | grep -q sch_netem; then
+        echo "⚠️  netem module not loaded. Loading it now..."
+        if sudo modprobe sch_netem; then
+            echo "✅ netem module loaded successfully"
+        else
+            echo "❌ Failed to load netem module. Network impairments may not work."
+        fi
     else
-        print_warning "Unknown package manager. Please install dependencies manually."
+        echo "✅ netem module is loaded"
     fi
-}
-
-# Function to create build directory
-create_build_dir() {
-    print_status "Creating build directory..."
-    
-    if [ -d "$BUILD_DIR" ]; then
-        print_warning "Build directory exists. Cleaning..."
-        rm -rf "$BUILD_DIR"
-    fi
-    
-    mkdir -p "$BUILD_DIR"
-    cd "$BUILD_DIR"
-}
-
-# Function to configure with CMake
-configure_cmake() {
-    print_status "Configuring with CMake..."
-    
-    local cmake_args=(
-        -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
-        -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX"
-        -DENABLE_COVERAGE="$ENABLE_COVERAGE"
-        -DENABLE_TESTS="$ENABLE_TESTS"
-        -DENABLE_DOCS="$ENABLE_DOCS"
-    )
-    
-    if [ "$ENABLE_COVERAGE" = "ON" ]; then
-        cmake_args+=(-DCMAKE_CXX_FLAGS="--coverage")
-    fi
-    
-    cmake "${cmake_args[@]}" ..
-    
-    print_success "CMake configuration complete"
 }
 
 # Function to build the project
 build_project() {
-    print_status "Building project..."
+    echo "🏗️  Building project..."
     
-    local jobs=$(nproc)
-    if [ "$jobs" -gt 8 ]; then
-        jobs=8
-    fi
+    # Create build directory
+    mkdir -p build
+    cd build
     
-    make -j"$jobs"
+    # Configure with CMake
+    echo "Configuring with CMake..."
+    cmake -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror" \
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+          ..
     
-    print_success "Build complete"
+    # Build
+    echo "Compiling..."
+    make -j$(nproc)
+    
+    echo "✅ Build completed successfully"
 }
 
 # Function to run tests
 run_tests() {
-    if [ "$ENABLE_TESTS" = "ON" ]; then
-        print_status "Running tests..."
-        
-        if [ -f "router_sim_test" ]; then
-            ./router_sim_test
-            print_success "Tests passed"
-        else
-            print_warning "Test executable not found"
-        fi
-    fi
-}
-
-# Function to install the project
-install_project() {
-    print_status "Installing project..."
+    echo "🧪 Running tests..."
     
-    sudo make install
+    cd build
     
-    print_success "Installation complete"
-}
-
-# Function to generate coverage report
-generate_coverage() {
-    if [ "$ENABLE_COVERAGE" = "ON" ]; then
-        print_status "Generating coverage report..."
-        
-        if command_exists gcov; then
-            gcov -r .
-            if command_exists lcov; then
-                lcov --capture --directory . --output-file coverage.info
-                lcov --remove coverage.info '/usr/*' --output-file coverage.info
-                lcov --list coverage.info
-            fi
-        fi
-        
-        print_success "Coverage report generated"
-    fi
-}
-
-# Function to create package
-create_package() {
-    print_status "Creating package..."
-    
-    if command_exists cpack; then
-        cpack
-        print_success "Package created"
+    if [ -f "./router_test" ]; then
+        ./router_test
+        echo "✅ All tests passed"
     else
-        print_warning "CPack not available"
+        echo "❌ Test executable not found"
+        exit 1
     fi
 }
 
-# Function to clean up
-cleanup() {
-    print_status "Cleaning up..."
+# Function to run static analysis
+run_static_analysis() {
+    echo "🔍 Running static analysis..."
     
-    if [ -d "$BUILD_DIR" ]; then
-        rm -rf "$BUILD_DIR"
+    if command_exists cppcheck; then
+        cppcheck --enable=all --error-exitcode=1 src/ include/ || true
+        echo "✅ Static analysis completed"
+    else
+        echo "⚠️  cppcheck not found, skipping static analysis"
     fi
+}
+
+# Function to generate documentation
+generate_docs() {
+    echo "📚 Generating documentation..."
     
-    print_success "Cleanup complete"
+    if command_exists doxygen; then
+        cd build
+        if [ -f "Doxyfile" ]; then
+            doxygen
+            echo "✅ Documentation generated in build/docs/html/"
+        else
+            echo "⚠️  Doxyfile not found, skipping documentation generation"
+        fi
+    else
+        echo "⚠️  doxygen not found, skipping documentation generation"
+    fi
 }
 
-# Function to show help
-show_help() {
-    echo "Multi-Protocol Router Simulator Build Script"
-    echo ""
-    echo "Usage: $0 [OPTIONS]"
-    echo ""
-    echo "Options:"
-    echo "  -h, --help              Show this help message"
-    echo "  -d, --deps              Install dependencies"
-    echo "  -c, --clean             Clean build directory"
-    echo "  -t, --test              Run tests"
-    echo "  -i, --install           Install the project"
-    echo "  -p, --package           Create package"
-    echo "  -g, --coverage          Enable coverage reporting"
-    echo "  --build-type TYPE       Set build type (Debug, Release, RelWithDebInfo)"
-    echo "  --build-dir DIR         Set build directory"
-    echo "  --install-prefix PREFIX Set install prefix"
-    echo "  --no-tests              Disable tests"
-    echo "  --docs                  Enable documentation"
-    echo ""
-    echo "Environment variables:"
-    echo "  BUILD_TYPE              Build type (default: Release)"
-    echo "  BUILD_DIR               Build directory (default: build)"
-    echo "  INSTALL_PREFIX          Install prefix (default: /usr/local)"
-    echo "  ENABLE_COVERAGE         Enable coverage (default: OFF)"
-    echo "  ENABLE_TESTS            Enable tests (default: ON)"
-    echo "  ENABLE_DOCS             Enable docs (default: OFF)"
+# Function to create installation package
+create_package() {
+    echo "📦 Creating installation package..."
+    
+    cd build
+    
+    # Create package directory
+    mkdir -p router-simulator-package/bin
+    mkdir -p router-simulator-package/scenarios
+    mkdir -p router-simulator-package/docs
+    
+    # Copy binaries
+    cp router_sim router-simulator-package/bin/
+    cp router_test router-simulator-package/bin/
+    
+    # Copy scenarios
+    cp -r ../scenarios/* router-simulator-package/scenarios/
+    
+    # Copy documentation
+    cp -r ../docs/* router-simulator-package/docs/
+    cp ../README.md router-simulator-package/
+    
+    # Create install script
+    cat > router-simulator-package/install.sh << 'EOF'
+#!/bin/bash
+echo "Installing Router Simulator..."
+sudo cp bin/* /usr/local/bin/
+sudo mkdir -p /usr/local/share/router-simulator
+sudo cp -r scenarios /usr/local/share/router-simulator/
+sudo cp -r docs /usr/local/share/router-simulator/
+echo "Installation completed!"
+echo "Run 'router_sim' to start the simulator"
+EOF
+    chmod +x router-simulator-package/install.sh
+    
+    # Create tarball
+    tar -czf router-simulator-$(date +%Y%m%d).tar.gz router-simulator-package/
+    
+    echo "✅ Package created: router-simulator-$(date +%Y%m%d).tar.gz"
 }
 
-# Main function
+# Main execution
 main() {
-    local install_deps=false
-    local clean_build=false
-    local run_tests_flag=false
-    local install_flag=false
-    local package_flag=false
-    local coverage_flag=false
-    local no_tests=false
-    local docs_flag=false
+    echo "Starting build process..."
     
     # Parse command line arguments
+    INSTALL_DEPS=false
+    RUN_TESTS=false
+    RUN_ANALYSIS=false
+    GENERATE_DOCS=false
+    CREATE_PACKAGE=false
+    
     while [[ $# -gt 0 ]]; do
         case $1 in
-            -h|--help)
-                show_help
-                exit 0
-                ;;
-            -d|--deps)
-                install_deps=true
+            --install-deps)
+                INSTALL_DEPS=true
                 shift
                 ;;
-            -c|--clean)
-                clean_build=true
+            --test)
+                RUN_TESTS=true
                 shift
                 ;;
-            -t|--test)
-                run_tests_flag=true
-                shift
-                ;;
-            -i|--install)
-                install_flag=true
-                shift
-                ;;
-            -p|--package)
-                package_flag=true
-                shift
-                ;;
-            -g|--coverage)
-                coverage_flag=true
-                ENABLE_COVERAGE=ON
-                shift
-                ;;
-            --build-type)
-                BUILD_TYPE="$2"
-                shift 2
-                ;;
-            --build-dir)
-                BUILD_DIR="$2"
-                shift 2
-                ;;
-            --install-prefix)
-                INSTALL_PREFIX="$2"
-                shift 2
-                ;;
-            --no-tests)
-                no_tests=true
-                ENABLE_TESTS=OFF
+            --analyze)
+                RUN_ANALYSIS=true
                 shift
                 ;;
             --docs)
-                docs_flag=true
-                ENABLE_DOCS=ON
+                GENERATE_DOCS=true
                 shift
                 ;;
+            --package)
+                CREATE_PACKAGE=true
+                shift
+                ;;
+            --all)
+                INSTALL_DEPS=true
+                RUN_TESTS=true
+                RUN_ANALYSIS=true
+                GENERATE_DOCS=true
+                CREATE_PACKAGE=true
+                shift
+                ;;
+            -h|--help)
+                echo "Usage: $0 [OPTIONS]"
+                echo "Options:"
+                echo "  --install-deps    Install system dependencies"
+                echo "  --test           Run tests after building"
+                echo "  --analyze        Run static analysis"
+                echo "  --docs           Generate documentation"
+                echo "  --package        Create installation package"
+                echo "  --all            Run all steps"
+                echo "  -h, --help       Show this help message"
+                exit 0
+                ;;
             *)
-                print_error "Unknown option: $1"
-                show_help
+                echo "Unknown option: $1"
                 exit 1
                 ;;
         esac
     done
     
-    # Execute actions
-    if [ "$install_deps" = true ]; then
+    # Install dependencies if requested
+    if [ "$INSTALL_DEPS" = true ]; then
         install_dependencies
     fi
     
-    if [ "$clean_build" = true ]; then
-        cleanup
-        exit 0
-    fi
+    # Check system requirements
+    check_frr
+    check_netem
     
-    check_dependencies
-    create_build_dir
-    configure_cmake
+    # Build project
     build_project
     
-    if [ "$run_tests_flag" = true ] || [ "$ENABLE_TESTS" = "ON" ]; then
+    # Run tests if requested
+    if [ "$RUN_TESTS" = true ]; then
         run_tests
     fi
     
-    if [ "$install_flag" = true ]; then
-        install_project
+    # Run static analysis if requested
+    if [ "$RUN_ANALYSIS" = true ]; then
+        run_static_analysis
     fi
     
-    if [ "$package_flag" = true ]; then
+    # Generate documentation if requested
+    if [ "$GENERATE_DOCS" = true ]; then
+        generate_docs
+    fi
+    
+    # Create package if requested
+    if [ "$CREATE_PACKAGE" = true ]; then
         create_package
     fi
     
-    if [ "$coverage_flag" = true ]; then
-        generate_coverage
-    fi
-    
-    print_success "Build process completed successfully!"
-    print_status "Build directory: $BUILD_DIR"
-    print_status "Build type: $BUILD_TYPE"
-    print_status "Install prefix: $INSTALL_PREFIX"
+    echo ""
+    echo "🎉 Build process completed successfully!"
+    echo ""
+    echo "Next steps:"
+    echo "  - Run tests: ./build/router_test"
+    echo "  - Start simulator: sudo ./build/router_sim"
+    echo "  - Load scenario: load scenario scenarios/basic_router.yaml"
+    echo ""
 }
 
 # Run main function with all arguments

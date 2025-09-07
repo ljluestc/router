@@ -1,17 +1,16 @@
 #include "traffic_shaping.h"
-#include <iostream>
 #include <algorithm>
 #include <chrono>
 
-using namespace RouterSim;
+namespace RouterSim {
 
-// TokenBucket implementation
-TokenBucket::TokenBucket(uint32_t rate_bps, uint32_t burst_size)
-    : rate_bps_(rate_bps), burst_size_(burst_size), tokens_(burst_size),
-      last_refill_(std::chrono::steady_clock::now()) {
+// TokenBucket Implementation
+TokenBucket::TokenBucket(uint64_t capacity, uint64_t refill_rate)
+    : capacity_(capacity), refill_rate_(refill_rate), tokens_(capacity) {
+    last_refill_ = std::chrono::steady_clock::now();
 }
 
-bool TokenBucket::consume_tokens(uint32_t tokens) {
+bool TokenBucket::consume_tokens(uint64_t tokens) {
     std::lock_guard<std::mutex> lock(mutex_);
     
     refill_tokens();
@@ -26,468 +25,203 @@ bool TokenBucket::consume_tokens(uint32_t tokens) {
 
 void TokenBucket::refill_tokens() {
     auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last_refill_);
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_refill_);
     
-    uint64_t tokens_to_add = (rate_bps_ * elapsed.count()) / 1000000;
-    tokens_ = std::min(burst_size_, tokens_ + static_cast<uint32_t>(tokens_to_add));
-    last_refill_ = now;
+    uint64_t tokens_to_add = (elapsed.count() * refill_rate_) / 1000;
+    if (tokens_to_add > 0) {
+        tokens_ = std::min(capacity_, tokens_ + tokens_to_add);
+        last_refill_ = now;
+    }
 }
 
-uint32_t TokenBucket::get_available_tokens() const {
+uint64_t TokenBucket::get_available_tokens() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return tokens_;
 }
 
-void TokenBucket::set_rate(uint32_t rate_bps) {
+void TokenBucket::set_capacity(uint64_t capacity) {
     std::lock_guard<std::mutex> lock(mutex_);
-    rate_bps_ = rate_bps;
+    capacity_ = capacity;
+    tokens_ = std::min(tokens_, capacity_);
 }
 
-void TokenBucket::set_burst_size(uint32_t burst_size) {
+void TokenBucket::set_refill_rate(uint64_t rate) {
     std::lock_guard<std::mutex> lock(mutex_);
-    burst_size_ = burst_size;
-    tokens_ = std::min(tokens_, burst_size);
+    refill_rate_ = rate;
 }
 
-// WFQQueue implementation
-WFQQueue::WFQQueue(uint32_t weight, uint32_t max_size)
-    : weight_(weight), max_size_(max_size), virtual_finish_time_(0) {
-}
+// WFQScheduler Implementation
+WFQScheduler::WFQScheduler() : current_time_(0) {}
 
-bool WFQQueue::enqueue(const Packet& packet) {
+void WFQScheduler::add_class(uint32_t class_id, uint32_t weight) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    if (packets_.size() >= max_size_) {
-        return false; // Queue full
-    }
+    WFQClass wfq_class;
+    wfq_class.weight = weight;
+    wfq_class.quantum = weight * 100; // Quantum = weight * base_quantum
+    wfq_class.deficit_counter = 0;
+    wfq_class.last_served_time = current_time_;
     
-    packets_.push(packet);
-    return true;
+    classes_[class_id] = wfq_class;
 }
 
-bool WFQQueue::dequeue(Packet& packet) {
+void WFQScheduler::remove_class(uint32_t class_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    classes_.erase(class_id);
+}
+
+void WFQScheduler::enqueue_packet(uint32_t class_id, const Packet& packet) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    if (packets_.empty()) {
-        return false;
+    auto it = classes_.find(class_id);
+    if (it != classes_.end()) {
+        it->second.queue.push(packet);
     }
-    
-    packet = packets_.front();
-    packets_.pop();
-    return true;
 }
 
-bool WFQQueue::is_empty() const {
+bool WFQScheduler::dequeue_packet(Packet& packet) {
     std::lock_guard<std::mutex> lock(mutex_);
-    return packets_.empty();
+    
+    if (classes_.empty()) {
+        return false;
+    }
+    
+    update_deficit_counters();
+    
+    uint32_t selected_class = select_next_class();
+    if (selected_class == 0) {
+        return false;
+    }
+    
+    auto& wfq_class = classes_[selected_class];
+    if (wfq_class.queue.empty()) {
+        return false;
+    }
+    
+    packet = wfq_class.queue.front();
+    wfq_class.queue.pop();
+    
+    // Update deficit counter
+    wfq_class.deficit_counter -= packet.size;
+    wfq_class.last_served_time = current_time_;
+    
+    return true;
 }
 
-uint32_t WFQQueue::size() const {
+bool WFQScheduler::is_empty() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return packets_.size();
-}
-
-uint32_t WFQQueue::get_weight() const {
-    return weight_;
-}
-
-void WFQQueue::set_weight(uint32_t weight) {
-    weight_ = weight;
-}
-
-uint64_t WFQQueue::get_virtual_finish_time() const {
-    return virtual_finish_time_;
-}
-
-void WFQQueue::set_virtual_finish_time(uint64_t time) {
-    virtual_finish_time_ = time;
-}
-
-// TrafficShaper implementation
-TrafficShaper::TrafficShaper() : running_(false) {
-}
-
-TrafficShaper::~TrafficShaper() {
-    stop();
-}
-
-bool TrafficShaper::add_interface(const std::string& interface, const ShapingConfig& config) {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
     
-    InterfaceShaping shaping;
-    shaping.wfq_enabled = config.enable_wfq;
-    shaping.current_queue = 0;
-    
-    // Create token bucket if rate limiting is enabled
-    if (config.rate_bps > 0) {
-        shaping.token_bucket = std::make_unique<TokenBucket>(config.rate_bps, config.burst_size);
-    }
-    
-    // Create WFQ queues if enabled
-    if (config.enable_wfq) {
-        for (uint32_t i = 0; i < config.num_queues; i++) {
-            uint32_t weight = (i == 0) ? 1 : (i + 1); // Default weights
-            shaping.wfq_queues.push_back(std::make_unique<WFQQueue>(weight, config.queue_size));
-        }
-    }
-    
-    interfaces_[interface] = std::move(shaping);
-    return true;
-}
-
-bool TrafficShaper::remove_interface(const std::string& interface) {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end()) {
-        return false;
-    }
-    
-    interfaces_.erase(it);
-    return true;
-}
-
-bool TrafficShaper::update_interface_config(const std::string& interface, const ShapingConfig& config) {
-    return add_interface(interface, config); // Same as add for now
-}
-
-bool TrafficShaper::enable_token_bucket(const std::string& interface, uint32_t rate_bps, uint32_t burst_size) {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end()) {
-        return false;
-    }
-    
-    it->second.token_bucket = std::make_unique<TokenBucket>(rate_bps, burst_size);
-    return true;
-}
-
-bool TrafficShaper::disable_token_bucket(const std::string& interface) {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end()) {
-        return false;
-    }
-    
-    it->second.token_bucket.reset();
-    return true;
-}
-
-bool TrafficShaper::enable_wfq(const std::string& interface, uint32_t num_queues) {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end()) {
-        return false;
-    }
-    
-    it->second.wfq_enabled = true;
-    it->second.wfq_queues.clear();
-    
-    for (uint32_t i = 0; i < num_queues; i++) {
-        uint32_t weight = (i == 0) ? 1 : (i + 1); // Default weights
-        it->second.wfq_queues.push_back(std::make_unique<WFQQueue>(weight, 1000));
-    }
-    
-    return true;
-}
-
-bool TrafficShaper::disable_wfq(const std::string& interface) {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end()) {
-        return false;
-    }
-    
-    it->second.wfq_enabled = false;
-    it->second.wfq_queues.clear();
-    
-    return true;
-}
-
-bool TrafficShaper::set_queue_weight(const std::string& interface, uint32_t queue_id, uint32_t weight) {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end() || !it->second.wfq_enabled) {
-        return false;
-    }
-    
-    if (queue_id >= it->second.wfq_queues.size()) {
-        return false;
-    }
-    
-    it->second.wfq_queues[queue_id]->set_weight(weight);
-    return true;
-}
-
-bool TrafficShaper::shape_packet(const std::string& interface, Packet& packet) {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end()) {
-        return false;
-    }
-    
-    // Apply token bucket shaping
-    if (it->second.token_bucket) {
-        if (!process_token_bucket(interface, packet)) {
-            return false; // Packet dropped by token bucket
-        }
-    }
-    
-    // Apply WFQ shaping
-    if (it->second.wfq_enabled) {
-        if (!process_wfq(interface, packet)) {
-            return false; // Packet dropped by WFQ
+    for (const auto& pair : classes_) {
+        if (!pair.second.queue.empty()) {
+            return false;
         }
     }
     
     return true;
 }
 
-bool TrafficShaper::process_shaped_packets() {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
+size_t WFQScheduler::get_queue_size(uint32_t class_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     
-    bool processed = false;
+    auto it = classes_.find(class_id);
+    if (it != classes_.end()) {
+        return it->second.queue.size();
+    }
     
-    for (auto& pair : interfaces_) {
-        auto& shaping = pair.second;
+    return 0;
+}
+
+void WFQScheduler::set_class_weight(uint32_t class_id, uint32_t weight) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    auto it = classes_.find(class_id);
+    if (it != classes_.end()) {
+        it->second.weight = weight;
+        it->second.quantum = weight * 100;
+    }
+}
+
+void WFQScheduler::update_deficit_counters() {
+    current_time_++;
+    
+    for (auto& pair : classes_) {
+        auto& wfq_class = pair.second;
         
-        // Process WFQ queues
-        if (shaping.wfq_enabled) {
-            for (auto& queue : shaping.wfq_queues) {
-                Packet packet;
-                if (queue->dequeue(packet)) {
-                    shaping.output_queue.push(packet);
-                    processed = true;
-                }
+        // Add quantum to deficit counter
+        wfq_class.deficit_counter += wfq_class.quantum;
+    }
+}
+
+uint32_t WFQScheduler::select_next_class() {
+    uint32_t selected_class = 0;
+    uint64_t min_deficit = UINT64_MAX;
+    
+    for (const auto& pair : classes_) {
+        const auto& wfq_class = pair.second;
+        
+        if (!wfq_class.queue.empty() && wfq_class.deficit_counter >= wfq_class.queue.front().size) {
+            if (wfq_class.deficit_counter < min_deficit) {
+                min_deficit = wfq_class.deficit_counter;
+                selected_class = pair.first;
             }
         }
     }
     
-    return processed;
+    return selected_class;
 }
 
-std::map<std::string, uint64_t> TrafficShaper::get_interface_stats(const std::string& interface) const {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end()) {
-        return {};
-    }
-    
-    return it->second.stats;
+// TrafficShaper Implementation
+TrafficShaper::TrafficShaper() : stats_{} {
+    token_bucket_ = std::make_unique<TokenBucket>(1000000, 100000); // 1MB capacity, 100KB/s refill
+    wfq_scheduler_ = std::make_unique<WFQScheduler>();
 }
 
-std::map<std::string, uint64_t> TrafficShaper::get_queue_stats(const std::string& interface, uint32_t queue_id) const {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end() || !it->second.wfq_enabled) {
-        return {};
-    }
-    
-    if (queue_id >= it->second.wfq_queues.size()) {
-        return {};
-    }
-    
-    std::map<std::string, uint64_t> stats;
-    stats["queue_size"] = it->second.wfq_queues[queue_id]->size();
-    stats["weight"] = it->second.wfq_queues[queue_id]->get_weight();
-    
-    return stats;
+void TrafficShaper::set_token_bucket(uint64_t capacity, uint64_t refill_rate) {
+    token_bucket_ = std::make_unique<TokenBucket>(capacity, refill_rate);
 }
 
-void TrafficShaper::reset_statistics() {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    for (auto& pair : interfaces_) {
-        pair.second.stats.clear();
-    }
-    
-    global_stats_.clear();
+void TrafficShaper::add_wfq_class(uint32_t class_id, uint32_t weight) {
+    wfq_scheduler_->add_class(class_id, weight);
 }
 
-void TrafficShaper::start() {
-    if (running_) {
-        return;
-    }
-    
-    running_ = true;
-    processing_thread_ = std::thread(&TrafficShaper::processing_loop, this);
-    refill_thread_ = std::thread(&TrafficShaper::token_refill_loop, this);
+void TrafficShaper::remove_wfq_class(uint32_t class_id) {
+    wfq_scheduler_->remove_class(class_id);
 }
 
-void TrafficShaper::stop() {
-    if (!running_) {
-        return;
-    }
-    
-    running_ = false;
-    
-    if (processing_thread_.joinable()) {
-        processing_thread_.join();
-    }
-    
-    if (refill_thread_.joinable()) {
-        refill_thread_.join();
-    }
-}
-
-bool TrafficShaper::is_running() const {
-    return running_;
-}
-
-bool TrafficShaper::process_token_bucket(const std::string& interface, Packet& packet) {
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end() || !it->second.token_bucket) {
-        return true; // No token bucket, allow packet
-    }
-    
-    uint32_t tokens_needed = packet.size * 8; // Convert bytes to bits
-    if (it->second.token_bucket->consume_tokens(tokens_needed)) {
-        it->second.stats["packets_passed"]++;
-        it->second.stats["bytes_passed"] += packet.size;
-        return true;
-    } else {
-        it->second.stats["packets_dropped"]++;
-        it->second.stats["bytes_dropped"] += packet.size;
+bool TrafficShaper::shape_packet(const Packet& packet, uint32_t class_id) {
+    // First, check token bucket
+    if (!token_bucket_->consume_tokens(packet.size)) {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.packets_dropped++;
+        stats_.bytes_dropped += packet.size;
+        stats_.token_bucket_drops++;
         return false;
     }
+    
+    // Then, enqueue in WFQ scheduler
+    wfq_scheduler_->enqueue_packet(class_id, packet);
+    
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    stats_.packets_shaped++;
+    stats_.bytes_shaped += packet.size;
+    
+    return true;
 }
 
-bool TrafficShaper::process_wfq(const std::string& interface, Packet& packet) {
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end() || !it->second.wfq_enabled) {
-        return true; // No WFQ, allow packet
+bool TrafficShaper::get_shaped_packet(Packet& packet) {
+    bool result = wfq_scheduler_->dequeue_packet(packet);
+    
+    if (!result) {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.wfq_drops++;
     }
     
-    uint32_t queue_id = select_wfq_queue(interface, packet);
-    if (queue_id >= it->second.wfq_queues.size()) {
-        return false; // Invalid queue
-    }
-    
-    if (it->second.wfq_queues[queue_id]->enqueue(packet)) {
-        it->second.stats["packets_queued"]++;
-        it->second.stats["bytes_queued"] += packet.size;
-        return true;
-    } else {
-        it->second.stats["packets_dropped"]++;
-        it->second.stats["bytes_dropped"] += packet.size;
-        return false;
-    }
+    return result;
 }
 
-uint32_t TrafficShaper::select_wfq_queue(const std::string& interface, const Packet& packet) {
-    // Simple round-robin selection for now
-    // In a real implementation, this would use packet priority, DSCP, or other criteria
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end() || !it->second.wfq_enabled) {
-        return 0;
-    }
-    
-    uint32_t queue_id = it->second.current_queue;
-    it->second.current_queue = (it->second.current_queue + 1) % it->second.wfq_queues.size();
-    
-    return queue_id;
+TrafficShaper::ShapingStats TrafficShaper::get_statistics() const {
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    return stats_;
 }
 
-void TrafficShaper::refill_all_token_buckets() {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    for (auto& pair : interfaces_) {
-        if (pair.second.token_bucket) {
-            pair.second.token_bucket->refill_tokens();
-        }
-    }
-}
-
-void TrafficShaper::processing_loop() {
-    while (running_) {
-        process_shaped_packets();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-}
-
-void TrafficShaper::token_refill_loop() {
-    while (running_) {
-        refill_all_token_buckets();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-}
-
-// ShapingAlgorithms implementation
-bool ShapingAlgorithms::leaky_bucket(const Packet& packet, uint32_t rate_bps, uint32_t bucket_size) {
-    // Simple leaky bucket implementation
-    static std::map<std::string, uint32_t> buckets;
-    static std::map<std::string, std::chrono::steady_clock::time_point> last_update;
-    
-    std::string key = packet.source_interface;
-    auto now = std::chrono::steady_clock::now();
-    
-    if (last_update.find(key) == last_update.end()) {
-        last_update[key] = now;
-        buckets[key] = bucket_size;
-    }
-    
-    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last_update[key]);
-    uint32_t tokens_to_add = (rate_bps * elapsed.count()) / 1000000;
-    
-    buckets[key] = std::min(bucket_size, buckets[key] + tokens_to_add);
-    last_update[key] = now;
-    
-    uint32_t tokens_needed = packet.size * 8;
-    if (buckets[key] >= tokens_needed) {
-        buckets[key] -= tokens_needed;
-        return true;
-    }
-    
-    return false;
-}
-
-bool ShapingAlgorithms::token_bucket(const Packet& packet, uint32_t rate_bps, uint32_t burst_size) {
-    // This is a simplified version - the actual implementation is in TokenBucket class
-    return true; // Placeholder
-}
-
-uint32_t ShapingAlgorithms::calculate_wfq_weight(const Packet& packet, uint32_t num_queues) {
-    // Simple weight calculation based on packet priority
-    uint32_t priority = packet.priority % num_queues;
-    return priority + 1; // Weight starts from 1
-}
-
-uint32_t ShapingAlgorithms::calculate_priority_queue(const Packet& packet, uint32_t num_queues) {
-    // Calculate priority queue based on packet characteristics
-    return packet.priority % num_queues;
-}
-
-bool ShapingAlgorithms::rate_limit(const Packet& packet, uint32_t rate_bps, uint32_t window_ms) {
-    // Simple rate limiting implementation
-    static std::map<std::string, std::vector<std::chrono::steady_clock::time_point>> timestamps;
-    
-    std::string key = packet.source_interface;
-    auto now = std::chrono::steady_clock::now();
-    
-    // Clean old timestamps
-    auto cutoff = now - std::chrono::milliseconds(window_ms);
-    timestamps[key].erase(
-        std::remove_if(timestamps[key].begin(), timestamps[key].end(),
-                      [cutoff](const std::chrono::steady_clock::time_point& t) {
-                          return t < cutoff;
-                      }),
-        timestamps[key].end()
-    );
-    
-    // Check if we're within rate limit
-    uint32_t max_packets = (rate_bps * window_ms) / (packet.size * 8 * 1000);
-    if (timestamps[key].size() < max_packets) {
-        timestamps[key].push_back(now);
-        return true;
-    }
-    
-    return false;
-}
+} // namespace RouterSim

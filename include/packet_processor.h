@@ -1,153 +1,92 @@
 #pragma once
 
+#include "common_structures.h"
+#include <memory>
 #include <string>
 #include <vector>
 #include <map>
-#include <memory>
-#include <thread>
-#include <atomic>
 #include <mutex>
-#include <queue>
+#include <atomic>
+#include <thread>
 
 namespace RouterSim {
 
 // Forward declarations
-struct Packet;
-struct RouteEntry;
-
-// Packet protocol types
-enum class ProtocolType {
-    ETHERNET = 0x0800,
-    IPV4 = 0x0800,
-    IPV6 = 0x86DD,
-    ARP = 0x0806,
-    ICMP = 1,
-    TCP = 6,
-    UDP = 17,
-    OSPF = 89,
-    BGP = 179,
-    ISIS = 124
-};
-
-// Packet processing result
-enum class ProcessingResult {
-    FORWARD,
-    DROP,
-    CONSUME,
-    ERROR
-};
+class RoutingTable;
 
 // Packet processor class
 class PacketProcessor {
 public:
     PacketProcessor();
     ~PacketProcessor();
-
-    // Initialization
+    
+    // Core functionality
     bool initialize();
-    void cleanup();
-
+    bool start();
+    bool stop();
+    bool is_running() const;
+    
     // Packet processing
     ProcessingResult process_packet(Packet& packet);
-    bool forward_packet(const Packet& packet, const std::string& next_hop);
+    bool forward_packet(const Packet& packet, const std::string& interface);
     bool drop_packet(const Packet& packet, const std::string& reason);
-
-    // Protocol handlers
-    bool register_protocol_handler(ProtocolType protocol, 
-                                 std::function<ProcessingResult(Packet&)> handler);
-    bool unregister_protocol_handler(ProtocolType protocol);
-
-    // Routing integration
-    void set_routing_table(std::shared_ptr<class RoutingTable> routing_table);
+    
+    // Routing
     std::string lookup_route(const std::string& destination) const;
-
+    bool add_route(const router_sim::RouteInfo& route);
+    bool remove_route(const std::string& destination, uint8_t prefix_length);
+    std::vector<router_sim::RouteInfo> get_routes() const;
+    
+    // Interface management
+    bool add_interface(const std::string& name, const std::string& ip, const std::string& mask);
+    bool remove_interface(const std::string& name);
+    bool is_interface_up(const std::string& name) const;
+    std::vector<std::string> get_interfaces() const;
+    
     // Statistics
-    std::map<std::string, uint64_t> get_processing_stats() const;
-    std::map<ProtocolType, uint64_t> get_protocol_stats() const;
+    std::map<std::string, uint64_t> get_statistics() const;
     void reset_statistics();
-
-    // Control
-    void start();
-    void stop();
-    bool is_running() const;
-
+    
+    // Configuration
+    void set_routing_table(std::shared_ptr<RoutingTable> routing_table);
+    void set_max_packet_size(uint32_t size);
+    void set_processing_timeout(uint32_t timeout_ms);
+    
 private:
-    // Protocol handlers
-    ProcessingResult handle_ethernet(Packet& packet);
-    ProcessingResult handle_ipv4(Packet& packet);
-    ProcessingResult handle_ipv6(Packet& packet);
-    ProcessingResult handle_arp(Packet& packet);
-    ProcessingResult handle_icmp(Packet& packet);
-    ProcessingResult handle_tcp(Packet& packet);
-    ProcessingResult handle_udp(Packet& packet);
-    ProcessingResult handle_ospf(Packet& packet);
-    ProcessingResult handle_bgp(Packet& packet);
-    ProcessingResult handle_isis(Packet& packet);
-
+    // Internal methods
+    ProcessingResult parse_packet(const Packet& packet);
+    ProcessingResult route_packet(const Packet& packet);
+    bool validate_packet(const Packet& packet);
+    void update_statistics(const Packet& packet, ProcessingResult result);
+    
     // Packet parsing
-    bool parse_ethernet_header(Packet& packet);
-    bool parse_ipv4_header(Packet& packet);
-    bool parse_ipv6_header(Packet& packet);
-    bool parse_arp_header(Packet& packet);
-    bool parse_icmp_header(Packet& packet);
-    bool parse_tcp_header(Packet& packet);
-    bool parse_udp_header(Packet& packet);
-
-    // Packet validation
-    bool validate_packet(const Packet& packet) const;
-    bool validate_checksum(const Packet& packet) const;
-    bool validate_length(const Packet& packet) const;
-
-    // Internal state
-    std::map<ProtocolType, std::function<ProcessingResult(Packet&)>> protocol_handlers_;
-    std::shared_ptr<class RoutingTable> routing_table_;
+    bool is_ip_packet(const Packet& packet) const;
+    bool is_tcp_packet(const Packet& packet) const;
+    bool is_udp_packet(const Packet& packet) const;
+    bool is_icmp_packet(const Packet& packet) const;
+    std::string extract_destination_ip(const Packet& packet) const;
+    std::string extract_source_ip(const Packet& packet) const;
+    
+    // State
     std::atomic<bool> running_;
-    mutable std::mutex handlers_mutex_;
-
+    std::atomic<bool> initialized_;
+    
+    // Components
+    std::shared_ptr<RoutingTable> routing_table_;
+    
+    // Configuration
+    uint32_t max_packet_size_;
+    uint32_t processing_timeout_ms_;
+    
     // Statistics
-    std::map<std::string, uint64_t> processing_stats_;
-    std::map<ProtocolType, uint64_t> protocol_stats_;
+    uint64_t packets_processed_;
+    uint64_t packets_forwarded_;
+    uint64_t packets_dropped_;
+    uint64_t packets_consumed_;
+    uint64_t bytes_processed_;
+    uint64_t routing_lookups_;
+    uint64_t routing_misses_;
     mutable std::mutex stats_mutex_;
-};
-
-// Packet utilities
-class PacketUtils {
-public:
-    // Packet creation
-    static Packet create_ethernet_packet(const std::string& src_mac, const std::string& dst_mac,
-                                       ProtocolType protocol, const std::vector<uint8_t>& payload);
-    static Packet create_ipv4_packet(const std::string& src_ip, const std::string& dst_ip,
-                                   uint8_t protocol, const std::vector<uint8_t>& payload);
-    static Packet create_icmp_packet(const std::string& src_ip, const std::string& dst_ip,
-                                   uint8_t type, uint8_t code, const std::vector<uint8_t>& payload);
-
-    // Packet parsing
-    static std::string extract_src_mac(const Packet& packet);
-    static std::string extract_dst_mac(const Packet& packet);
-    static std::string extract_src_ip(const Packet& packet);
-    static std::string extract_dst_ip(const Packet& packet);
-    static uint16_t extract_src_port(const Packet& packet);
-    static uint16_t extract_dst_port(const Packet& packet);
-    static ProtocolType extract_protocol(const Packet& packet);
-
-    // Checksum calculation
-    static uint16_t calculate_ipv4_checksum(const std::vector<uint8_t>& data);
-    static uint16_t calculate_tcp_checksum(const std::vector<uint8_t>& data, 
-                                         const std::string& src_ip, const std::string& dst_ip);
-    static uint16_t calculate_udp_checksum(const std::vector<uint8_t>& data,
-                                         const std::string& src_ip, const std::string& dst_ip);
-
-    // Packet manipulation
-    static bool set_ttl(Packet& packet, uint8_t ttl);
-    static bool set_tos(Packet& packet, uint8_t tos);
-    static bool set_dscp(Packet& packet, uint8_t dscp);
-    static bool set_priority(Packet& packet, uint8_t priority);
-
-    // Packet filtering
-    static bool matches_filter(const Packet& packet, const std::string& filter);
-    static bool is_broadcast(const Packet& packet);
-    static bool is_multicast(const Packet& packet);
-    static bool is_unicast(const Packet& packet);
 };
 
 } // namespace RouterSim

@@ -1,149 +1,120 @@
 #pragma once
 
+#include "common_structures.h"
+#include <memory>
 #include <string>
 #include <vector>
 #include <map>
-#include <memory>
 #include <mutex>
-#include <functional>
+#include <atomic>
+#include <thread>
 
 namespace RouterSim {
 
-// Forward declarations
-struct RouteEntry;
-
-// Route comparison for priority
-struct RouteComparator {
-    bool operator()(const RouteEntry& a, const RouteEntry& b) const;
+// Routing table entry
+struct RoutingEntry {
+    router_sim::RouteInfo route;
+    std::chrono::steady_clock::time_point last_updated;
+    uint32_t reference_count;
+    bool is_active;
+    
+    RoutingEntry() : reference_count(0), is_active(false) {}
 };
 
 // Routing table class
 class RoutingTable {
 public:
     RoutingTable();
-    ~RoutingTable() = default;
-
-    // Route management
-    bool add_route(const RouteEntry& route);
-    bool remove_route(const std::string& network);
-    bool update_route(const RouteEntry& route);
-    bool has_route(const std::string& network) const;
-
-    // Route lookup
-    std::vector<RouteEntry> lookup_routes(const std::string& destination) const;
-    RouteEntry get_best_route(const std::string& destination) const;
-    std::string get_next_hop(const std::string& destination) const;
-
-    // Route queries
-    std::vector<RouteEntry> get_all_routes() const;
-    std::vector<RouteEntry> get_routes_by_protocol(const std::string& protocol) const;
-    std::vector<RouteEntry> get_routes_by_interface(const std::string& interface) const;
-    std::vector<RouteEntry> get_active_routes() const;
-
-    // Route filtering
-    std::vector<RouteEntry> filter_routes(const std::function<bool(const RouteEntry&)>& filter) const;
-
-    // Route statistics
-    size_t get_route_count() const;
-    size_t get_route_count_by_protocol(const std::string& protocol) const;
-    std::map<std::string, size_t> get_protocol_counts() const;
-
-    // Route management
-    void clear_routes();
-    void clear_routes_by_protocol(const std::string& protocol);
-    void clear_routes_by_interface(const std::string& interface);
-
-    // Event handling
-    void register_route_change_callback(std::function<void(const RouteEntry&, bool)> callback);
-    void unregister_route_change_callback();
-
-    // Persistence
-    bool save_to_file(const std::string& filename) const;
-    bool load_from_file(const std::string& filename);
-
-    // Validation
-    bool is_valid_route(const RouteEntry& route) const;
-    bool is_route_active(const RouteEntry& route) const;
-
-private:
-    // Route storage
-    std::map<std::string, std::vector<RouteEntry>> routes_by_network_;
-    std::map<std::string, std::vector<RouteEntry>> routes_by_protocol_;
-    std::map<std::string, std::vector<RouteEntry>> routes_by_interface_;
+    ~RoutingTable();
     
-    mutable std::mutex routes_mutex_;
-
-    // Event handling
-    std::function<void(const RouteEntry&, bool)> route_change_callback_;
-
-    // Internal methods
-    void notify_route_change(const RouteEntry& route, bool added);
-    std::vector<RouteEntry> find_routes(const std::string& network) const;
-    RouteEntry select_best_route(const std::vector<RouteEntry>& routes) const;
-    bool route_matches(const RouteEntry& route, const std::string& destination) const;
-    int calculate_route_priority(const RouteEntry& route) const;
-};
-
-// Route utilities
-class RouteUtils {
-public:
-    // Route validation
-    static bool is_valid_network(const std::string& network);
-    static bool is_valid_next_hop(const std::string& next_hop);
-    static bool is_valid_metric(uint32_t metric);
-    static bool is_valid_admin_distance(uint32_t admin_distance);
-
-    // Route comparison
-    static bool is_better_route(const RouteEntry& a, const RouteEntry& b);
-    static int compare_routes(const RouteEntry& a, const RouteEntry& b);
-
-    // Network utilities
-    static bool is_subnet_of(const std::string& network, const std::string& subnet);
-    static std::string get_network_address(const std::string& ip, const std::string& mask);
-    static std::string get_broadcast_address(const std::string& ip, const std::string& mask);
-    static bool is_ip_in_network(const std::string& ip, const std::string& network);
-
-    // Route formatting
-    static std::string format_route(const RouteEntry& route);
-    static std::string format_route_table(const std::vector<RouteEntry>& routes);
-    static std::string format_route_summary(const std::vector<RouteEntry>& routes);
-
-    // Route parsing
-    static RouteEntry parse_route_string(const std::string& route_str);
-    static std::vector<RouteEntry> parse_route_table_string(const std::string& table_str);
-};
-
-// Route manager for multiple routing tables
-class RouteManager {
-public:
-    RouteManager();
-    ~RouteManager() = default;
-
-    // Table management
-    bool create_table(const std::string& name);
-    bool delete_table(const std::string& name);
-    bool has_table(const std::string& name) const;
-    std::vector<std::string> get_table_names() const;
-
-    // Route operations
-    bool add_route(const std::string& table_name, const RouteEntry& route);
-    bool remove_route(const std::string& table_name, const std::string& network);
-    bool update_route(const std::string& table_name, const RouteEntry& route);
-
+    // Core functionality
+    bool initialize();
+    bool start();
+    bool stop();
+    bool is_running() const;
+    
+    // Route management
+    bool add_route(const router_sim::RouteInfo& route);
+    bool remove_route(const std::string& destination, uint8_t prefix_length);
+    bool update_route(const router_sim::RouteInfo& route);
+    bool has_route(const std::string& destination, uint8_t prefix_length) const;
+    
     // Route lookup
-    std::vector<RouteEntry> lookup_routes(const std::string& table_name, 
-                                        const std::string& destination) const;
-    RouteEntry get_best_route(const std::string& table_name, 
-                            const std::string& destination) const;
-
-    // Table operations
-    std::shared_ptr<RoutingTable> get_table(const std::string& name) const;
-    bool clear_table(const std::string& name);
-    bool copy_table(const std::string& src_name, const std::string& dst_name);
-
+    router_sim::RouteInfo* find_route(const std::string& destination) const;
+    router_sim::RouteInfo* find_best_route(const std::string& destination) const;
+    std::vector<router_sim::RouteInfo> get_routes() const;
+    std::vector<router_sim::RouteInfo> get_routes_by_protocol(const std::string& protocol) const;
+    std::vector<router_sim::RouteInfo> get_routes_by_interface(const std::string& interface) const;
+    
+    // Route filtering
+    std::vector<router_sim::RouteInfo> get_active_routes() const;
+    std::vector<router_sim::RouteInfo> get_routes_by_metric(uint32_t max_metric) const;
+    std::vector<router_sim::RouteInfo> get_routes_by_admin_distance(uint32_t max_admin_distance) const;
+    
+    // Route management
+    bool activate_route(const std::string& destination, uint8_t prefix_length);
+    bool deactivate_route(const std::string& destination, uint8_t prefix_length);
+    bool is_route_active(const std::string& destination, uint8_t prefix_length) const;
+    
+    // Route aging
+    void age_routes();
+    void remove_stale_routes(uint32_t max_age_seconds);
+    void update_route_timestamp(const std::string& destination, uint8_t prefix_length);
+    
+    // Statistics
+    std::map<std::string, uint64_t> get_statistics() const;
+    void reset_statistics();
+    
+    // Configuration
+    void set_max_routes(uint32_t max_routes);
+    void set_route_aging_interval(uint32_t interval_seconds);
+    void set_stale_route_timeout(uint32_t timeout_seconds);
+    
+    // Event callbacks
+    void set_route_add_callback(std::function<void(const router_sim::RouteInfo&)> callback);
+    void set_route_remove_callback(std::function<void(const router_sim::RouteInfo&)> callback);
+    void set_route_update_callback(std::function<void(const router_sim::RouteInfo&)> callback);
+    
 private:
-    std::map<std::string, std::shared_ptr<RoutingTable>> tables_;
-    mutable std::mutex tables_mutex_;
+    // Internal methods
+    void aging_loop();
+    bool is_route_stale(const RoutingEntry& entry) const;
+    void update_statistics(const router_sim::RouteInfo& route, bool added);
+    
+    // Route comparison
+    bool is_better_route(const router_sim::RouteInfo& route1, const router_sim::RouteInfo& route2) const;
+    uint32_t calculate_route_priority(const router_sim::RouteInfo& route) const;
+    
+    // State
+    std::atomic<bool> running_;
+    std::atomic<bool> initialized_;
+    std::thread aging_thread_;
+    
+    // Route storage
+    std::map<std::string, RoutingEntry> routes_;
+    mutable std::mutex routes_mutex_;
+    
+    // Configuration
+    uint32_t max_routes_;
+    uint32_t route_aging_interval_seconds_;
+    uint32_t stale_route_timeout_seconds_;
+    
+    // Statistics
+    uint64_t total_routes_;
+    uint64_t active_routes_;
+    uint64_t routes_added_;
+    uint64_t routes_removed_;
+    uint64_t routes_updated_;
+    uint64_t routes_aged_;
+    uint64_t lookup_attempts_;
+    uint64_t lookup_hits_;
+    uint64_t lookup_misses_;
+    mutable std::mutex stats_mutex_;
+    
+    // Event callbacks
+    std::function<void(const router_sim::RouteInfo&)> route_add_callback_;
+    std::function<void(const router_sim::RouteInfo&)> route_remove_callback_;
+    std::function<void(const router_sim::RouteInfo&)> route_update_callback_;
 };
 
 } // namespace RouterSim

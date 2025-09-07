@@ -1,60 +1,39 @@
 #pragma once
 
+#include "common_structures.h"
+#include <memory>
 #include <string>
 #include <vector>
 #include <map>
-#include <memory>
-#include <thread>
-#include <atomic>
 #include <mutex>
-#include <random>
+#include <atomic>
+#include <thread>
 
 namespace RouterSim {
-
-// Forward declarations
-struct Packet;
-struct ImpairmentConfig;
 
 // Netem impairment types
 enum class ImpairmentType {
     DELAY,
     JITTER,
     LOSS,
-    DUPLICATE,
     CORRUPTION,
-    REORDER,
-    BANDWIDTH_LIMIT,
-    PACKET_CORRUPTION
+    DUPLICATION,
+    REORDERING,
+    BANDWIDTH_LIMIT
 };
 
-// Individual impairment class
-class Impairment {
+// Netem command builder
+class NetemCommandBuilder {
 public:
-    Impairment(ImpairmentType type, double value, double probability = 1.0);
-    ~Impairment() = default;
-
-    bool apply(Packet& packet);
-    ImpairmentType get_type() const;
-    double get_value() const;
-    double get_probability() const;
-    void set_value(double value);
-    void set_probability(double probability);
-
-private:
-    ImpairmentType type_;
-    double value_;
-    double probability_;
-    std::mt19937 rng_;
-    std::uniform_real_distribution<double> dist_;
-
-    bool apply_delay(Packet& packet);
-    bool apply_jitter(Packet& packet);
-    bool apply_loss(Packet& packet);
-    bool apply_duplicate(Packet& packet);
-    bool apply_corruption(Packet& packet);
-    bool apply_reorder(Packet& packet);
-    bool apply_bandwidth_limit(Packet& packet);
-    bool apply_packet_corruption(Packet& packet);
+    static std::string build_delay_command(const std::string& interface, uint32_t delay_ms);
+    static std::string build_jitter_command(const std::string& interface, uint32_t delay_ms, uint32_t jitter_ms);
+    static std::string build_loss_command(const std::string& interface, double loss_percent);
+    static std::string build_corruption_command(const std::string& interface, double corruption_percent);
+    static std::string build_duplication_command(const std::string& interface, double duplication_percent);
+    static std::string build_reordering_command(const std::string& interface, uint32_t reorder_percent);
+    static std::string build_bandwidth_command(const std::string& interface, uint64_t rate_bps);
+    static std::string build_combined_command(const std::string& interface, const ImpairmentConfig& config);
+    static std::string build_clear_command(const std::string& interface);
 };
 
 // Netem impairments manager
@@ -62,93 +41,108 @@ class NetemImpairments {
 public:
     NetemImpairments();
     ~NetemImpairments();
-
+    
+    // Core functionality
+    bool start();
+    bool stop();
+    bool is_running() const;
+    
     // Interface management
-    bool add_interface(const std::string& interface);
-    bool remove_interface(const std::string& interface);
-
+    bool add_interface(const std::string& name);
+    bool remove_interface(const std::string& name);
+    bool has_interface(const std::string& name) const;
+    std::vector<std::string> get_interfaces() const;
+    
     // Impairment configuration
     bool configure_impairments(const std::string& interface, const ImpairmentConfig& config);
-    bool add_impairment(const std::string& interface, ImpairmentType type, double value, double probability = 1.0);
-    bool remove_impairment(const std::string& interface, ImpairmentType type);
     bool clear_impairments(const std::string& interface);
-
-    // TC/Netem integration
-    bool apply_tc_rules(const std::string& interface, const ImpairmentConfig& config);
-    bool remove_tc_rules(const std::string& interface);
-    bool is_tc_available() const;
-
+    bool clear_all_impairments();
+    
+    // Individual impairment types
+    bool set_delay(const std::string& interface, uint32_t delay_ms);
+    bool set_jitter(const std::string& interface, uint32_t delay_ms, uint32_t jitter_ms);
+    bool set_loss(const std::string& interface, double loss_percent);
+    bool set_corruption(const std::string& interface, double corruption_percent);
+    bool set_duplication(const std::string& interface, double duplication_percent);
+    bool set_reordering(const std::string& interface, uint32_t reorder_percent);
+    bool set_bandwidth_limit(const std::string& interface, uint64_t rate_bps);
+    
     // Packet processing
     bool process_packet(const std::string& interface, Packet& packet);
-    std::vector<Packet> process_packets(const std::string& interface, const std::vector<Packet>& packets);
-
+    
     // Statistics
-    std::map<std::string, uint64_t> get_impairment_stats(const std::string& interface) const;
+    std::map<std::string, uint64_t> get_interface_stats(const std::string& interface) const;
     std::map<std::string, uint64_t> get_global_stats() const;
     void reset_statistics();
-
-    // Control
-    void start();
-    void stop();
-    bool is_running() const;
-
+    void reset_interface_statistics(const std::string& interface);
+    
+    // Configuration
+    ImpairmentConfig get_interface_config(const std::string& interface) const;
+    bool is_impairment_active(const std::string& interface, ImpairmentType type) const;
+    
+    // Predefined scenarios
+    bool apply_satellite_scenario(const std::string& interface);
+    bool apply_mobile_scenario(const std::string& interface);
+    bool apply_dsl_scenario(const std::string& interface);
+    bool apply_fiber_scenario(const std::string& interface);
+    bool apply_wireless_scenario(const std::string& interface);
+    
 private:
-    // Interface impairment configuration
     struct InterfaceImpairments {
-        std::vector<std::unique_ptr<Impairment>> impairments;
-        std::map<std::string, uint64_t> stats;
-        bool tc_applied;
+        ImpairmentConfig config;
+        bool is_active;
+        
+        // Statistics
+        uint64_t packets_processed;
+        uint64_t packets_dropped;
+        uint64_t packets_corrupted;
+        uint64_t packets_duplicated;
+        uint64_t packets_reordered;
+        uint64_t bytes_processed;
+        uint64_t bytes_dropped;
+        uint64_t total_delay_ms;
+        uint64_t total_jitter_ms;
+        
+        InterfaceImpairments() : is_active(false), packets_processed(0), packets_dropped(0),
+                               packets_corrupted(0), packets_duplicated(0), packets_reordered(0),
+                               bytes_processed(0), bytes_dropped(0), total_delay_ms(0), total_jitter_ms(0) {}
     };
-
-    // TC/Netem command generation
-    std::string generate_tc_delay_command(const std::string& interface, uint32_t delay_ms) const;
-    std::string generate_tc_jitter_command(const std::string& interface, uint32_t jitter_ms) const;
-    std::string generate_tc_loss_command(const std::string& interface, double loss_percent) const;
-    std::string generate_tc_duplicate_command(const std::string& interface, double duplicate_percent) const;
-    std::string generate_tc_corruption_command(const std::string& interface, double corruption_percent) const;
-    std::string generate_tc_reorder_command(const std::string& interface, double reorder_percent) const;
-
-    // TC command execution
+    
+    // Internal methods
     bool execute_tc_command(const std::string& command);
-    std::string get_tc_output(const std::string& command);
-
+    bool is_tc_available() const;
+    bool is_interface_valid(const std::string& interface) const;
+    void processing_loop();
+    bool process_interface_packet(const std::string& interface, Packet& packet);
+    void update_statistics(const std::string& interface, const Packet& packet, bool dropped);
+    
     // Packet processing helpers
-    bool should_apply_impairment(const std::string& interface, ImpairmentType type) const;
-    void update_statistics(const std::string& interface, ImpairmentType type, bool applied);
-
-    // Internal state
-    std::map<std::string, InterfaceImpairments> interfaces_;
+    bool apply_delay(Packet& packet, uint32_t delay_ms);
+    bool apply_jitter(Packet& packet, uint32_t delay_ms, uint32_t jitter_ms);
+    bool apply_loss(Packet& packet, double loss_percent);
+    bool apply_corruption(Packet& packet, double corruption_percent);
+    bool apply_duplication(Packet& packet, double duplication_percent);
+    bool apply_reordering(Packet& packet, uint32_t reorder_percent);
+    bool apply_bandwidth_limit(Packet& packet, uint64_t rate_bps);
+    
+    // State
     std::atomic<bool> running_;
+    std::thread processing_thread_;
+    
+    // Interface management
+    std::map<std::string, InterfaceImpairments> interfaces_;
     mutable std::mutex interfaces_mutex_;
-
+    
     // Global statistics
-    std::map<std::string, uint64_t> global_stats_;
+    uint64_t total_packets_processed_;
+    uint64_t total_packets_dropped_;
+    uint64_t total_bytes_processed_;
+    uint64_t total_bytes_dropped_;
     mutable std::mutex stats_mutex_;
-
-    // Random number generation
-    std::mt19937 rng_;
-    std::uniform_real_distribution<double> uniform_dist_;
-};
-
-// Impairment simulation utilities
-class ImpairmentSimulator {
-public:
-    // Network condition simulation
-    static bool simulate_high_latency(Packet& packet, uint32_t base_delay_ms, uint32_t jitter_ms);
-    static bool simulate_packet_loss(Packet& packet, double loss_rate);
-    static bool simulate_bandwidth_constraint(Packet& packet, uint32_t max_bandwidth_bps);
-    static bool simulate_network_congestion(Packet& packet, double congestion_factor);
-
-    // Real-world network scenarios
-    static bool simulate_satellite_link(Packet& packet);
-    static bool simulate_mobile_network(Packet& packet);
-    static bool simulate_dsl_connection(Packet& packet);
-    static bool simulate_fiber_connection(Packet& packet);
-
-    // Impairment combinations
-    static bool simulate_poor_connection(Packet& packet);
-    static bool simulate_unstable_connection(Packet& packet);
-    static bool simulate_congested_network(Packet& packet);
+    
+    // TC command execution
+    bool tc_available_;
+    std::string tc_path_;
 };
 
 } // namespace RouterSim
