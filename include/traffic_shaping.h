@@ -1,233 +1,194 @@
 #pragma once
 
-#include "router_core.h"
-#include <chrono>
-#include <queue>
-#include <vector>
 #include <memory>
-#include <thread>
-#include <atomic>
+#include <vector>
 #include <mutex>
-#include <condition_variable>
+#include <chrono>
+#include <atomic>
+#include <limits>
 
 namespace RouterSim {
 
-// Token Bucket Algorithm implementation
+// Packet representation
+struct Packet {
+    uint64_t id;
+    uint32_t size;
+    uint32_t priority;
+    std::string source_ip;
+    std::string dest_ip;
+    uint16_t source_port;
+    uint16_t dest_port;
+    uint8_t protocol;
+    std::chrono::steady_clock::time_point timestamp;
+    
+    Packet() : id(0), size(0), priority(0), source_port(0), dest_port(0), protocol(0) {
+        timestamp = std::chrono::steady_clock::now();
+    }
+};
+
+// Token Bucket Implementation
 class TokenBucket {
 public:
-    TokenBucket(double rate, double burst_size);
-    ~TokenBucket() = default;
-
-    // Token bucket operations
-    bool consume_tokens(int tokens);
-    void add_tokens();
-    double get_current_tokens() const;
-    double get_rate() const;
-    double get_burst_size() const;
-    void set_rate(double rate);
-    void set_burst_size(double burst_size);
+    TokenBucket(uint64_t capacity, uint64_t refill_rate, uint64_t burst_size);
+    ~TokenBucket();
+    
+    // Core functionality
+    bool consume(uint64_t tokens);
+    bool consumePacket(const Packet& packet);
+    void refillTokens();
+    
+    // Configuration
+    void setCapacity(uint64_t capacity);
+    void setRefillRate(uint64_t refill_rate);
+    void setBurstSize(uint64_t burst_size);
+    
+    // Information
+    uint64_t getAvailableTokens() const;
     void reset();
+    
+    // Statistics
+    struct Statistics {
+        uint64_t capacity;
+        uint64_t refill_rate;
+        uint64_t burst_size;
+        uint64_t available_tokens;
+        uint64_t total_packets_processed;
+        uint64_t total_bytes_processed;
+        uint64_t packets_dropped;
+        uint64_t bytes_dropped;
+        double utilization_percentage;
+    };
+    
+    Statistics getStatistics() const;
 
 private:
-    double rate_;           // tokens per second
-    double burst_size_;     // maximum tokens
-    double tokens_;         // current tokens
-    std::chrono::steady_clock::time_point last_update_;
+    uint64_t capacity_;
+    uint64_t refill_rate_;
+    uint64_t burst_size_;
+    uint64_t tokens_;
+    std::chrono::steady_clock::time_point last_refill_time_;
+    
+    // Statistics
+    uint64_t total_packets_processed_;
+    uint64_t total_bytes_processed_;
+    uint64_t packets_dropped_;
+    uint64_t bytes_dropped_;
+    
     mutable std::mutex mutex_;
 };
 
-// Weighted Fair Queuing implementation
-class WFQScheduler {
+// Weighted Fair Queueing Implementation
+class WFQ {
 public:
-    struct QueueConfig {
-        int queue_id;
-        int weight;
-        int priority;
-        std::string name;
-    };
-
-    WFQScheduler();
-    ~WFQScheduler();
-
-    // Queue management
-    bool add_queue(const QueueConfig& config);
-    bool remove_queue(int queue_id);
-    bool update_queue_weight(int queue_id, int weight);
-    std::vector<QueueConfig> get_queues() const;
-
-    // Packet scheduling
-    bool enqueue_packet(int queue_id, const std::vector<uint8_t>& packet);
-    std::vector<uint8_t> dequeue_packet();
-    bool is_empty() const;
-    size_t get_queue_size(int queue_id) const;
-    size_t get_total_packets() const;
-
+    static const uint32_t MAX_QUEUE_SIZE = 1000;
+    
+    WFQ(uint32_t max_queues);
+    ~WFQ();
+    
+    // Core functionality
+    bool enqueue(uint32_t queue_id, const Packet& packet);
+    bool dequeue(Packet& packet);
+    
     // Configuration
-    void set_scheduling_algorithm(const std::string& algorithm);
-    void set_max_queue_size(size_t max_size);
-    void set_bandwidth_limit(double bandwidth_mbps);
-
-private:
-    struct WFQQueue {
-        int queue_id;
-        int weight;
-        int priority;
-        std::string name;
-        std::queue<std::vector<uint8_t>> packets;
-        double virtual_time;
+    void setQueueWeight(uint32_t queue_id, uint32_t weight);
+    
+    // Information
+    uint32_t getMaxQueues() const { return max_queues_; }
+    uint32_t getQueueWeight(uint32_t queue_id) const;
+    uint32_t getQueueSize(uint32_t queue_id) const;
+    uint64_t getQueueBytes(uint32_t queue_id) const;
+    
+    // Statistics
+    struct QueueStatistics {
+        uint32_t queue_id;
+        uint32_t weight;
+        uint32_t packets;
+        uint64_t bytes;
         double finish_time;
-        mutable std::mutex mutex;
     };
-
-    // Scheduling algorithms
-    std::vector<uint8_t> schedule_wfq();
-    std::vector<uint8_t> schedule_wrr();
-    std::vector<uint8_t> schedule_priority();
-
-    // State
-    std::map<int, std::unique_ptr<WFQQueue>> queues_;
-    std::string scheduling_algorithm_;
-    size_t max_queue_size_;
-    double bandwidth_limit_;
-    mutable std::mutex scheduler_mutex_;
-    std::condition_variable cv_;
-};
-
-// Hierarchical Token Bucket (HTB) implementation
-class HTBShaper {
-public:
-    struct ClassConfig {
-        int class_id;
-        int parent_id;
-        double rate;
-        double ceil;
-        int priority;
-        std::string name;
+    
+    struct Statistics {
+        uint32_t max_queues;
+        uint32_t total_weight;
+        double virtual_time;
+        uint64_t total_packets_processed;
+        uint64_t total_bytes_processed;
+        uint64_t packets_dropped;
+        uint64_t bytes_dropped;
+        std::vector<QueueStatistics> queue_stats;
     };
-
-    HTBShaper();
-    ~HTBShaper();
-
-    // Class management
-    bool add_class(const ClassConfig& config);
-    bool remove_class(int class_id);
-    bool update_class_rate(int class_id, double rate, double ceil);
-    std::vector<ClassConfig> get_classes() const;
-
-    // Packet classification and shaping
-    bool classify_and_shape(const std::vector<uint8_t>& packet, int class_id);
-    std::vector<uint8_t> get_shaped_packet();
-    bool is_empty() const;
-
-    // Configuration
-    void set_root_rate(double rate);
-    void set_quantum(int quantum);
+    
+    Statistics getStatistics() const;
+    void reset();
 
 private:
-    struct HTBClass {
-        int class_id;
-        int parent_id;
-        double rate;
-        double ceil;
-        int priority;
-        std::string name;
-        double tokens;
-        double ctokens;
-        std::chrono::steady_clock::time_point last_update;
-        std::queue<std::vector<uint8_t>> packets;
-        mutable std::mutex mutex;
+    struct Queue {
+        uint32_t weight;
+        uint32_t packets;
+        uint64_t bytes;
+        double finish_time;
     };
-
-    // HTB operations
-    void update_tokens(HTBClass& htb_class);
-    bool can_send(HTBClass& htb_class, int packet_size);
-    void send_packet(HTBClass& htb_class, int packet_size);
-
-    // State
-    std::map<int, std::unique_ptr<HTBClass>> classes_;
-    double root_rate_;
-    int quantum_;
-    mutable std::mutex htb_mutex_;
+    
+    uint32_t max_queues_;
+    std::vector<Queue> queues_;
+    uint32_t total_weight_;
+    double virtual_time_;
+    std::chrono::steady_clock::time_point last_update_time_;
+    
+    // Statistics
+    uint64_t total_packets_processed_;
+    uint64_t total_bytes_processed_;
+    uint64_t packets_dropped_;
+    uint64_t bytes_dropped_;
+    
+    mutable std::mutex mutex_;
+    
+    void updateVirtualTime();
 };
 
-// Traffic Shaper main class
+// Traffic Shaper - Combines Token Bucket and WFQ
 class TrafficShaper {
 public:
     TrafficShaper();
     ~TrafficShaper();
-
-    // Interface-based shaping
-    bool configure_interface_shaping(const std::string& interface,
-                                    const std::string& algorithm,
-                                    const std::map<std::string, double>& parameters);
-    bool remove_interface_shaping(const std::string& interface);
-
-    // Token bucket configuration
-    bool configure_token_bucket(const std::string& interface,
-                               double rate, double burst_size);
-
-    // WFQ configuration
-    bool configure_wfq(const std::string& interface,
-                      const std::vector<WFQScheduler::QueueConfig>& queues);
-
-    // HTB configuration
-    bool configure_htb(const std::string& interface,
-                      const std::vector<HTBShaper::ClassConfig>& classes);
-
-    // Packet processing
-    bool process_packet(const std::string& interface,
-                       const std::vector<uint8_t>& packet);
-    std::vector<std::vector<uint8_t>> get_shaped_packets(const std::string& interface);
-
-    // Statistics
-    struct ShapingStats {
-        uint64_t packets_processed;
-        uint64_t packets_dropped;
-        uint64_t bytes_processed;
-        uint64_t bytes_dropped;
-        double current_rate;
-        double peak_rate;
-        std::map<int, uint64_t> queue_stats;
-    };
-
-    ShapingStats get_interface_stats(const std::string& interface) const;
-    void reset_interface_stats(const std::string& interface);
-
+    
+    // Core functionality
+    bool initialize();
+    bool processPacket(const Packet& packet);
+    bool dequeuePacket(Packet& packet);
+    
     // Configuration
-    void set_global_bandwidth_limit(double bandwidth_mbps);
-    void set_packet_size_limit(size_t max_packet_size);
+    void setTokenBucketConfig(uint64_t capacity, uint64_t refill_rate, uint64_t burst_size);
+    void setQueueWeight(uint32_t queue_id, uint32_t weight);
+    void setEnabled(bool enabled);
+    bool isEnabled() const;
+    
+    // Statistics
+    struct Statistics {
+        bool enabled;
+        uint64_t total_packets_processed;
+        uint64_t total_bytes_processed;
+        uint64_t packets_dropped;
+        uint64_t bytes_dropped;
+        TokenBucket::Statistics token_bucket_stats;
+        WFQ::Statistics wfq_stats;
+    };
+    
+    Statistics getStatistics() const;
+    void reset();
 
 private:
-    // Per-interface shapers
-    struct InterfaceShaper {
-        std::unique_ptr<TokenBucket> token_bucket;
-        std::unique_ptr<WFQScheduler> wfq_scheduler;
-        std::unique_ptr<HTBShaper> htb_shaper;
-        std::string algorithm;
-        ShapingStats stats;
-        mutable std::mutex mutex;
-    };
-
-    // Shaping algorithms
-    bool apply_token_bucket_shaping(InterfaceShaper& shaper, 
-                                   const std::vector<uint8_t>& packet);
-    bool apply_wfq_shaping(InterfaceShaper& shaper, 
-                          const std::vector<uint8_t>& packet);
-    bool apply_htb_shaping(InterfaceShaper& shaper, 
-                          const std::vector<uint8_t>& packet);
-
-    // State
-    std::map<std::string, std::unique_ptr<InterfaceShaper>> interface_shapers_;
-    double global_bandwidth_limit_;
-    size_t packet_size_limit_;
-    mutable std::mutex shaper_mutex_;
-
-    // Background processing
-    std::thread shaping_thread_;
-    std::atomic<bool> shaping_running_;
-    std::condition_variable cv_;
-
-    void shaping_loop();
+    std::unique_ptr<TokenBucket> token_bucket_;
+    std::unique_ptr<WFQ> wfq_;
+    bool enabled_;
+    
+    // Statistics
+    uint64_t total_packets_processed_;
+    uint64_t total_bytes_processed_;
+    uint64_t packets_dropped_;
+    uint64_t bytes_dropped_;
+    
+    mutable std::mutex mutex_;
 };
 
 } // namespace RouterSim

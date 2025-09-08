@@ -16,8 +16,6 @@ pub mod routing_table;
 pub mod metrics;
 /// Memory pool for packet buffers
 pub mod memory_pool;
-/// Analytics engine for network metrics
-pub mod analytics;
 
 /// Packet structure optimized for performance
 #[derive(Clone, Debug)]

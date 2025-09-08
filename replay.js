@@ -17,7 +17,6 @@
                 this.currentTab = 'main'; // 'main', 'analytics', or 'roi'
                 this.loggedMessages = new Set(); // Track logged messages to prevent duplicates
                 this.debugMode = false; // Control debug logging
-                this.lastRunClickTime = null; // Track when Run button was last clicked
                 
                 // IDE Detection
                 this.ideType = this.detectIDE();
@@ -1979,81 +1978,33 @@
                     const windsurfButtons = this.findWindsurfButtons();
                     buttons.push(...windsurfButtons);
                 } else {
-                    // Cursor IDE - Enhanced comprehensive search strategy
-                    
-                    // 1. Search in conversation area FIRST (most likely location for Keep/Accept after Run)
-                    const conversationArea = document.querySelector('.conversations') || 
-                                          document.querySelector('[class*="conversation"]') ||
-                                          document.querySelector('.chat-messages') ||
-                                          document.querySelector('[class*="message"]') ||
-                                          document.querySelector('[class*="chat"]');
-                    
-                    if (conversationArea) {
-                        const conversationButtons = this.findAcceptInElement(conversationArea);
-                        buttons.push(...conversationButtons);
-                        
-                        if (this.debugMode && conversationButtons.length > 0) {
-                            this.log(`Found ${conversationButtons.length} buttons in conversation area`);
-                        }
-                    }
-                    
-                    // 2. Search in composer/code block areas
-                    const composerSelectors = [
-                        '.composer-code-block-container',
-                        '.composer-tool-former-message', 
-                        '.composer-diff-block',
-                        '[class*="composer"]',
-                        '[class*="code-block"]',
-                        '[class*="diff"]'
-                    ];
-                    
-                    for (const selector of composerSelectors) {
-                        const composerArea = document.querySelector(selector);
-                        if (composerArea) {
-                            const composerButtons = this.findAcceptInElement(composerArea);
-                            buttons.push(...composerButtons);
-                            
-                            if (this.debugMode && composerButtons.length > 0) {
-                                this.log(`Found ${composerButtons.length} buttons in ${selector}`);
-                            }
-                        }
-                    }
-                    
-                    // 3. Check previous sibling elements for regular buttons (traditional approach)
+                    // Cursor IDE - enhanced search strategy
+                    // 1. Check previous sibling elements for regular buttons
                     let currentElement = inputBox.previousElementSibling;
                     let searchDepth = 0;
                     
-                    while (currentElement && searchDepth < 8) {
+                    while (currentElement && searchDepth < 8) { // Increased depth
                         const acceptElements = this.findAcceptInElement(currentElement);
                         buttons.push(...acceptElements);
-                        
-                        if (this.debugMode && acceptElements.length > 0) {
-                            this.log(`Found ${acceptElements.length} buttons in sibling ${searchDepth}`);
-                        }
                         
                         currentElement = currentElement.previousElementSibling;
                         searchDepth++;
                     }
                     
-                    // 4. Search for buttons in recent message bubbles (for Keep/Accept after execution)
-                    const messageBubbles = document.querySelectorAll('[data-message-index]');
-                    for (let i = 0; i < Math.min(3, messageBubbles.length); i++) {
-                        const bubble = messageBubbles[messageBubbles.length - 1 - i]; // Most recent first
-                        const bubbleButtons = this.findAcceptInElement(bubble);
-                        buttons.push(...bubbleButtons);
-                        
-                        if (this.debugMode && bubbleButtons.length > 0) {
-                            this.log(`Found ${bubbleButtons.length} buttons in recent message bubble`);
-                        }
+                    // 2. Search in conversation area for buttons
+                    const conversationArea = document.querySelector('.conversations') || 
+                                          document.querySelector('[class*="conversation"]') ||
+                                          document.querySelector('.chat-messages') ||
+                                          document.querySelector('[class*="message"]');
+                    
+                    if (conversationArea) {
+                        const conversationButtons = this.findAcceptInElement(conversationArea);
+                        buttons.push(...conversationButtons);
                     }
                     
-                    // 5. Global fallback search for any missed buttons
+                    // 3. Search for buttons in the entire document as fallback
                     const globalButtons = this.findButtonsGlobally();
                     buttons.push(...globalButtons);
-                    
-                    if (this.debugMode && globalButtons.length > 0) {
-                        this.log(`Found ${globalButtons.length} buttons via global search`);
-                    }
                 }
 
                 // Also search for Resume Conversation links in message bubbles if enabled
@@ -2068,21 +2019,15 @@
                     buttons.push(...connectionButtons);
                 }
                 
-                // Remove duplicates and filter by visibility/clickability
+                // Remove duplicates
                 const uniqueButtons = [];
                 const seenButtons = new Set();
-                
-                for (const button of buttons) {
-                    const buttonId = button.textContent.trim() + button.className + button.getBoundingClientRect().top;
-                    if (!seenButtons.has(buttonId) && this.isElementVisible(button) && this.isElementClickable(button)) {
-                        seenButtons.add(buttonId);
+                buttons.forEach(button => {
+                    if (!seenButtons.has(button)) {
+                        seenButtons.add(button);
                         uniqueButtons.push(button);
                     }
-                }
-                
-                if (this.debugMode && uniqueButtons.length > 0) {
-                    this.log(`Found ${uniqueButtons.length} unique visible buttons: ${uniqueButtons.map(b => b.textContent.trim()).join(', ')}`);
-                }
+                });
                 
                 return uniqueButtons;
             }
@@ -2139,32 +2084,26 @@
                 // Cursor IDE detection (original logic)
                 const text = element.textContent.toLowerCase().trim();
                 
-                // Enhanced patterns with better matching and priority
+                // Check each pattern based on configuration
                 const patterns = [
-                    { pattern: 'accept all', enabled: this.config.enableAcceptAll, priority: 1 },
-                    { pattern: 'accept', enabled: this.config.enableAccept, priority: 2 },
-                    { pattern: 'keep all', enabled: this.config.enableKeepAll, priority: 1 },
-                    { pattern: 'keep', enabled: this.config.enableKeep, priority: 2 },
-                    { pattern: 'run command', enabled: this.config.enableRunCommand, priority: 1 },
-                    { pattern: 'run', enabled: this.config.enableRun, priority: 2 },
-                    { pattern: 'apply', enabled: this.config.enableApply, priority: 2 },
-                    { pattern: 'execute', enabled: this.config.enableExecute, priority: 2 },
-                    { pattern: 'resume', enabled: this.config.enableResume || this.config.enableConnectionResume, priority: 2 },
-                    { pattern: 'try again', enabled: this.config.enableTryAgain, priority: 2 }
+                    { pattern: 'accept all', enabled: this.config.enableAcceptAll },
+                    { pattern: 'accept', enabled: this.config.enableAccept },
+                    { pattern: 'run command', enabled: this.config.enableRunCommand },
+                    { pattern: 'run', enabled: this.config.enableRun },
+                    { pattern: 'apply', enabled: this.config.enableApply },
+                    { pattern: 'execute', enabled: this.config.enableExecute },
+                    { pattern: 'resume', enabled: this.config.enableResume || this.config.enableConnectionResume },
+                    { pattern: 'try again', enabled: this.config.enableTryAgain },
+                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
+                    { pattern: 'keep', enabled: this.config.enableKeep }
                 ];
                 
-                // Find the best matching pattern (highest priority)
-                let bestMatch = null;
-                let bestPriority = 0;
+                // Check if text matches any enabled pattern
+                const matchesEnabledPattern = patterns.some(({ pattern, enabled }) => 
+                    enabled && text.includes(pattern)
+                );
                 
-                for (const { pattern, enabled, priority } of patterns) {
-                    if (enabled && text.includes(pattern) && priority > bestPriority) {
-                        bestMatch = pattern;
-                        bestPriority = priority;
-                    }
-                }
-                
-                if (!bestMatch) return false;
+                if (!matchesEnabledPattern) return false;
                 
                 const isVisible = this.isElementVisible(element);
                 const isClickable = this.isElementClickable(element);
@@ -2413,14 +2352,6 @@
                     if (success) {
                         this.totalClicks++;
                         this.updatePanelStatus();
-                        
-                        // If we clicked a Run button, set a flag to look for Keep/Accept buttons next
-                        if (buttonText.toLowerCase().includes('run')) {
-                            this.lastRunClickTime = Date.now();
-                            if (this.debugMode) {
-                                this.log(`Run button clicked, will look for Keep/Accept buttons next`);
-                            }
-                        }
                     }
                     
                 } catch (error) {
@@ -3156,23 +3087,6 @@
             console.log('Debug mode disabled');
         };
         
-        // Enhanced debugging for button detection
-        globalThis.debugButtons = () => {
-            console.log('=== BUTTON DEBUGGING ===');
-            const buttons = globalThis.simpleAccept.findAcceptButtons();
-            console.log(`Total buttons found: ${buttons.length}`);
-            
-            buttons.forEach((button, index) => {
-                console.log(`Button ${index + 1}:`);
-                console.log(`  Text: "${button.textContent.trim()}"`);
-                console.log(`  Classes: "${button.className}"`);
-                console.log(`  Visible: ${globalThis.simpleAccept.isElementVisible(button)}`);
-                console.log(`  Clickable: ${globalThis.simpleAccept.isElementClickable(button)}`);
-                console.log(`  Position: ${button.getBoundingClientRect().top}, ${button.getBoundingClientRect().left}`);
-            });
-            console.log('=== END BUTTON DEBUGGING ===');
-        };
-        
         // Force visible startup message
         const startupMsg = `[autoAcceptAndAnalytics] SCRIPT LOADED AND ACTIVE! (${globalThis.simpleAccept.ideType.toUpperCase()} IDE detected)`;
         console.log(startupMsg);
@@ -3192,7 +3106,7 @@
         
         console.log('Commands: startAccept(), stopAccept(), acceptStatus(), debugAccept()');
         console.log('Analytics: showAnalytics(), exportAnalytics(), clearAnalytics(), clearStorage(), validateData()');
-        console.log('Debug: toggleDebug(), enableDebug(), disableDebug(), debugButtons() - Control debug logging');
+        console.log('Debug: toggleDebug(), enableDebug(), disableDebug() - Control debug logging');
         console.log('Calibration: calibrateWorkflow(manualSeconds, autoMs) - Adjust workflow timing');
         console.log('Config: enableOnly([types]), enableAll(), disableAll(), toggleButton(type)');
         console.log('Conversation: findDiffs(), getContext(), logActivity(), recentDiffs(maxAge)');
