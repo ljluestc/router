@@ -59,8 +59,8 @@
                     enableResume: true,
                     enableConnectionResume: true,  // New: Resume button in connection failure dropdown
                     enableTryAgain: true,          // New: Try again button in connection failure dropdown
-                    enableKeep: true,              // New: Keep button
-                    enableKeepAll: true            // New: Keep all button
+                    enableKeepAll: true,           // New: Keep all button
+                    enableKeep: true               // New: Keep button
                 };
                 
                 // Load persisted data
@@ -332,9 +332,7 @@
                     'apply': this.roiTracking.averageCompleteWorkflow,
                     'resume': this.roiTracking.averageCompleteWorkflow + 3000, // time saved by auto-resuming conversation
                     'connection-resume': this.roiTracking.averageCompleteWorkflow + 4000, // extra time for connection issues
-                    'try again': this.roiTracking.averageCompleteWorkflow + 3000, // time saved by auto-retrying
-                    'keep all': this.roiTracking.averageCompleteWorkflow + 5000, // extra time to review all changes
-                    'keep': this.roiTracking.averageCompleteWorkflow
+                    'try again': this.roiTracking.averageCompleteWorkflow + 3000 // time saved by auto-retrying
                 };
                 
                 const manualTime = workflowTimeSavings[buttonType.toLowerCase()] || this.roiTracking.averageCompleteWorkflow;
@@ -825,9 +823,7 @@
                     { id: 'aa-apply', text: 'Apply', checked: true },
                     { id: 'aa-resume', text: 'Resume Conversation', checked: true },
                     { id: 'aa-connection-resume', text: 'Connection Resume', checked: true },
-                    { id: 'aa-try-again', text: 'Try Again', checked: true },
-                    { id: 'aa-keep', text: 'Keep', checked: true },
-                    { id: 'aa-keep-all', text: 'Keep All', checked: true }
+                    { id: 'aa-try-again', text: 'Try Again', checked: true }
                 ];
                 
                 configOptions.forEach(option => {
@@ -1075,8 +1071,6 @@
                             valueSpan.style.color = '#2196F3';
                         } else if (type === 'connection-resume' || type === 'try-again') {
                             valueSpan.style.color = '#FF5722'; // Orange-red for connection issues
-                        } else if (type === 'keep' || type === 'keep-all') {
-                            valueSpan.style.color = '#8BC34A'; // Light green for keep buttons
                         } else {
                             valueSpan.style.color = '#9C27B0';
                         }
@@ -1850,9 +1844,7 @@
                             'aa-apply': 'enableApply',
                             'aa-resume': 'enableResume',
                             'aa-connection-resume': 'enableConnectionResume',
-                            'aa-try-again': 'enableTryAgain',
-                            'aa-keep': 'enableKeep',
-                            'aa-keep-all': 'enableKeepAll'
+                            'aa-try-again': 'enableTryAgain'
                         };
                         const configKey = configMap[checkbox.id];
                         if (configKey) {
@@ -2064,9 +2056,7 @@
                     { pattern: 'apply', enabled: this.config.enableApply },
                     { pattern: 'execute', enabled: this.config.enableExecute },
                     { pattern: 'resume', enabled: this.config.enableResume || this.config.enableConnectionResume },
-                    { pattern: 'try again', enabled: this.config.enableTryAgain },
-                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
-                    { pattern: 'keep', enabled: this.config.enableKeep }
+                    { pattern: 'try again', enabled: this.config.enableTryAgain }
                 ];
                 
                 // Check if text matches any enabled pattern
@@ -2889,9 +2879,7 @@
                     { pattern: 'run command', enabled: this.config.enableRunCommand },
                     { pattern: 'run', enabled: this.config.enableRun },
                     { pattern: 'apply', enabled: this.config.enableApply },
-                    { pattern: 'execute', enabled: this.config.enableExecute },
-                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
-                    { pattern: 'keep', enabled: this.config.enableKeep }
+                    { pattern: 'execute', enabled: this.config.enableExecute }
                 ];
                 
                 // Check if text matches any enabled pattern
@@ -3081,6 +3069,6 @@
         console.log('Calibration: calibrateWorkflow(manualSeconds, autoMs) - Adjust workflow timing');
         console.log('Config: enableOnly([types]), enableAll(), disableAll(), toggleButton(type)');
         console.log('Conversation: findDiffs(), getContext(), logActivity(), recentDiffs(maxAge)');
-        console.log('Types: "acceptAll", "accept", "run", "runCommand", "apply", "execute", "resume", "connectionResume", "tryAgain", "keep", "keepAll"');
+        console.log('Types: "acceptAll", "accept", "run", "runCommand", "apply", "execute", "resume", "connectionResume", "tryAgain"');
     }
 })(); 

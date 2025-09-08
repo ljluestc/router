@@ -9,13 +9,10 @@
 #include "analytics/clickhouse_client.h"
 #include "cli/cli_interface.h"
 #include "config/yaml_config.h"
-#include "testing/pcap_diff.h"
 
 #include <iostream>
 #include <signal.h>
 #include <unistd.h>
-#include <thread>
-#include <chrono>
 
 using namespace RouterSim;
 

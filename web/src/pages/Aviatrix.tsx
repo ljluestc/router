@@ -1,12 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
+  Typography,
   Card,
   CardContent,
-  Typography,
-  Button,
   Grid,
-  Chip,
+  Button,
   Table,
   TableBody,
   TableCell,
@@ -14,12 +13,16 @@ import {
   TableHead,
   TableRow,
   Paper,
+  Chip,
   IconButton,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
   TextField,
+  FormControl,
+  InputLabel,
+  Select,
   MenuItem,
 } from '@mui/material';
 import {
@@ -27,100 +30,97 @@ import {
   Edit as EditIcon,
   Delete as DeleteIcon,
   Refresh as RefreshIcon,
-  Security as SecurityIcon,
-  Cloud as CloudIcon,
 } from '@mui/icons-material';
-
-interface AviatrixGateway {
-  id: string;
-  name: string;
-  type: string;
-  status: string;
-  region: string;
-  vpc_id: string;
-  public_ip: string;
-  private_ip: string;
-  created_at: string;
-}
-
-interface AviatrixConnection {
-  id: string;
-  name: string;
-  source_gateway: string;
-  dest_gateway: string;
-  status: string;
-  bandwidth: string;
-  latency: string;
-  created_at: string;
-}
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 const Aviatrix: React.FC = () => {
-  const [gateways, setGateways] = useState<AviatrixGateway[]>([]);
-  const [connections, setConnections] = useState<AviatrixConnection[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'gateways' | 'connections'>('gateways');
-  const [openDialog, setOpenDialog] = useState(false);
-  const [dialogMode, setDialogMode] = useState<'create' | 'edit'>('create');
-  const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [open, setOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState('transit-gateways');
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const { data: transitGateways, isLoading: transitGatewaysLoading } = useQuery({
+    queryKey: ['aviatrix-transit-gateways'],
+    queryFn: async () => {
+      const response = await fetch('/api/v1/aviatrix/transit-gateways');
+      return response.json();
+    },
+  });
 
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-      const [gatewaysRes, connectionsRes] = await Promise.all([
-        fetch('/api/v1/aviatrix/gateways'),
-        fetch('/api/v1/aviatrix/connections')
-      ]);
-      
-      const gatewaysData = await gatewaysRes.json();
-      const connectionsData = await connectionsRes.json();
-      
-      setGateways(gatewaysData.gateways || []);
-      setConnections(connectionsData.connections || []);
-    } catch (error) {
-      console.error('Failed to fetch Aviatrix data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data: spokeGateways, isLoading: spokeGatewaysLoading } = useQuery({
+    queryKey: ['aviatrix-spoke-gateways'],
+    queryFn: async () => {
+      const response = await fetch('/api/v1/aviatrix/spoke-gateways');
+      return response.json();
+    },
+  });
+
+  const { data: vpcConnections, isLoading: vpcConnectionsLoading } = useQuery({
+    queryKey: ['aviatrix-vpc-connections'],
+    queryFn: async () => {
+      const response = await fetch('/api/v1/aviatrix/vpc-connections');
+      return response.json();
+    },
+  });
+
+  const { data: site2CloudConnections, isLoading: site2CloudConnectionsLoading } = useQuery({
+    queryKey: ['aviatrix-site2cloud'],
+    queryFn: async () => {
+      const response = await fetch('/api/v1/aviatrix/site2cloud');
+      return response.json();
+    },
+  });
+
+  const createTransitGateway = useMutation({
+    mutationFn: async (data: any) => {
+      const response = await fetch('/api/v1/aviatrix/transit-gateways', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['aviatrix-transit-gateways'] });
+      setOpen(false);
+    },
+  });
+
+  const deleteTransitGateway = useMutation({
+    mutationFn: async (name: string) => {
+      const response = await fetch(`/api/v1/aviatrix/transit-gateways/${name}`, {
+        method: 'DELETE',
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['aviatrix-transit-gateways'] });
+    },
+  });
 
   const handleCreate = () => {
-    setSelectedItem(null);
-    setDialogMode('create');
-    setOpenDialog(true);
+    setEditingItem(null);
+    setOpen(true);
   };
 
   const handleEdit = (item: any) => {
-    setSelectedItem(item);
-    setDialogMode('edit');
-    setOpenDialog(true);
+    setEditingItem(item);
+    setOpen(true);
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = (name: string) => {
     if (window.confirm('Are you sure you want to delete this item?')) {
-      try {
-        const endpoint = activeTab === 'gateways' ? 'gateways' : 'connections';
-        await fetch(`/api/v1/aviatrix/${endpoint}/${id}`, {
-          method: 'DELETE',
-        });
-        fetchData();
-      } catch (error) {
-        console.error('Failed to delete item:', error);
-      }
+      deleteTransitGateway.mutate(name);
     }
   };
 
   const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'up':
+    switch (status?.toLowerCase()) {
       case 'running':
       case 'active':
         return 'success';
-      case 'down':
       case 'stopped':
+      case 'inactive':
         return 'error';
       case 'pending':
       case 'starting':
@@ -130,320 +130,354 @@ const Aviatrix: React.FC = () => {
     }
   };
 
-  const getGatewayTypeIcon = (type: string) => {
-    switch (type.toLowerCase()) {
-      case 'transit':
-        return '🔄';
-      case 'spoke':
-        return '🔗';
-      case 'egress':
-        return '🚪';
-      default:
-        return '🏗️';
-    }
-  };
+  const renderTransitGateways = () => (
+    <Card>
+      <CardContent>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">Transit Gateways</Typography>
+          <Box>
+            <IconButton onClick={() => queryClient.invalidateQueries({ queryKey: ['aviatrix-transit-gateways'] })}>
+              <RefreshIcon />
+            </IconButton>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
+              Create
+            </Button>
+          </Box>
+        </Box>
+        <TableContainer component={Paper}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell>Cloud Type</TableCell>
+                <TableCell>VPC ID</TableCell>
+                <TableCell>Region</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {transitGateways?.data?.map((gateway: any) => (
+                <TableRow key={gateway.gw_name}>
+                  <TableCell>{gateway.gw_name}</TableCell>
+                  <TableCell>{gateway.cloud_type}</TableCell>
+                  <TableCell>{gateway.vpc_id}</TableCell>
+                  <TableCell>{gateway.vpc_reg}</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={gateway.status}
+                      color={getStatusColor(gateway.status)}
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <IconButton onClick={() => handleEdit(gateway)}>
+                      <EditIcon />
+                    </IconButton>
+                    <IconButton onClick={() => handleDelete(gateway.gw_name)}>
+                      <DeleteIcon />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </CardContent>
+    </Card>
+  );
+
+  const renderSpokeGateways = () => (
+    <Card>
+      <CardContent>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">Spoke Gateways</Typography>
+          <Box>
+            <IconButton onClick={() => queryClient.invalidateQueries({ queryKey: ['aviatrix-spoke-gateways'] })}>
+              <RefreshIcon />
+            </IconButton>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
+              Create
+            </Button>
+          </Box>
+        </Box>
+        <TableContainer component={Paper}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell>Cloud Type</TableCell>
+                <TableCell>VPC ID</TableCell>
+                <TableCell>Region</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {spokeGateways?.data?.map((gateway: any) => (
+                <TableRow key={gateway.gw_name}>
+                  <TableCell>{gateway.gw_name}</TableCell>
+                  <TableCell>{gateway.cloud_type}</TableCell>
+                  <TableCell>{gateway.vpc_id}</TableCell>
+                  <TableCell>{gateway.vpc_reg}</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={gateway.status}
+                      color={getStatusColor(gateway.status)}
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <IconButton onClick={() => handleEdit(gateway)}>
+                      <EditIcon />
+                    </IconButton>
+                    <IconButton onClick={() => handleDelete(gateway.gw_name)}>
+                      <DeleteIcon />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </CardContent>
+    </Card>
+  );
+
+  const renderVPCConnections = () => (
+    <Card>
+      <CardContent>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">VPC Connections</Typography>
+          <Box>
+            <IconButton onClick={() => queryClient.invalidateQueries({ queryKey: ['aviatrix-vpc-connections'] })}>
+              <RefreshIcon />
+            </IconButton>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
+              Create
+            </Button>
+          </Box>
+        </Box>
+        <TableContainer component={Paper}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Connection Name</TableCell>
+                <TableCell>VPC ID</TableCell>
+                <TableCell>Transit Gateway</TableCell>
+                <TableCell>Spoke Gateway</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {vpcConnections?.data?.map((connection: any) => (
+                <TableRow key={connection.connection_name}>
+                  <TableCell>{connection.connection_name}</TableCell>
+                  <TableCell>{connection.vpc_id}</TableCell>
+                  <TableCell>{connection.transit_gateway}</TableCell>
+                  <TableCell>{connection.spoke_gateway}</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={connection.status}
+                      color={getStatusColor(connection.status)}
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <IconButton onClick={() => handleEdit(connection)}>
+                      <EditIcon />
+                    </IconButton>
+                    <IconButton onClick={() => handleDelete(connection.connection_name)}>
+                      <DeleteIcon />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </CardContent>
+    </Card>
+  );
+
+  const renderSite2CloudConnections = () => (
+    <Card>
+      <CardContent>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">Site-to-Cloud Connections</Typography>
+          <Box>
+            <IconButton onClick={() => queryClient.invalidateQueries({ queryKey: ['aviatrix-site2cloud'] })}>
+              <RefreshIcon />
+            </IconButton>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
+              Create
+            </Button>
+          </Box>
+        </Box>
+        <TableContainer component={Paper}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Connection Name</TableCell>
+                <TableCell>VPC ID</TableCell>
+                <TableCell>Remote Gateway IP</TableCell>
+                <TableCell>Connection Type</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {site2CloudConnections?.data?.map((connection: any) => (
+                <TableRow key={connection.connection_name}>
+                  <TableCell>{connection.connection_name}</TableCell>
+                  <TableCell>{connection.vpc_id}</TableCell>
+                  <TableCell>{connection.remote_gateway_ip}</TableCell>
+                  <TableCell>{connection.connection_type}</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={connection.status}
+                      color={getStatusColor(connection.status)}
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <IconButton onClick={() => handleEdit(connection)}>
+                      <EditIcon />
+                    </IconButton>
+                    <IconButton onClick={() => handleDelete(connection.connection_name)}>
+                      <DeleteIcon />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" component="h1">
-          Aviatrix Platform
-        </Typography>
-        <Box>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={fetchData}
-            sx={{ mr: 1 }}
-          >
-            Refresh
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={handleCreate}
-          >
-            Create {activeTab === 'gateways' ? 'Gateway' : 'Connection'}
-          </Button>
-        </Box>
-      </Box>
-
-      {/* Tab Navigation */}
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-        <Button
-          onClick={() => setActiveTab('gateways')}
-          variant={activeTab === 'gateways' ? 'contained' : 'text'}
-          sx={{ mr: 2 }}
-        >
-          Gateways ({gateways.length})
-        </Button>
-        <Button
-          onClick={() => setActiveTab('connections')}
-          variant={activeTab === 'connections' ? 'contained' : 'text'}
-        >
-          Connections ({connections.length})
-        </Button>
-      </Box>
+      <Typography variant="h4" component="h1" gutterBottom>
+        Aviatrix Integration
+      </Typography>
 
       <Grid container spacing={3}>
-        {/* Summary Cards */}
-        <Grid item xs={12} md={3}>
+        <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <SecurityIcon color="primary" sx={{ mr: 1 }} />
-                <Typography variant="h6">Total Gateways</Typography>
+              <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+                <Button
+                  variant={activeTab === 'transit-gateways' ? 'contained' : 'text'}
+                  onClick={() => setActiveTab('transit-gateways')}
+                  sx={{ mr: 1 }}
+                >
+                  Transit Gateways
+                </Button>
+                <Button
+                  variant={activeTab === 'spoke-gateways' ? 'contained' : 'text'}
+                  onClick={() => setActiveTab('spoke-gateways')}
+                  sx={{ mr: 1 }}
+                >
+                  Spoke Gateways
+                </Button>
+                <Button
+                  variant={activeTab === 'vpc-connections' ? 'contained' : 'text'}
+                  onClick={() => setActiveTab('vpc-connections')}
+                  sx={{ mr: 1 }}
+                >
+                  VPC Connections
+                </Button>
+                <Button
+                  variant={activeTab === 'site2cloud' ? 'contained' : 'text'}
+                  onClick={() => setActiveTab('site2cloud')}
+                >
+                  Site-to-Cloud
+                </Button>
               </Box>
-              <Typography variant="h4">{gateways.length}</Typography>
+
+              {activeTab === 'transit-gateways' && renderTransitGateways()}
+              {activeTab === 'spoke-gateways' && renderSpokeGateways()}
+              {activeTab === 'vpc-connections' && renderVPCConnections()}
+              {activeTab === 'site2cloud' && renderSite2CloudConnections()}
             </CardContent>
           </Card>
         </Grid>
-
-        <Grid item xs={12} md={3}>
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <CloudIcon color="primary" sx={{ mr: 1 }} />
-                <Typography variant="h6">Total Connections</Typography>
-              </Box>
-              <Typography variant="h4">{connections.length}</Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>Active Gateways</Typography>
-              <Typography variant="h4" color="success.main">
-                {gateways.filter(g => g.status === 'up').length}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>Active Connections</Typography>
-              <Typography variant="h4" color="success.main">
-                {connections.filter(c => c.status === 'up').length}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        {/* Gateways Table */}
-        {activeTab === 'gateways' && (
-          <Grid item xs={12}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Gateways
-                </Typography>
-                <TableContainer component={Paper} sx={{ backgroundColor: 'transparent' }}>
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Name</TableCell>
-                        <TableCell>Type</TableCell>
-                        <TableCell>Status</TableCell>
-                        <TableCell>Region</TableCell>
-                        <TableCell>Public IP</TableCell>
-                        <TableCell>Private IP</TableCell>
-                        <TableCell>Created</TableCell>
-                        <TableCell>Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {gateways.map((gateway) => (
-                        <TableRow key={gateway.id}>
-                          <TableCell>
-                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                              <Typography variant="body2" sx={{ mr: 1 }}>
-                                {getGatewayTypeIcon(gateway.type)}
-                              </Typography>
-                              {gateway.name}
-                            </Box>
-                          </TableCell>
-                          <TableCell>
-                            <Chip label={gateway.type} size="small" />
-                          </TableCell>
-                          <TableCell>
-                            <Chip 
-                              label={gateway.status} 
-                              color={getStatusColor(gateway.status)}
-                              size="small"
-                            />
-                          </TableCell>
-                          <TableCell>{gateway.region}</TableCell>
-                          <TableCell>
-                            <Typography variant="body2" fontFamily="monospace">
-                              {gateway.public_ip}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" fontFamily="monospace">
-                              {gateway.private_ip}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            {new Date(gateway.created_at).toLocaleDateString()}
-                          </TableCell>
-                          <TableCell>
-                            <IconButton
-                              size="small"
-                              onClick={() => handleEdit(gateway)}
-                            >
-                              <EditIcon />
-                            </IconButton>
-                            <IconButton
-                              size="small"
-                              onClick={() => handleDelete(gateway.id)}
-                              color="error"
-                            >
-                              <DeleteIcon />
-                            </IconButton>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
-          </Grid>
-        )}
-
-        {/* Connections Table */}
-        {activeTab === 'connections' && (
-          <Grid item xs={12}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Connections
-                </Typography>
-                <TableContainer component={Paper} sx={{ backgroundColor: 'transparent' }}>
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Name</TableCell>
-                        <TableCell>Source Gateway</TableCell>
-                        <TableCell>Destination Gateway</TableCell>
-                        <TableCell>Status</TableCell>
-                        <TableCell>Bandwidth</TableCell>
-                        <TableCell>Latency</TableCell>
-                        <TableCell>Created</TableCell>
-                        <TableCell>Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {connections.map((connection) => (
-                        <TableRow key={connection.id}>
-                          <TableCell>{connection.name}</TableCell>
-                          <TableCell>{connection.source_gateway}</TableCell>
-                          <TableCell>{connection.dest_gateway}</TableCell>
-                          <TableCell>
-                            <Chip 
-                              label={connection.status} 
-                              color={getStatusColor(connection.status)}
-                              size="small"
-                            />
-                          </TableCell>
-                          <TableCell>{connection.bandwidth}</TableCell>
-                          <TableCell>{connection.latency}</TableCell>
-                          <TableCell>
-                            {new Date(connection.created_at).toLocaleDateString()}
-                          </TableCell>
-                          <TableCell>
-                            <IconButton
-                              size="small"
-                              onClick={() => handleEdit(connection)}
-                            >
-                              <EditIcon />
-                            </IconButton>
-                            <IconButton
-                              size="small"
-                              onClick={() => handleDelete(connection.id)}
-                              color="error"
-                            >
-                              <DeleteIcon />
-                            </IconButton>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
-          </Grid>
-        )}
       </Grid>
 
       {/* Create/Edit Dialog */}
-      <Dialog open={openDialog} onClose={() => setOpenDialog(false)} maxWidth="sm" fullWidth>
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>
-          {dialogMode === 'create' ? `Create ${activeTab === 'gateways' ? 'Gateway' : 'Connection'}` : `Edit ${activeTab === 'gateways' ? 'Gateway' : 'Connection'}`}
+          {editingItem ? 'Edit' : 'Create'} {activeTab.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
         </DialogTitle>
         <DialogContent>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-            <TextField
-              label="Name"
-              defaultValue={selectedItem?.name || ''}
-              fullWidth
-            />
-            {activeTab === 'gateways' ? (
-              <>
-                <TextField
-                  label="Type"
-                  select
-                  defaultValue={selectedItem?.type || ''}
-                  fullWidth
-                >
-                  <MenuItem value="transit">Transit</MenuItem>
-                  <MenuItem value="spoke">Spoke</MenuItem>
-                  <MenuItem value="egress">Egress</MenuItem>
-                </TextField>
-                <TextField
-                  label="Region"
-                  defaultValue={selectedItem?.region || ''}
-                  fullWidth
-                />
-                <TextField
-                  label="VPC ID"
-                  defaultValue={selectedItem?.vpc_id || ''}
-                  fullWidth
-                />
-              </>
-            ) : (
-              <>
-                <TextField
-                  label="Source Gateway"
-                  defaultValue={selectedItem?.source_gateway || ''}
-                  fullWidth
-                />
-                <TextField
-                  label="Destination Gateway"
-                  defaultValue={selectedItem?.dest_gateway || ''}
-                  fullWidth
-                />
-                <TextField
-                  label="Bandwidth"
-                  defaultValue={selectedItem?.bandwidth || ''}
-                  fullWidth
-                />
-              </>
-            )}
-          </Box>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Name"
+                defaultValue={editingItem?.gw_name || editingItem?.connection_name || ''}
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth>
+                <InputLabel>Cloud Type</InputLabel>
+                <Select defaultValue={editingItem?.cloud_type || 1}>
+                  <MenuItem value={1}>AWS</MenuItem>
+                  <MenuItem value={4}>Azure</MenuItem>
+                  <MenuItem value={8}>GCP</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="VPC ID"
+                defaultValue={editingItem?.vpc_id || ''}
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Region"
+                defaultValue={editingItem?.vpc_reg || editingItem?.region || ''}
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Subnet"
+                defaultValue={editingItem?.subnet || ''}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth>
+                <InputLabel>Gateway Size</InputLabel>
+                <Select defaultValue={editingItem?.gw_size || 't2.micro'}>
+                  <MenuItem value="t2.micro">t2.micro</MenuItem>
+                  <MenuItem value="t2.small">t2.small</MenuItem>
+                  <MenuItem value="t2.medium">t2.medium</MenuItem>
+                  <MenuItem value="t2.large">t2.large</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+          </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpenDialog(false)}>Cancel</Button>
-          <Button 
-            onClick={() => setOpenDialog(false)} 
+          <Button onClick={() => setOpen(false)}>Cancel</Button>
+          <Button
             variant="contained"
+            onClick={() => {
+              // Handle create/edit logic here
+              setOpen(false);
+            }}
           >
-            {dialogMode === 'create' ? 'Create' : 'Save'}
+            {editingItem ? 'Update' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>

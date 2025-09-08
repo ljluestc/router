@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,25 +11,50 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/gin-contrib/cors"
-	"router-sim/internal/api"
 	"router-sim/internal/config"
+	"router-sim/internal/server"
 	"router-sim/internal/cloudpods"
+	"router-sim/internal/aviatrix"
 	"router-sim/internal/analytics"
 )
 
+var (
+	configFile = flag.String("config", "config.yaml", "Configuration file path")
+	port       = flag.Int("port", 8080, "Server port")
+	host       = flag.String("host", "0.0.0.0", "Server host")
+	debug      = flag.Bool("debug", false, "Enable debug mode")
+)
+
 func main() {
+	flag.Parse()
+
 	// Load configuration
-	cfg, err := config.Load()
+	cfg, err := config.Load(*configFile)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Initialize CloudPods integration
+	// Override with command line flags
+	if *port != 8080 {
+		cfg.API.Port = *port
+	}
+	if *host != "0.0.0.0" {
+		cfg.API.Host = *host
+	}
+	if *debug {
+		cfg.Log.Level = "debug"
+	}
+
+	// Initialize CloudPods client
 	cloudpodsClient, err := cloudpods.NewClient(cfg.CloudPods)
 	if err != nil {
 		log.Fatalf("Failed to initialize CloudPods client: %v", err)
+	}
+
+	// Initialize Aviatrix client
+	aviatrixClient, err := aviatrix.NewClient(cfg.Aviatrix)
+	if err != nil {
+		log.Fatalf("Failed to initialize Aviatrix client: %v", err)
 	}
 
 	// Initialize analytics engine
@@ -38,38 +63,28 @@ func main() {
 		log.Fatalf("Failed to initialize analytics engine: %v", err)
 	}
 
-	// Create API server
-	server := api.NewServer(cfg, cloudpodsClient, analyticsEngine)
+	// Create server
+	srv := server.New(cfg, cloudpodsClient, aviatrixClient, analyticsEngine)
 
-	// Setup Gin router
-	router := gin.Default()
-	
-	// CORS middleware
-	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:3001"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-	}))
+	// Setup routes
+	srv.SetupRoutes()
 
-	// API routes
-	api.SetupRoutes(router, server)
-
-	// Start server
-	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Server.Port),
-		Handler: router,
+	// Create HTTP server
+	httpServer := &http.Server{
+		Addr:         fmt.Sprintf("%s:%d", cfg.API.Host, cfg.API.Port),
+		Handler:      srv.Router(),
+		ReadTimeout:  cfg.API.ReadTimeout,
+		WriteTimeout: cfg.API.WriteTimeout,
+		IdleTimeout:  cfg.API.IdleTimeout,
 	}
 
-	// Graceful shutdown
+	// Start server in goroutine
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("Starting server on %s:%d", cfg.API.Host, cfg.API.Port)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()
-
-	log.Printf("Server started on port %d", cfg.Server.Port)
 
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
@@ -78,12 +93,12 @@ func main() {
 
 	log.Println("Shutting down server...")
 
-	// Give outstanding requests 30 seconds to complete
+	// Graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatal("Server forced to shutdown:", err)
+	if err := httpServer.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
 	log.Println("Server exited")

@@ -52,16 +52,15 @@
                 this.config = {
                     enableAcceptAll: true,
                     enableAccept: true,
+                    enableKeepAll: true,           // New: Keep all button
+                    enableKeep: true,              // New: Keep button
                     enableRun: true,
                     enableRunCommand: true,
                     enableApply: true,
                     enableExecute: true,
                     enableResume: true,
                     enableConnectionResume: true,  // New: Resume button in connection failure dropdown
-                    enableTryAgain: true,          // New: Try again button in connection failure dropdown
-                    enableKeep: true,              // New: Keep button
-                    enableKeepAll: true,           // New: Keep all button
-                    enableReviewNextFile: true     // New: Review next file button
+                    enableTryAgain: true           // New: Try again button in connection failure dropdown
                 };
                 
                 // Load persisted data
@@ -208,7 +207,7 @@
                 return this.debugMode;
             }
 
-            // Detect which IDE we're running in - Enhanced detection
+            // Detect which IDE we're running in
             detectIDE() {
                 try {
                     // Check for Windsurf-specific elements and classes
@@ -219,19 +218,12 @@
                         'hover:bg-ide-button-hover-background'
                     ];
                     
-                    // Enhanced Cursor-specific elements
+                    // Check for Cursor-specific elements
                     const cursorIndicators = [
                         'div.full-input-box',
                         '.composer-code-block-container',
                         '.anysphere-text-button',
-                        '.anysphere-secondary-button',
-                        '[class*="composer-"]',
-                        '[class*="anysphere-"]',
-                        'div[contenteditable="true"]',
-                        '[class*="cursor-"]',
-                        '.conversations',
-                        '[class*="conversation"]',
-                        '[class*="message"]'
+                        '.anysphere-secondary-button'
                     ];
                     
                     // Look for Windsurf indicators in the DOM
@@ -263,13 +255,6 @@
                     
                     if (url.includes('cursor') || title.includes('cursor')) {
                         cursorScore += 2;
-                    }
-                    
-                    // Additional Cursor detection - look for specific patterns
-                    if (document.querySelector('[class*="composer-"]') || 
-                        document.querySelector('[class*="anysphere-"]') ||
-                        document.querySelector('.conversations')) {
-                        cursorScore += 3;
                     }
                     
                     // Determine IDE based on scores
@@ -342,15 +327,14 @@
                 const workflowTimeSavings = {
                     'accept all': this.roiTracking.averageCompleteWorkflow + 5000, // extra time to review all changes
                     'accept': this.roiTracking.averageCompleteWorkflow,
+                    'keep all': this.roiTracking.averageCompleteWorkflow + 5000, // extra time to review all changes
+                    'keep': this.roiTracking.averageCompleteWorkflow,
                     'run': this.roiTracking.averageCompleteWorkflow + 2000, // extra caution for running commands
                     'execute': this.roiTracking.averageCompleteWorkflow + 2000,
                     'apply': this.roiTracking.averageCompleteWorkflow,
                     'resume': this.roiTracking.averageCompleteWorkflow + 3000, // time saved by auto-resuming conversation
                     'connection-resume': this.roiTracking.averageCompleteWorkflow + 4000, // extra time for connection issues
-                    'try again': this.roiTracking.averageCompleteWorkflow + 3000, // time saved by auto-retrying
-                    'keep all': this.roiTracking.averageCompleteWorkflow + 5000, // extra time to review all changes
-                    'keep': this.roiTracking.averageCompleteWorkflow,
-                    'review next file': this.roiTracking.averageCompleteWorkflow + 2000 // time to review and navigate
+                    'try again': this.roiTracking.averageCompleteWorkflow + 3000 // time saved by auto-retrying
                 };
                 
                 const manualTime = workflowTimeSavings[buttonType.toLowerCase()] || this.roiTracking.averageCompleteWorkflow;
@@ -725,6 +709,8 @@
                 // Map variations to standard types
                 if (type.includes('accept all')) return 'accept-all';
                 if (type.includes('accept')) return 'accept';
+                if (type.includes('keep all')) return 'keep-all';
+                if (type.includes('keep')) return 'keep';
                 if (type.includes('run command')) return 'run-command';
                 if (type.includes('run')) return 'run';
                 if (type.includes('apply')) return 'apply';
@@ -732,9 +718,6 @@
                 if (type.includes('resume') && type.includes('conversation')) return 'resume-conversation';
                 if (type.includes('resume')) return 'connection-resume'; // Connection failure resume
                 if (type.includes('try again')) return 'try-again';
-                if (type.includes('keep all')) return 'keep-all';
-                if (type.includes('keep')) return 'keep';
-                if (type.includes('review next file')) return 'review-next-file';
                 
                 return type;
             }
@@ -838,14 +821,13 @@
                 const configOptions = [
                     { id: 'aa-accept-all', text: 'Accept All', checked: true },
                     { id: 'aa-accept', text: 'Accept', checked: true },
+                    { id: 'aa-keep-all', text: 'Keep All', checked: true },
+                    { id: 'aa-keep', text: 'Keep', checked: true },
                     { id: 'aa-run', text: 'Run', checked: true },
                     { id: 'aa-apply', text: 'Apply', checked: true },
                     { id: 'aa-resume', text: 'Resume Conversation', checked: true },
                     { id: 'aa-connection-resume', text: 'Connection Resume', checked: true },
-                    { id: 'aa-try-again', text: 'Try Again', checked: true },
-                    { id: 'aa-keep', text: 'Keep', checked: true },
-                    { id: 'aa-keep-all', text: 'Keep All', checked: true },
-                    { id: 'aa-review-next-file', text: 'Review Next File', checked: true }
+                    { id: 'aa-try-again', text: 'Try Again', checked: true }
                 ];
                 
                 configOptions.forEach(option => {
@@ -1093,10 +1075,6 @@
                             valueSpan.style.color = '#2196F3';
                         } else if (type === 'connection-resume' || type === 'try-again') {
                             valueSpan.style.color = '#FF5722'; // Orange-red for connection issues
-                        } else if (type === 'keep' || type === 'keep-all') {
-                            valueSpan.style.color = '#8BC34A'; // Light green for keep buttons
-                        } else if (type === 'review-next-file') {
-                            valueSpan.style.color = '#FFC107'; // Amber for review next file
                         } else {
                             valueSpan.style.color = '#9C27B0';
                         }
@@ -1866,14 +1844,13 @@
                         const configMap = {
                             'aa-accept-all': 'enableAcceptAll',
                             'aa-accept': 'enableAccept',
+                            'aa-keep-all': 'enableKeepAll',
+                            'aa-keep': 'enableKeep',
                             'aa-run': 'enableRun',
                             'aa-apply': 'enableApply',
                             'aa-resume': 'enableResume',
                             'aa-connection-resume': 'enableConnectionResume',
-                            'aa-try-again': 'enableTryAgain',
-                            'aa-keep': 'enableKeep',
-                            'aa-keep-all': 'enableKeepAll',
-                            'aa-review-next-file': 'enableReviewNextFile'
+                            'aa-try-again': 'enableTryAgain'
                         };
                         const configKey = configMap[checkbox.id];
                         if (configKey) {
@@ -1977,11 +1954,8 @@
                               document.querySelector('[class*="bg-ide-editor-background"]') ||
                               document.querySelector('.flex.flex-row.gap-x-1');
                 } else {
-                    // Cursor IDE - enhanced detection
-                    inputBox = document.querySelector('div.full-input-box') ||
-                              document.querySelector('[class*="composer-input"]') ||
-                              document.querySelector('[class*="input-box"]') ||
-                              document.querySelector('div[contenteditable="true"]');
+                    // Cursor IDE
+                    inputBox = document.querySelector('div.full-input-box');
                 }
                 
                 if (!inputBox) {
@@ -1998,9 +1972,18 @@
                     const windsurfButtons = this.findWindsurfButtons();
                     buttons.push(...windsurfButtons);
                 } else {
-                    // Cursor IDE - enhanced button detection
-                    const cursorButtons = this.findCursorButtons(inputBox);
-                    buttons.push(...cursorButtons);
+                    // Cursor IDE - check previous sibling elements for regular buttons
+                    let currentElement = inputBox.previousElementSibling;
+                    let searchDepth = 0;
+                    
+                    while (currentElement && searchDepth < 5) {
+                        // Look for any clickable elements containing "Accept" text
+                        const acceptElements = this.findAcceptInElement(currentElement);
+                        buttons.push(...acceptElements);
+                        
+                        currentElement = currentElement.previousElementSibling;
+                        searchDepth++;
+                    }
                 }
 
                 // Also search for Resume Conversation links in message bubbles if enabled
@@ -2013,78 +1996,6 @@
                 if (this.config.enableConnectionResume || this.config.enableTryAgain) {
                     const connectionButtons = this.findConnectionFailureButtons();
                     buttons.push(...connectionButtons);
-                }
-                
-                return buttons;
-            }
-            
-            // Enhanced Cursor IDE button detection
-            findCursorButtons(inputBox) {
-                const buttons = [];
-                
-                // Search in multiple areas around the input box
-                const searchAreas = [
-                    // Previous siblings
-                    inputBox.previousElementSibling,
-                    inputBox.previousElementSibling?.previousElementSibling,
-                    inputBox.previousElementSibling?.previousElementSibling?.previousElementSibling,
-                    // Parent container
-                    inputBox.parentElement,
-                    inputBox.parentElement?.parentElement,
-                    // Siblings of parent
-                    inputBox.parentElement?.nextElementSibling,
-                    inputBox.parentElement?.previousElementSibling,
-                    // Look for conversation containers
-                    document.querySelector('div.conversations'),
-                    document.querySelector('[class*="conversation"]'),
-                    document.querySelector('[class*="message"]')
-                ].filter(Boolean);
-                
-                // Also search globally for Cursor-specific patterns
-                const globalSelectors = [
-                    // Cursor-specific button selectors
-                    '[class*="anysphere"]',
-                    '[class*="cursor-button"]',
-                    '[class*="text-button"]',
-                    '[class*="primary-button"]',
-                    '[class*="secondary-button"]',
-                    'div[class*="button"]',
-                    'button',
-                    'div[onclick]',
-                    'div[style*="cursor: pointer"]',
-                    'div[style*="cursor:pointer"]',
-                    // Code block containers
-                    '.composer-code-block-container',
-                    '.composer-tool-former-message',
-                    '.composer-diff-block',
-                    // File change containers
-                    '[class*="file-change"]',
-                    '[class*="diff"]',
-                    '[class*="code-block"]'
-                ];
-                
-                // Search in specific areas first
-                for (const area of searchAreas) {
-                    if (area) {
-                        const areaButtons = this.findAcceptInElement(area);
-                        buttons.push(...areaButtons);
-                    }
-                }
-                
-                // Then search globally with Cursor-specific selectors
-                for (const selector of globalSelectors) {
-                    try {
-                        const elements = document.querySelectorAll(selector);
-                        for (const element of elements) {
-                            if (this.isAcceptButton(element)) {
-                                buttons.push(element);
-                            }
-                        }
-                    } catch (error) {
-                        if (this.debugMode) {
-                            this.log(`Cursor selector error: ${selector} - ${error.message}`);
-                        }
-                    }
                 }
                 
                 return buttons;
@@ -2142,23 +2053,18 @@
                 // Cursor IDE detection (original logic)
                 const text = element.textContent.toLowerCase().trim();
                 
-                // Check each pattern based on configuration - enhanced patterns
+                // Check each pattern based on configuration
                 const patterns = [
                     { pattern: 'accept all', enabled: this.config.enableAcceptAll },
                     { pattern: 'accept', enabled: this.config.enableAccept },
+                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
+                    { pattern: 'keep', enabled: this.config.enableKeep },
                     { pattern: 'run command', enabled: this.config.enableRunCommand },
                     { pattern: 'run', enabled: this.config.enableRun },
                     { pattern: 'apply', enabled: this.config.enableApply },
                     { pattern: 'execute', enabled: this.config.enableExecute },
                     { pattern: 'resume', enabled: this.config.enableResume || this.config.enableConnectionResume },
-                    { pattern: 'try again', enabled: this.config.enableTryAgain },
-                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
-                    { pattern: 'keep', enabled: this.config.enableKeep },
-                    { pattern: 'review next file', enabled: this.config.enableReviewNextFile },
-                    { pattern: 'review next', enabled: this.config.enableReviewNextFile },
-                    { pattern: 'next file', enabled: this.config.enableReviewNextFile },
-                    { pattern: 'continue', enabled: this.config.enableReviewNextFile },
-                    { pattern: 'proceed', enabled: this.config.enableReviewNextFile }
+                    { pattern: 'try again', enabled: this.config.enableTryAgain }
                 ];
                 
                 // Check if text matches any enabled pattern
@@ -2350,26 +2256,6 @@
                             this.analytics.buttonTypeCounts = {};
                         }
                         this.analytics.buttonTypeCounts['try-again'] = (this.analytics.buttonTypeCounts['try-again'] || 0) + 1;
-                        
-                        // Update totals
-                        this.analytics.totalAccepts++;
-                        this.roiTracking.totalTimeSaved += timeSaved;
-                        
-                        // Save to storage
-                        this.saveToStorage();
-                    } else if (buttonText.includes('review next file') || buttonText.includes('review next') || 
-                               buttonText.includes('next file') || buttonText.includes('continue') || 
-                               buttonText.includes('proceed')) {
-                        // Handle Review Next File button
-                        const timeSaved = this.calculateTimeSaved('review next file');
-                        this.logToPanel(`📄 Review Next File clicked [saved ${this.formatTimeDuration(timeSaved)}]`, 'info');
-                        this.log(`Review Next File clicked - Time saved: ${this.formatTimeDuration(timeSaved)}`);
-                        
-                        // Track button type count
-                        if (!this.analytics.buttonTypeCounts) {
-                            this.analytics.buttonTypeCounts = {};
-                        }
-                        this.analytics.buttonTypeCounts['review-next-file'] = (this.analytics.buttonTypeCounts['review-next-file'] || 0) + 1;
                         
                         // Update totals
                         this.analytics.totalAccepts++;
@@ -2998,17 +2884,12 @@
                 const windsurfPatterns = [
                     { pattern: 'accept all', enabled: this.config.enableAcceptAll },
                     { pattern: 'accept', enabled: this.config.enableAccept },
+                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
+                    { pattern: 'keep', enabled: this.config.enableKeep },
                     { pattern: 'run command', enabled: this.config.enableRunCommand },
                     { pattern: 'run', enabled: this.config.enableRun },
                     { pattern: 'apply', enabled: this.config.enableApply },
-                    { pattern: 'execute', enabled: this.config.enableExecute },
-                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
-                    { pattern: 'keep', enabled: this.config.enableKeep },
-                    { pattern: 'review next file', enabled: this.config.enableReviewNextFile },
-                    { pattern: 'review next', enabled: this.config.enableReviewNextFile },
-                    { pattern: 'next file', enabled: this.config.enableReviewNextFile },
-                    { pattern: 'continue', enabled: this.config.enableReviewNextFile },
-                    { pattern: 'proceed', enabled: this.config.enableReviewNextFile }
+                    { pattern: 'execute', enabled: this.config.enableExecute }
                 ];
                 
                 // Check if text matches any enabled pattern
@@ -3198,6 +3079,6 @@
         console.log('Calibration: calibrateWorkflow(manualSeconds, autoMs) - Adjust workflow timing');
         console.log('Config: enableOnly([types]), enableAll(), disableAll(), toggleButton(type)');
         console.log('Conversation: findDiffs(), getContext(), logActivity(), recentDiffs(maxAge)');
-        console.log('Types: "acceptAll", "accept", "run", "runCommand", "apply", "execute", "resume", "connectionResume", "tryAgain", "keep", "keepAll", "reviewNextFile"');
+        console.log('Types: "acceptAll", "accept", "keepAll", "keep", "run", "runCommand", "apply", "execute", "resume", "connectionResume", "tryAgain"');
     }
 })(); 
