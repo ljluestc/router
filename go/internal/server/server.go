@@ -8,9 +8,6 @@ import (
 
 	"router-sim/internal/config"
 	"router-sim/internal/handlers"
-
-	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
 )
 
 // Server represents the HTTP server
@@ -18,204 +15,109 @@ type Server struct {
 	config   *config.Config
 	handlers *handlers.Handlers
 	server   *http.Server
-	router   *gin.Engine
 }
 
-// NewServer creates a new server instance
-func NewServer(cfg *config.Config, handlers *handlers.Handlers) *Server {
-	// Set Gin mode
-	if cfg.Logging.Level == "debug" {
-		gin.SetMode(gin.DebugMode)
-	} else {
-		gin.SetMode(gin.ReleaseMode)
-	}
+// New creates a new Server instance
+func New(cfg *config.Config, h *handlers.Handlers) *Server {
+	mux := http.NewServeMux()
 
-	// Create router
-	router := gin.New()
+	// Health check endpoint
+	mux.HandleFunc("/health", h.HealthCheck)
 
-	// Add middleware
-	router.Use(gin.Logger())
-	router.Use(gin.Recovery())
-	router.Use(corsMiddleware())
-	router.Use(requestIDMiddleware())
-	router.Use(loggingMiddleware())
+	// API endpoints
+	mux.HandleFunc("/api/v1/status", h.GetStatus)
+	mux.HandleFunc("/api/v1/metrics", h.GetMetrics)
+	mux.HandleFunc("/api/v1/routes", h.GetRoutes)
+	mux.HandleFunc("/api/v1/interfaces", h.GetInterfaces)
+	mux.HandleFunc("/api/v1/neighbors", h.GetNeighbors)
+	mux.HandleFunc("/api/v1/analytics", h.GetAnalytics)
+	mux.HandleFunc("/api/v1/activity", h.GetRecentActivity)
 
-	// Create server
+	// CloudPods endpoints
+	mux.HandleFunc("/api/v1/cloudpods/resources", h.GetCloudPodsResources)
+	mux.HandleFunc("/api/v1/cloudpods/topology", h.GetCloudPodsTopology)
+	mux.HandleFunc("/api/v1/cloudpods/metrics", h.GetCloudPodsMetrics)
+
+	// Aviatrix endpoints
+	mux.HandleFunc("/api/v1/aviatrix/gateways", h.GetAviatrixGateways)
+	mux.HandleFunc("/api/v1/aviatrix/bgp-neighbors", h.GetAviatrixBGPNeighbors)
+	mux.HandleFunc("/api/v1/aviatrix/routes", h.GetAviatrixRoutes)
+	mux.HandleFunc("/api/v1/aviatrix/topology", h.GetAviatrixTopology)
+	mux.HandleFunc("/api/v1/aviatrix/gateway-status", h.GetAviatrixGatewayStatus)
+
+	// Analytics insertion endpoints
+	mux.HandleFunc("/api/v1/analytics/packet-metrics", h.InsertPacketMetrics)
+	mux.HandleFunc("/api/v1/analytics/route-metrics", h.InsertRouteMetrics)
+	mux.HandleFunc("/api/v1/analytics/system-metrics", h.InsertSystemMetrics)
+	mux.HandleFunc("/api/v1/analytics/traffic-flow", h.InsertTrafficFlow)
+
+	// CORS middleware
+	handler := corsMiddleware(mux, cfg.API.CORS)
+
 	server := &http.Server{
-		Addr:           cfg.GetServerAddress(),
-		Handler:        router,
-		ReadTimeout:    cfg.Server.ReadTimeout,
-		WriteTimeout:   cfg.Server.WriteTimeout,
-		IdleTimeout:    cfg.Server.IdleTimeout,
-		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
+		Addr:         fmt.Sprintf("%s:%d", cfg.API.Host, cfg.API.Port),
+		Handler:      handler,
+		ReadTimeout:  cfg.API.ReadTimeout,
+		WriteTimeout: cfg.API.WriteTimeout,
+		IdleTimeout:  cfg.API.IdleTimeout,
 	}
 
 	return &Server{
 		config:   cfg,
-		handlers: handlers,
+		handlers: h,
 		server:   server,
-		router:   router,
 	}
 }
 
 // Start starts the server
 func (s *Server) Start() error {
-	// Setup routes
-	s.setupRoutes()
-
-	// Start server
-	logrus.Infof("Starting server on %s", s.server.Addr)
 	return s.server.ListenAndServe()
 }
 
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(ctx context.Context) error {
-	logrus.Info("Shutting down server...")
 	return s.server.Shutdown(ctx)
 }
 
-// setupRoutes sets up all the routes
-func (s *Server) setupRoutes() {
-	// Health check
-	s.router.GET("/health", s.handlers.HealthCheck)
+// corsMiddleware adds CORS headers to responses
+func corsMiddleware(next http.Handler, cors config.CORSConfig) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cors.Enabled {
+			// Set CORS headers
+			for _, origin := range cors.AllowOrigins {
+				if origin == "*" || origin == r.Header.Get("Origin") {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					break
+				}
+			}
 
-	// API v1 routes
-	v1 := s.router.Group("/api/v1")
-	{
-		// CloudPods routes
-		if s.config.IsCloudPodsEnabled() {
-			cloudpods := v1.Group("/cloudpods")
-			{
-				cloudpods.GET("/networks", s.handlers.GetCloudPodsNetworks)
-				cloudpods.GET("/networks/:id", s.handlers.GetCloudPodsNetwork)
-				cloudpods.POST("/networks", s.handlers.CreateCloudPodsNetwork)
-				cloudpods.GET("/vms", s.handlers.GetCloudPodsVMs)
-				cloudpods.GET("/loadbalancers", s.handlers.GetCloudPodsLoadBalancers)
-				cloudpods.GET("/resources/:type", s.handlers.GetCloudPodsResources)
+			w.Header().Set("Access-Control-Allow-Methods", joinStrings(cors.AllowMethods, ", "))
+			w.Header().Set("Access-Control-Allow-Headers", joinStrings(cors.AllowHeaders, ", "))
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+			// Handle preflight requests
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
 			}
 		}
 
-		// Aviatrix routes
-		if s.config.IsAviatrixEnabled() {
-			aviatrix := v1.Group("/aviatrix")
-			{
-				aviatrix.GET("/gateways", s.handlers.GetAviatrixGateways)
-				aviatrix.GET("/transit-gateways", s.handlers.GetAviatrixTransitGateways)
-				aviatrix.GET("/spoke-gateways", s.handlers.GetAviatrixSpokeGateways)
-				aviatrix.GET("/vpn-gateways", s.handlers.GetAviatrixVPNGateways)
-				aviatrix.GET("/connections", s.handlers.GetAviatrixConnections)
-				aviatrix.POST("/connections", s.handlers.CreateAviatrixConnection)
-				aviatrix.GET("/routes", s.handlers.GetAviatrixRoutes)
-			}
-		}
-
-		// Router simulation routes
-		router := v1.Group("/router")
-		{
-			router.GET("/status", s.handlers.GetRouterStatus)
-			router.GET("/interfaces", s.handlers.GetInterfaces)
-			router.GET("/routes", s.handlers.GetRoutes)
-			router.POST("/routes", s.handlers.AddRoute)
-			router.DELETE("/routes/:destination", s.handlers.RemoveRoute)
-			router.GET("/statistics", s.handlers.GetStatistics)
-			router.POST("/reset", s.handlers.ResetRouter)
-		}
-
-		// Traffic shaping routes
-		traffic := v1.Group("/traffic")
-		{
-			traffic.GET("/shaping", s.handlers.GetTrafficShaping)
-			traffic.POST("/shaping", s.handlers.UpdateTrafficShaping)
-			traffic.GET("/statistics", s.handlers.GetTrafficStatistics)
-		}
-
-		// Network impairments routes
-		impairments := v1.Group("/impairments")
-		{
-			impairments.GET("/", s.handlers.GetImpairments)
-			impairments.POST("/", s.handlers.ApplyImpairments)
-			impairments.DELETE("/:interface", s.handlers.ClearImpairments)
-		}
-
-		// Analytics routes
-		analytics := v1.Group("/analytics")
-		{
-			analytics.GET("/metrics", s.handlers.GetMetrics)
-			analytics.GET("/packets", s.handlers.GetPacketAnalytics)
-			analytics.GET("/routing", s.handlers.GetRoutingAnalytics)
-		}
-	}
-
-	// WebSocket routes
-	s.router.GET("/ws", s.handlers.WebSocketHandler)
-
-	// Static file serving
-	s.router.Static("/static", "./web/static")
-	s.router.StaticFile("/", "./web/index.html")
+		next.ServeHTTP(w, r)
+	})
 }
 
-// corsMiddleware adds CORS headers
-func corsMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
-		c.Header("Access-Control-Allow-Credentials", "true")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
+// joinStrings joins a slice of strings with a separator
+func joinStrings(strs []string, sep string) string {
+	if len(strs) == 0 {
+		return ""
 	}
-}
-
-// requestIDMiddleware adds a request ID to each request
-func requestIDMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		requestID := c.GetHeader("X-Request-ID")
-		if requestID == "" {
-			requestID = generateRequestID()
-		}
-		c.Header("X-Request-ID", requestID)
-		c.Set("request_id", requestID)
-		c.Next()
+	if len(strs) == 1 {
+		return strs[0]
 	}
-}
 
-// loggingMiddleware logs requests
-func loggingMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		start := time.Now()
-		path := c.Request.URL.Path
-		raw := c.Request.URL.RawQuery
-
-		c.Next()
-
-		latency := time.Since(start)
-		clientIP := c.ClientIP()
-		method := c.Request.Method
-		statusCode := c.Writer.Status()
-		bodySize := c.Writer.Size()
-
-		if raw != "" {
-			path = path + "?" + raw
-		}
-
-		logrus.WithFields(logrus.Fields{
-			"status":     statusCode,
-			"latency":    latency,
-			"client_ip":  clientIP,
-			"method":     method,
-			"path":       path,
-			"body_size":  bodySize,
-			"request_id": c.GetString("request_id"),
-		}).Info("HTTP Request")
+	result := strs[0]
+	for i := 1; i < len(strs); i++ {
+		result += sep + strs[i]
 	}
-}
-
-// generateRequestID generates a unique request ID
-func generateRequestID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+	return result
 }

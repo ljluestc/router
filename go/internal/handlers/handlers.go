@@ -1,609 +1,491 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
 
+	"router-sim/internal/analytics"
 	"router-sim/internal/aviatrix"
 	"router-sim/internal/cloudpods"
-
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
-	"github.com/sirupsen/logrus"
 )
 
 // Handlers contains all HTTP handlers
 type Handlers struct {
-	cloudpodsClient *cloudpods.CloudPodsClient
-	aviatrixClient  *aviatrix.AviatrixClient
+	analytics  *analytics.Engine
+	cloudpods  *cloudpods.Client
+	aviatrix   *aviatrix.Client
 }
 
-// NewHandlers creates a new handlers instance
-func NewHandlers(cloudpodsClient *cloudpods.CloudPodsClient, aviatrixClient *aviatrix.AviatrixClient) *Handlers {
+// New creates a new Handlers instance
+func New(analytics *analytics.Engine, cloudpods *cloudpods.Client, aviatrix *aviatrix.Client) *Handlers {
 	return &Handlers{
-		cloudpodsClient: cloudpodsClient,
-		aviatrixClient:  aviatrixClient,
+		analytics: analytics,
+		cloudpods: cloudpods,
+		aviatrix:  aviatrix,
 	}
 }
 
 // HealthCheck handles health check requests
-func (h *Handlers) HealthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
+func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "healthy",
-		"timestamp": time.Now().Unix(),
+		"timestamp": time.Now().UTC(),
 		"version":   "1.0.0",
 	})
 }
 
-// CloudPods Handlers
-
-// GetCloudPodsNetworks retrieves all CloudPods networks
-func (h *Handlers) GetCloudPodsNetworks(c *gin.Context) {
-	ctx := c.Request.Context()
-	networks, err := h.cloudpodsClient.GetNetworks(ctx)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get CloudPods networks")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    networks,
-	})
-}
-
-// GetCloudPodsNetwork retrieves a specific CloudPods network
-func (h *Handlers) GetCloudPodsNetwork(c *gin.Context) {
-	networkID := c.Param("id")
-	ctx := c.Request.Context()
-
-	network, err := h.cloudpodsClient.GetNetwork(ctx, networkID)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get CloudPods network")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    network,
-	})
-}
-
-// CreateCloudPodsNetwork creates a new CloudPods network
-func (h *Handlers) CreateCloudPodsNetwork(c *gin.Context) {
-	var network cloudpods.CloudPodsNetwork
-	if err := c.ShouldBindJSON(&network); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	ctx := c.Request.Context()
-	createdNetwork, err := h.cloudpodsClient.CreateNetwork(ctx, network)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to create CloudPods network")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"success": true,
-		"data":    createdNetwork,
-	})
-}
-
-// GetCloudPodsVMs retrieves all CloudPods VMs
-func (h *Handlers) GetCloudPodsVMs(c *gin.Context) {
-	ctx := c.Request.Context()
-	vms, err := h.cloudpodsClient.GetVMs(ctx)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get CloudPods VMs")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    vms,
-	})
-}
-
-// GetCloudPodsLoadBalancers retrieves all CloudPods load balancers
-func (h *Handlers) GetCloudPodsLoadBalancers(c *gin.Context) {
-	ctx := c.Request.Context()
-	loadBalancers, err := h.cloudpodsClient.GetLoadBalancers(ctx)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get CloudPods load balancers")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    loadBalancers,
-	})
-}
-
-// GetCloudPodsResources retrieves CloudPods resources by type
-func (h *Handlers) GetCloudPodsResources(c *gin.Context) {
-	resourceType := c.Param("type")
-	ctx := c.Request.Context()
-
-	resources, err := h.cloudpodsClient.GetResources(ctx, resourceType)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get CloudPods resources")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    resources,
-	})
-}
-
-// Aviatrix Handlers
-
-// GetAviatrixGateways retrieves all Aviatrix gateways
-func (h *Handlers) GetAviatrixGateways(c *gin.Context) {
-	ctx := c.Request.Context()
-	gateways, err := h.aviatrixClient.GetGateways(ctx)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get Aviatrix gateways")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    gateways,
-	})
-}
-
-// GetAviatrixTransitGateways retrieves all Aviatrix transit gateways
-func (h *Handlers) GetAviatrixTransitGateways(c *gin.Context) {
-	ctx := c.Request.Context()
-	transitGateways, err := h.aviatrixClient.GetTransitGateways(ctx)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get Aviatrix transit gateways")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    transitGateways,
-	})
-}
-
-// GetAviatrixSpokeGateways retrieves all Aviatrix spoke gateways
-func (h *Handlers) GetAviatrixSpokeGateways(c *gin.Context) {
-	ctx := c.Request.Context()
-	spokeGateways, err := h.aviatrixClient.GetSpokeGateways(ctx)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get Aviatrix spoke gateways")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    spokeGateways,
-	})
-}
-
-// GetAviatrixVPNGateways retrieves all Aviatrix VPN gateways
-func (h *Handlers) GetAviatrixVPNGateways(c *gin.Context) {
-	ctx := c.Request.Context()
-	vpnGateways, err := h.aviatrixClient.GetVPNGateways(ctx)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get Aviatrix VPN gateways")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    vpnGateways,
-	})
-}
-
-// GetAviatrixConnections retrieves all Aviatrix connections
-func (h *Handlers) GetAviatrixConnections(c *gin.Context) {
-	ctx := c.Request.Context()
-	connections, err := h.aviatrixClient.GetConnections(ctx)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get Aviatrix connections")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    connections,
-	})
-}
-
-// CreateAviatrixConnection creates a new Aviatrix connection
-func (h *Handlers) CreateAviatrixConnection(c *gin.Context) {
-	var connection aviatrix.AviatrixConnection
-	if err := c.ShouldBindJSON(&connection); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	ctx := c.Request.Context()
-	createdConnection, err := h.aviatrixClient.CreateConnection(ctx, connection)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to create Aviatrix connection")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"success": true,
-		"data":    createdConnection,
-	})
-}
-
-// GetAviatrixRoutes retrieves all Aviatrix routes
-func (h *Handlers) GetAviatrixRoutes(c *gin.Context) {
-	ctx := c.Request.Context()
-	routes, err := h.aviatrixClient.GetRoutes(ctx)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get Aviatrix routes")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    routes,
-	})
-}
-
-// Router Simulation Handlers
-
-// GetRouterStatus retrieves router status
-func (h *Handlers) GetRouterStatus(c *gin.Context) {
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"status":      "running",
-			"uptime":      "1h 23m 45s",
-			"interfaces":  4,
-			"routes":      156,
-			"packets_ps":  1250,
-			"bytes_ps":    1024000,
-		},
-	})
-}
-
-// GetInterfaces retrieves network interfaces
-func (h *Handlers) GetInterfaces(c *gin.Context) {
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": []gin.H{
-			{
-				"name":      "eth0",
-				"ip":        "192.168.1.1",
-				"status":    "up",
-				"rx_bytes":  1024000,
-				"tx_bytes":  2048000,
-				"rx_packets": 1500,
-				"tx_packets": 2000,
-			},
-			{
-				"name":      "eth1",
-				"ip":        "10.0.0.1",
-				"status":    "up",
-				"rx_bytes":  512000,
-				"tx_bytes":  1024000,
-				"rx_packets": 750,
-				"tx_packets": 1000,
-			},
-		},
-	})
-}
-
-// GetRoutes retrieves routing table
-func (h *Handlers) GetRoutes(c *gin.Context) {
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": []gin.H{
-			{
-				"destination": "192.168.1.0/24",
-				"gateway":     "0.0.0.0",
-				"interface":   "eth0",
-				"metric":      0,
-				"protocol":    "connected",
-			},
-			{
-				"destination": "0.0.0.0/0",
-				"gateway":     "192.168.1.1",
-				"interface":   "eth0",
-				"metric":      1,
-				"protocol":    "static",
-			},
-		},
-	})
-}
-
-// AddRoute adds a new route
-func (h *Handlers) AddRoute(c *gin.Context) {
-	var route struct {
-		Destination string `json:"destination" binding:"required"`
-		Gateway     string `json:"gateway" binding:"required"`
-		Interface   string `json:"interface" binding:"required"`
-		Metric      int    `json:"metric"`
-		Protocol    string `json:"protocol"`
-	}
-
-	if err := c.ShouldBindJSON(&route); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusCreated, gin.H{
-		"success": true,
-		"message": "Route added successfully",
-	})
-}
-
-// RemoveRoute removes a route
-func (h *Handlers) RemoveRoute(c *gin.Context) {
-	destination := c.Param("destination")
+// GetStatus handles status requests
+func (h *Handlers) GetStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Route removed successfully",
-		"destination": destination,
-	})
-}
-
-// GetStatistics retrieves router statistics
-func (h *Handlers) GetStatistics(c *gin.Context) {
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"packets_processed": 125000,
-			"bytes_processed":   1024000000,
-			"routes_learned":    156,
-			"interfaces_up":     4,
-			"cpu_usage":         45.5,
-			"memory_usage":      67.2,
+	status := map[string]interface{}{
+		"status":    "running",
+		"timestamp": time.Now().UTC(),
+		"uptime":    "2d 14h 32m",
+		"protocols": map[string]bool{
+			"bgp":  true,
+			"ospf": true,
+			"isis": false,
 		},
-	})
-}
-
-// ResetRouter resets router statistics
-func (h *Handlers) ResetRouter(c *gin.Context) {
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Router reset successfully",
-	})
-}
-
-// Traffic Shaping Handlers
-
-// GetTrafficShaping retrieves traffic shaping configuration
-func (h *Handlers) GetTrafficShaping(c *gin.Context) {
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"enabled": true,
-			"token_bucket": gin.H{
-				"capacity":     1000000,
-				"refill_rate":  100000,
-				"burst_size":   1500,
-			},
-			"wfq": gin.H{
-				"queues": 8,
-				"weights": []int{1, 1, 1, 1, 1, 1, 1, 1},
-			},
-		},
-	})
-}
-
-// UpdateTrafficShaping updates traffic shaping configuration
-func (h *Handlers) UpdateTrafficShaping(c *gin.Context) {
-	var config struct {
-		Enabled     bool `json:"enabled"`
-		TokenBucket struct {
-			Capacity   int `json:"capacity"`
-			RefillRate int `json:"refill_rate"`
-			BurstSize  int `json:"burst_size"`
-		} `json:"token_bucket"`
-		WFQ struct {
-			Queues  int   `json:"queues"`
-			Weights []int `json:"weights"`
-		} `json:"wfq"`
+		"interfaces": 3,
+		"routes":     1247,
+		"neighbors":  5,
 	}
 
-	if err := c.ShouldBindJSON(&config); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Traffic shaping updated successfully",
-	})
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(status)
 }
 
-// GetTrafficStatistics retrieves traffic statistics
-func (h *Handlers) GetTrafficStatistics(c *gin.Context) {
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"packets_processed": 125000,
-			"bytes_processed":   1024000000,
-			"packets_dropped":   1250,
-			"bytes_dropped":     10240000,
-			"utilization":       85.5,
-		},
-	})
-}
-
-// Network Impairments Handlers
-
-// GetImpairments retrieves current network impairments
-func (h *Handlers) GetImpairments(c *gin.Context) {
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": []gin.H{
-			{
-				"interface": "eth0",
-				"delay_ms":  50,
-				"loss_pct":  0.1,
-				"bandwidth": 1000000000,
-			},
-		},
-	})
-}
-
-// ApplyImpairments applies network impairments
-func (h *Handlers) ApplyImpairments(c *gin.Context) {
-	var impairment struct {
-		Interface string  `json:"interface" binding:"required"`
-		DelayMs   int     `json:"delay_ms"`
-		LossPct   float64 `json:"loss_pct"`
-		Bandwidth int64   `json:"bandwidth"`
-	}
-
-	if err := c.ShouldBindJSON(&impairment); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Impairments applied successfully",
-	})
-}
-
-// ClearImpairments clears network impairments
-func (h *Handlers) ClearImpairments(c *gin.Context) {
-	interfaceName := c.Param("interface")
+// GetMetrics handles metrics requests
+func (h *Handlers) GetMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	
-	// This would integrate with the C++ router simulator
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Impairments cleared successfully",
-		"interface": interfaceName,
-	})
+	metrics := map[string]interface{}{
+		"packets_per_second": 15420,
+		"throughput":         125.6,
+		"latency":            12.3,
+		"packet_loss":        0.02,
+		"cpu_usage":          45,
+		"memory_usage":       67,
+		"timestamp":          time.Now().UTC(),
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(metrics)
 }
 
-// Analytics Handlers
-
-// GetMetrics retrieves metrics
-func (h *Handlers) GetMetrics(c *gin.Context) {
-	// This would integrate with ClickHouse
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": []gin.H{
-			{
-				"name":      "cpu_usage",
-				"value":     45.5,
-				"timestamp": time.Now().Unix(),
-			},
-			{
-				"name":      "memory_usage",
-				"value":     67.2,
-				"timestamp": time.Now().Unix(),
-			},
+// GetRoutes handles route requests
+func (h *Handlers) GetRoutes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	routes := []map[string]interface{}{
+		{
+			"network":     "10.0.0.0/8",
+			"next_hop":    "192.168.1.2",
+			"protocol":    "BGP",
+			"metric":      0,
+			"as_path":     "65002 65003",
+			"communities": "65001:100",
+			"local_pref":  100,
+			"origin":      "IGP",
 		},
-	})
-}
-
-// GetPacketAnalytics retrieves packet analytics
-func (h *Handlers) GetPacketAnalytics(c *gin.Context) {
-	// This would integrate with ClickHouse
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"total_packets": 125000,
-			"total_bytes":   1024000000,
-			"protocols": []gin.H{
-				{"protocol": "TCP", "count": 75000},
-				{"protocol": "UDP", "count": 40000},
-				{"protocol": "ICMP", "count": 10000},
-			},
-		},
-	})
-}
-
-// GetRoutingAnalytics retrieves routing analytics
-func (h *Handlers) GetRoutingAnalytics(c *gin.Context) {
-	// This would integrate with ClickHouse
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"total_routes": 156,
-			"protocols": []gin.H{
-				{"protocol": "BGP", "count": 50},
-				{"protocol": "OSPF", "count": 75},
-				{"protocol": "ISIS", "count": 25},
-				{"protocol": "Static", "count": 6},
-			},
-		},
-	})
-}
-
-// WebSocket Handler
-
-// WebSocketHandler handles WebSocket connections
-func (h *Handlers) WebSocketHandler(c *gin.Context) {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true
+		{
+			"network":     "192.168.0.0/16",
+			"next_hop":    "10.0.0.2",
+			"protocol":    "OSPF",
+			"metric":      10,
+			"as_path":     "",
+			"communities": "",
+			"local_pref":  0,
+			"origin":      "IGP",
 		},
 	}
 
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to upgrade connection to WebSocket")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(routes)
+}
+
+// GetInterfaces handles interface requests
+func (h *Handlers) GetInterfaces(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	interfaces := []map[string]interface{}{
+		{
+			"name":        "eth0",
+			"type":        "ethernet",
+			"ip":          "192.168.1.1",
+			"subnet":      "192.168.1.0/24",
+			"gateway":     "192.168.1.1",
+			"mtu":         1500,
+			"enabled":     true,
+			"description": "Primary interface",
+			"status":      "UP",
+		},
+		{
+			"name":        "eth1",
+			"type":        "ethernet",
+			"ip":          "10.0.0.1",
+			"subnet":      "10.0.0.0/24",
+			"gateway":     "10.0.0.1",
+			"mtu":         1500,
+			"enabled":     true,
+			"description": "Secondary interface",
+			"status":      "UP",
+		},
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(interfaces)
+}
+
+// GetNeighbors handles neighbor requests
+func (h *Handlers) GetNeighbors(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	neighbors := []map[string]interface{}{
+		{
+			"ip":          "192.168.1.2",
+			"asn":         65002,
+			"protocol":    "BGP",
+			"state":       "Established",
+			"uptime":      "2d 14h 32m",
+			"description": "BGP neighbor 1",
+		},
+		{
+			"ip":          "10.0.0.2",
+			"asn":         65003,
+			"protocol":    "BGP",
+			"state":       "Established",
+			"uptime":      "2d 14h 32m",
+			"description": "BGP neighbor 2",
+		},
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(neighbors)
+}
+
+// GetAnalytics handles analytics requests
+func (h *Handlers) GetAnalytics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	stats := h.analytics.GetStats()
+	
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(stats)
+}
+
+// GetCloudPodsResources handles CloudPods resource requests
+func (h *Handlers) GetCloudPodsResources(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	// Get resource type from query parameter
+	resourceType := r.URL.Query().Get("type")
+	if resourceType == "" {
+		resourceType = "vms"
+	}
+
+	var resources interface{}
+	var err error
+
+	switch resourceType {
+	case "vms":
+		resources, err = h.cloudpods.GetVirtualMachines(r.Context())
+	case "networks":
+		resources, err = h.cloudpods.GetNetworks(r.Context())
+	case "loadbalancers":
+		resources, err = h.cloudpods.GetLoadBalancers(r.Context())
+	case "securitygroups":
+		resources, err = h.cloudpods.GetSecurityGroups(r.Context())
+	default:
+		http.Error(w, "Invalid resource type", http.StatusBadRequest)
 		return
 	}
-	defer conn.Close()
 
-	// Send periodic updates
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	for {
-		select {
-		case <-ticker.C:
-			// Send router status update
-			status := gin.H{
-				"type": "status",
-				"data": gin.H{
-					"timestamp": time.Now().Unix(),
-					"packets_ps": 1250,
-					"bytes_ps":   1024000,
-					"cpu_usage":  45.5,
-					"memory_usage": 67.2,
-				},
-			}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(resources)
+}
 
-			if err := conn.WriteJSON(status); err != nil {
-				logrus.WithError(err).Error("Failed to write WebSocket message")
-				return
-			}
+// GetAviatrixGateways handles Aviatrix gateway requests
+func (h *Handlers) GetAviatrixGateways(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	// Get gateway type from query parameter
+	gatewayType := r.URL.Query().Get("type")
+	if gatewayType == "" {
+		gatewayType = "all"
+	}
+
+	var gateways interface{}
+	var err error
+
+	switch gatewayType {
+	case "all":
+		gateways, err = h.aviatrix.GetGateways(r.Context())
+	case "transit":
+		gateways, err = h.aviatrix.GetTransitGateways(r.Context())
+	case "spoke":
+		gateways, err = h.aviatrix.GetSpokeGateways(r.Context())
+	case "vpn":
+		gateways, err = h.aviatrix.GetVPNGateways(r.Context())
+	default:
+		http.Error(w, "Invalid gateway type", http.StatusBadRequest)
+		return
+	}
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(gateways)
+}
+
+// GetAviatrixBGPNeighbors handles Aviatrix BGP neighbor requests
+func (h *Handlers) GetAviatrixBGPNeighbors(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	gatewayName := r.URL.Query().Get("gateway")
+	if gatewayName == "" {
+		http.Error(w, "Gateway name is required", http.StatusBadRequest)
+		return
+	}
+
+	neighbors, err := h.aviatrix.GetBGPNeighbors(r.Context(), gatewayName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(neighbors)
+}
+
+// GetAviatrixRoutes handles Aviatrix route requests
+func (h *Handlers) GetAviatrixRoutes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	gatewayName := r.URL.Query().Get("gateway")
+	if gatewayName == "" {
+		http.Error(w, "Gateway name is required", http.StatusBadRequest)
+		return
+	}
+
+	routes, err := h.aviatrix.GetRoutes(r.Context(), gatewayName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(routes)
+}
+
+// GetAviatrixTopology handles Aviatrix topology requests
+func (h *Handlers) GetAviatrixTopology(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	topology, err := h.aviatrix.GetTopology(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(topology)
+}
+
+// GetCloudPodsTopology handles CloudPods topology requests
+func (h *Handlers) GetCloudPodsTopology(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	topology, err := h.cloudpods.GetTopology(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(topology)
+}
+
+// GetCloudPodsMetrics handles CloudPods metrics requests
+func (h *Handlers) GetCloudPodsMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	resourceType := r.URL.Query().Get("type")
+	resourceID := r.URL.Query().Get("id")
+	
+	if resourceType == "" || resourceID == "" {
+		http.Error(w, "Resource type and ID are required", http.StatusBadRequest)
+		return
+	}
+
+	metrics, err := h.cloudpods.GetResourceMetrics(r.Context(), resourceType, resourceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(metrics)
+}
+
+// GetAviatrixGatewayStatus handles Aviatrix gateway status requests
+func (h *Handlers) GetAviatrixGatewayStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	gatewayName := r.URL.Query().Get("gateway")
+	if gatewayName == "" {
+		http.Error(w, "Gateway name is required", http.StatusBadRequest)
+		return
+	}
+
+	status, err := h.aviatrix.GetGatewayStatus(r.Context(), gatewayName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(status)
+}
+
+// InsertPacketMetrics handles packet metrics insertion
+func (h *Handlers) InsertPacketMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	var metrics analytics.PacketMetrics
+	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.analytics.InsertPacketMetrics(metrics); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"status": "created"})
+}
+
+// InsertRouteMetrics handles route metrics insertion
+func (h *Handlers) InsertRouteMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	var metrics analytics.RouteMetrics
+	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.analytics.InsertRouteMetrics(metrics); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"status": "created"})
+}
+
+// InsertSystemMetrics handles system metrics insertion
+func (h *Handlers) InsertSystemMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	var metrics analytics.SystemMetrics
+	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.analytics.InsertSystemMetrics(metrics); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"status": "created"})
+}
+
+// InsertTrafficFlow handles traffic flow insertion
+func (h *Handlers) InsertTrafficFlow(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	var flow analytics.TrafficFlow
+	if err := json.NewDecoder(r.Body).Decode(&flow); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.analytics.InsertTrafficFlow(flow); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"status": "created"})
+}
+
+// GetRecentActivity handles recent activity requests
+func (h *Handlers) GetRecentActivity(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	// Get limit from query parameter
+	limitStr := r.URL.Query().Get("limit")
+	limit := 10
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
 		}
 	}
+
+	activities := []map[string]interface{}{
+		{
+			"id":        "1",
+			"timestamp": time.Now().Add(-5 * time.Minute).Format("2006-01-02 15:04:05"),
+			"type":      "route_update",
+			"message":   "BGP route 10.0.0.0/8 advertised to neighbor 192.168.1.2",
+			"severity":  "info",
+		},
+		{
+			"id":        "2",
+			"timestamp": time.Now().Add(-10 * time.Minute).Format("2006-01-02 15:04:05"),
+			"type":      "neighbor_change",
+			"message":   "OSPF neighbor 10.0.1.2 state changed to Full",
+			"severity":  "info",
+		},
+		{
+			"id":        "3",
+			"timestamp": time.Now().Add(-15 * time.Minute).Format("2006-01-02 15:04:05"),
+			"type":      "interface_change",
+			"message":   "Interface eth1 status changed to UP",
+			"severity":  "info",
+		},
+		{
+			"id":        "4",
+			"timestamp": time.Now().Add(-20 * time.Minute).Format("2006-01-02 15:04:05"),
+			"type":      "error",
+			"message":   "Packet loss detected on interface eth2 (0.5%)",
+			"severity":  "warning",
+		},
+	}
+
+	// Limit results
+	if limit < len(activities) {
+		activities = activities[:limit]
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(activities)
 }

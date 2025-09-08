@@ -1,129 +1,298 @@
-# Router Simulator - Multi-Cloud Networking Platform
+# Multi-Protocol Router Simulator
 
-A comprehensive router simulation framework with CloudPods and Aviatrix integration, built with C++, Go, Rust, and modern web technologies.
+A comprehensive cloud-native router simulation platform with FRR control-plane integration, traffic shaping, network impairments, and cloud networking concepts inspired by CloudPods and Aviatrix.
 
-[![CI/CD Pipeline](https://github.com/calelin/router/workflows/CI/CD%20Pipeline/badge.svg)](https://github.com/calelin/router/actions)
-[![Coverage](https://codecov.io/gh/calelin/router/branch/main/graph/badge.svg)](https://codecov.io/gh/calelin/router)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen.svg)](https://calelin.github.io/router/)
+## 🌟 Features
 
-## 🚀 Features
-
-### Multi-Cloud Management
-- **CloudPods Integration**: Unified multi-cloud resource management
-- **Aviatrix Integration**: Advanced networking and security features
+### Core Router Simulation
+- **FRR Control-Plane Integration**: Full BGP/OSPF/ISIS protocol support
+- **Traffic Shaping**: Token-bucket and Weighted Fair Queuing (WFQ) algorithms
+- **Network Impairments**: tc/netem integration for realistic network simulation
 - **Multi-Protocol Support**: BGP, OSPF, ISIS routing protocols
-- **Traffic Shaping**: Token bucket and Weighted Fair Queuing (WFQ)
-- **Network Impairments**: Realistic network condition simulation
+- **Real-time Monitoring**: Comprehensive statistics and analytics
 
-### High-Performance Architecture
-- **C++ Core**: System-level networking and protocol implementation
-- **Go Services**: Cloud-native microservices and API management
-- **Rust Engine**: High-performance packet processing
-- **Web Interface**: Modern Vue.js dashboard with real-time monitoring
+### Cloud Networking Integration
+- **CloudPods Integration**: Multi-cloud resource management
+- **Aviatrix Concepts**: Secure cloud networking and transit gateways
+- **Terraform Providers**: Automated infrastructure as code
+- **Service Mesh**: Istio integration for microservices networking
 
-### Advanced Capabilities
-- **Real-time Monitoring**: Prometheus metrics and Grafana dashboards
-- **Traffic Analysis**: PCAP analysis and network flow visualization
-- **Configuration Management**: YAML-based scenario configuration
-- **Testing Framework**: Comprehensive test suite with 100% coverage
-- **Docker Support**: Containerized deployment with Kubernetes manifests
+### Testing & Validation
+- **Comprehensive Test Suite**: gtest-based testing framework
+- **PCAP Diffing**: Network packet analysis and comparison
+- **Coverage Reporting**: Code coverage analysis
+- **Performance Benchmarks**: Throughput and latency testing
 
-## 🏗️ Architecture
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Web Frontend  │    │   Go Services   │    │   Rust Engine   │
-│   (Vue.js)      │◄──►│   (CloudNet)    │◄──►│  (Packet Proc)  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   GitHub Pages  │    │  CloudPods API  │    │   C++ Router    │
-│   (Live Demo)   │    │  (Multi-Cloud)  │    │   (FRR Core)    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │  Aviatrix API   │
-                       │  (Networking)   │
-                       └─────────────────┘
-```
-
-## 🛠️ Technology Stack
-
-### Backend
-- **C++17**: Core router functionality with FRR integration
-- **Go 1.21**: Cloud services and API management
-- **Rust 1.70**: High-performance packet processing
-- **CMake**: Build system and dependency management
-
-### Frontend
-- **Vue.js 3**: Modern reactive web framework
-- **TypeScript**: Type-safe development
-- **Element Plus**: UI component library
-- **ECharts**: Data visualization and monitoring
-
-### Infrastructure
-- **Docker**: Containerization
-- **Kubernetes**: Orchestration
-- **GitHub Actions**: CI/CD pipeline
-- **Pixi**: Package management
+### Web Interface
+- **Modern React UI**: Material-UI based dashboard
+- **Real-time Monitoring**: Live statistics and visualizations
+- **Cloud Management**: CloudPods and Aviatrix resource management
+- **Scenario Configuration**: YAML-based test scenarios
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-
-- **Pixi**: Package manager for environment setup
-- **Docker**: For containerized deployment
-- **Node.js 18+**: For web development
-- **Go 1.21+**: For backend services
-- **Rust 1.70+**: For packet processing
-- **CMake 3.20+**: For C++ builds
+- Ubuntu 20.04+ or CentOS 8+
+- Docker and Docker Compose
+- Node.js 18+ (for web interface)
+- Go 1.19+ (for cloud integration)
+- Rust 1.70+ (for performance components)
 
 ### Installation
 
 1. **Clone the repository**
-   ```bash
-   git clone https://github.com/calelin/router.git
-   cd router
-   ```
+```bash
+git clone https://github.com/your-username/router-simulator.git
+cd router-simulator
+```
 
-2. **Install Pixi and setup environment**
-   ```bash
-   # Install Pixi (if not already installed)
-   curl -fsSL https://pixi.sh/install.sh | bash
-   
-   # Setup environment
-   pixi install
-   pixi run build
-   ```
+2. **Install dependencies**
+```bash
+# Install system dependencies
+sudo ./scripts/build_all.sh --deps
+
+# Build all components
+./scripts/build_all.sh --clean --test
+```
 
 3. **Start the services**
-   ```bash
-   # Start all services
-   pixi run start
-   
-   # Or start individually
-   pixi run go-build    # Go services
-   pixi run rust-build  # Rust engine
-   pixi run web-build   # Web interface
-   ```
+```bash
+# Start router simulator
+sudo ./build/router_sim -c scenarios/cloud_networking_demo.yaml
 
-4. **Access the application**
-   - Web Interface: http://localhost:8080
-   - API Documentation: http://localhost:8080/docs
-   - Metrics: http://localhost:9090/metrics
+# Start web interface (in another terminal)
+cd web
+npm install
+npm start
+```
+
+4. **Access the web interface**
+Open http://localhost:3000 in your browser
+
+## 📖 Usage
+
+### Command Line Interface
+
+```bash
+# Start router with configuration
+sudo ./build/router_sim -c config/router.yaml
+
+# Run specific scenario
+sudo ./build/router_sim -s scenarios/bgp_convergence.yaml
+
+# Run tests
+./build/router_tests
+
+# CLI interface
+./build/router_sim --interactive
+```
+
+### Web Interface
+
+The web interface provides:
+- **Dashboard**: System overview and real-time metrics
+- **CloudPods**: Multi-cloud resource management
+- **Aviatrix**: Secure cloud networking
+- **Router Sim**: Protocol configuration and monitoring
+- **Traffic Shaping**: QoS configuration
+- **Network Impairments**: Network simulation
+- **Analytics**: Performance analysis
+
+### YAML Configuration
+
+```yaml
+# Example configuration
+name: "Cloud Networking Demo"
+description: "Multi-cloud router simulation"
+
+global:
+  router_id: "1.1.1.1"
+  as_number: 65001
+
+protocols:
+  bgp:
+    enabled: true
+    neighbors:
+      - address: "192.168.1.2"
+        remote_as: 65002
+  ospf:
+    enabled: true
+    area: "0.0.0.0"
+
+traffic_shaping:
+  enabled: true
+  shapers:
+    - name: "cloud_traffic"
+      type: "wfq"
+      total_bandwidth: "10000000000"
+
+impairments:
+  enabled: true
+  interfaces:
+    - name: "eth0"
+      impairments:
+        - type: "delay"
+          value: 50.0
+```
+
+## 🏗️ Architecture
+
+### Core Components
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Web Interface │    │   CLI Interface │    │  YAML Config    │
+└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
+          │                      │                      │
+          └──────────────────────┼──────────────────────┘
+                                 │
+                    ┌─────────────┴─────────────┐
+                    │     Router Core           │
+                    └─────────────┬─────────────┘
+                                  │
+        ┌─────────────────────────┼─────────────────────────┐
+        │                         │                         │
+┌───────▼────────┐    ┌──────────▼──────────┐    ┌────────▼────────┐
+│ FRR Integration│    │  Traffic Shaping    │    │  Network        │
+│ BGP/OSPF/ISIS  │    │  Token-Bucket/WFQ   │    │  Impairments    │
+└────────────────┘    └─────────────────────┘    └─────────────────┘
+        │                         │                         │
+        └─────────────────────────┼─────────────────────────┘
+                                  │
+                    ┌─────────────┴─────────────┐
+                    │   Cloud Integration       │
+                    │ CloudPods + Aviatrix     │
+                    └───────────────────────────┘
+```
+
+### Cloud Integration
+
+- **CloudPods Client**: Multi-cloud resource management
+- **Aviatrix Client**: Secure cloud networking
+- **Terraform Providers**: Infrastructure as code
+- **Service Mesh**: Microservices networking
+
+## 🧪 Testing
+
+### Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run specific test categories
+./build/router_tests --gtest_filter="BGP*"
+./build/router_tests --gtest_filter="TrafficShaping*"
+
+# Run with coverage
+make test-coverage
+```
+
+### Test Scenarios
+
+- **BGP Convergence**: Route advertisement and convergence testing
+- **OSPF Convergence**: Link-state database synchronization
+- **Traffic Shaping**: QoS algorithm validation
+- **Network Impairments**: Delay, loss, and jitter simulation
+- **Performance**: Throughput and latency benchmarks
+
+## 📊 Monitoring & Analytics
+
+### Real-time Metrics
+- Packet processing rate
+- Throughput (Mbps)
+- Latency (ms)
+- Packet loss percentage
+- CPU and memory usage
+
+### Historical Data
+- Performance trends
+- Protocol statistics
+- Network topology changes
+- Error logs and alerts
+
+## 🔧 Development
+
+### Building from Source
+
+```bash
+# Install dependencies
+sudo ./scripts/build_all.sh --deps
+
+# Build in debug mode
+./scripts/build_all.sh --debug --test
+
+# Build with coverage
+./scripts/build_all.sh --coverage
+
+# Create distribution package
+./scripts/build_all.sh --package
+```
+
+### Code Structure
+
+```
+router/
+├── src/                    # C++ source code
+│   ├── frr_integration/    # FRR protocol integration
+│   ├── traffic_shaping/    # Traffic shaping algorithms
+│   ├── network_impairments/ # Network simulation
+│   ├── cloud_integration/  # Cloud provider clients
+│   └── testing/           # Test framework
+├── web/                   # React web interface
+├── terraform/             # Terraform providers
+├── scenarios/             # YAML test scenarios
+├── tests/                 # Test cases
+└── docs/                  # Documentation
+```
+
+### Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Submit a pull request
+
+## 📚 Documentation
+
+- [API Documentation](docs/api.md)
+- [Configuration Guide](docs/configuration.md)
+- [Testing Guide](docs/testing.md)
+- [Cloud Integration](docs/cloud-integration.md)
+- [Terraform Providers](docs/terraform.md)
+
+## 🌐 Cloud Networking Concepts
+
+### CloudPods Integration
+- Multi-cloud resource management
+- Unified API across cloud providers
+- Resource lifecycle management
+- Cost optimization
+
+### Aviatrix Concepts
+- Secure cloud networking
+- Transit gateways
+- Spoke gateways
+- VPN and peering connections
+- Firewall and security policies
+
+### Service Mesh
+- Istio integration
+- Traffic management
+- Security policies
+- Observability
+
+## 🚀 Deployment
 
 ### Docker Deployment
 
 ```bash
-# Build the image
-docker build -t router-sim .
+# Build Docker image
+docker build -t router-simulator .
 
-# Run the container
-docker run -p 8080:8080 -p 9090:9090 router-sim
+# Run with Docker Compose
+docker-compose up -d
 ```
 
 ### Kubernetes Deployment
@@ -131,197 +300,34 @@ docker run -p 8080:8080 -p 9090:9090 router-sim
 ```bash
 # Apply Kubernetes manifests
 kubectl apply -f k8s/
-
-# Check deployment status
-kubectl get pods -l app=router-sim
 ```
 
-## 📖 Usage
+### GitHub Pages
 
-### Basic Router Simulation
-
-```bash
-# Start with basic OSPF configuration
-./bin/routersim_demo --config scenarios/basic_ospf.yaml
-
-# Start with BGP peering simulation
-./bin/routersim_demo --config scenarios/bgp_peering.yaml
-
-# Start with network impairments
-./bin/routersim_demo --config scenarios/impairment_test.yaml
-```
-
-### CLI Interface
-
-```bash
-# Interactive CLI
-./bin/routersim_cli
-
-# Execute specific commands
-./bin/routersim_cli --command "show routes"
-./bin/routersim_cli --command "show interfaces"
-```
-
-### API Usage
-
-```bash
-# Get router status
-curl http://localhost:8080/api/v1/status
-
-# Get routing table
-curl http://localhost:8080/api/v1/routes
-
-# Get metrics
-curl http://localhost:8080/api/v1/metrics
-```
-
-## 🧪 Testing
-
-### Run All Tests
-
-```bash
-# Run complete test suite
-pixi run test
-
-# Run specific test suites
-pixi run test --filter cpp    # C++ tests
-pixi run test --filter go     # Go tests
-pixi run test --filter rust   # Rust tests
-pixi run test --filter web    # Web tests
-```
-
-### Test Coverage
-
-```bash
-# Generate coverage reports
-pixi run test:coverage
-
-# View coverage in browser
-open coverage/index.html
-```
-
-### Integration Tests
-
-```bash
-# Run integration tests
-pixi run test:integration
-
-# Run performance tests
-pixi run test:performance
-```
-
-## 📊 Monitoring
-
-### Metrics
-
-The application exposes Prometheus metrics at `/metrics`:
-
-- **Router Metrics**: Packet counts, routing table size, protocol status
-- **System Metrics**: CPU, memory, network interface statistics
-- **Custom Metrics**: Traffic shaping, impairment statistics
-
-### Dashboards
-
-Access pre-configured Grafana dashboards:
-
-- **Router Overview**: High-level router status and performance
-- **Traffic Analysis**: Packet flow and bandwidth utilization
-- **Protocol Status**: BGP, OSPF, ISIS protocol health
-- **Cloud Resources**: CloudPods and Aviatrix resource status
-
-### Alerts
-
-Configure alerts for:
-
-- High CPU/memory usage
-- Packet loss detection
-- Protocol convergence issues
-- Cloud resource failures
-
-## 🔧 Configuration
-
-### Router Configuration
-
-Edit `config.yaml` to configure:
-
-- **Interfaces**: Network interface settings
-- **Protocols**: BGP, OSPF, ISIS configuration
-- **Traffic Shaping**: QoS policies and algorithms
-- **Impairments**: Network condition simulation
-- **Monitoring**: Metrics and alerting settings
-
-### Cloud Integration
-
-Configure cloud providers in `config.yaml`:
-
-```yaml
-cloudpods:
-  endpoint: "https://your-cloudpods-instance"
-  username: "admin"
-  password: "your-password"
-  region: "us-west-1"
-
-aviatrix:
-  controller_ip: "your-controller-ip"
-  username: "admin"
-  password: "your-password"
-  region: "us-west-1"
-```
-
-## 📚 Documentation
-
-- **API Documentation**: [API Reference](docs/api.md)
-- **Configuration Guide**: [Configuration](docs/configuration.md)
-- **Deployment Guide**: [Deployment](docs/deployment.md)
-- **Development Guide**: [Development](docs/development.md)
-- **Troubleshooting**: [Troubleshooting](docs/troubleshooting.md)
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Setup
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
-
-### Code Style
-
-- **C++**: Follow Google C++ Style Guide
-- **Go**: Use `gofmt` and `golint`
-- **Rust**: Use `rustfmt` and `clippy`
-- **TypeScript**: Use ESLint and Prettier
+The web interface is automatically deployed to GitHub Pages on every push to main branch.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## 🤝 Contributing
 
-- **CloudPods**: Multi-cloud management platform
-- **Aviatrix**: Advanced networking and security
-- **FRR**: Free Range Routing protocol suite
-- **Vue.js**: Progressive web framework
-- **Rust**: Systems programming language
+Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/calelin/router/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/calelin/router/discussions)
-- **Documentation**: [Project Wiki](https://github.com/calelin/router/wiki)
+- **Documentation**: [docs/](docs/)
+- **Issues**: [GitHub Issues](https://github.com/your-username/router-simulator/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/your-username/router-simulator/discussions)
 
-## 🗺️ Roadmap
+## 🙏 Acknowledgments
 
-- [ ] **v1.1**: Enhanced cloud provider support
-- [ ] **v1.2**: Advanced traffic analysis
-- [ ] **v1.3**: Machine learning integration
-- [ ] **v2.0**: Distributed router simulation
-- [ ] **v2.1**: Real-time collaboration features
+- [FRR](https://frrouting.org/) - Free Range Routing
+- [CloudPods](https://github.com/yunionio/cloudpods) - Multi-cloud management platform
+- [Aviatrix](https://www.aviatrix.com/) - Cloud networking platform
+- [Material-UI](https://mui.com/) - React component library
+- [Terraform](https://terraform.io/) - Infrastructure as code
 
 ---
 
-**Built with ❤️ by the Router Simulator Team**
+**Multi-Protocol Router Simulator** - Bringing cloud networking concepts to network simulation and testing.

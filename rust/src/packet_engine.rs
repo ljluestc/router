@@ -1,437 +1,419 @@
+use crate::routing_table::{RoutingTable, Route};
+use crate::config::Config;
+use crate::analytics::Statistics;
+use pnet::datalink::{self, NetworkInterface};
+use pnet::packet::{
+    ethernet::{EthernetPacket, EtherTypes},
+    ip::{IpNextHeaderProtocols, IpNextHeaderProtocol},
+    ipv4::Ipv4Packet,
+    ipv6::Ipv6Packet,
+    tcp::TcpPacket,
+    udp::UdpPacket,
+    icmp::IcmpPacket,
+    Packet,
+};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use crate::{Packet, PacketStats};
+use tokio::sync::RwLock;
+use tokio::time::{Duration, Instant};
+use tracing::{info, warn, error, debug};
+use anyhow::Result;
 
 /// High-performance packet processing engine
 pub struct PacketEngine {
-    total_packets: u64,
-    total_bytes: u64,
-    dropped_packets: u64,
-    dropped_bytes: u64,
-    last_packet_time: u64,
-    start_time: u64,
-    packet_counts: HashMap<String, u64>,
-    byte_counts: HashMap<String, u64>,
-    protocol_counts: HashMap<u8, u64>,
-    port_counts: HashMap<u16, u64>,
-    source_ip_counts: HashMap<String, u64>,
-    dest_ip_counts: HashMap<String, u64>,
+    config: Config,
+    routing_table: Arc<RwLock<RoutingTable>>,
+    interfaces: Vec<NetworkInterface>,
+    running: Arc<AtomicUsize>,
+    stats: Arc<PacketStats>,
 }
 
-impl PacketEngine {
-    pub fn new() -> Self {
-        let start_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+#[derive(Debug, Clone)]
+struct PacketStats {
+    packets_processed: AtomicU64,
+    bytes_processed: AtomicU64,
+    packets_dropped: AtomicU64,
+    packets_forwarded: AtomicU64,
+    packets_routed: AtomicU64,
+    errors: AtomicU64,
+    start_time: Instant,
+}
 
+impl PacketStats {
+    fn new() -> Self {
         Self {
-            total_packets: 0,
-            total_bytes: 0,
-            dropped_packets: 0,
-            dropped_bytes: 0,
-            last_packet_time: 0,
-            start_time,
-            packet_counts: HashMap::new(),
-            byte_counts: HashMap::new(),
-            protocol_counts: HashMap::new(),
-            port_counts: HashMap::new(),
-            source_ip_counts: HashMap::new(),
-            dest_ip_counts: HashMap::new(),
+            packets_processed: AtomicU64::new(0),
+            bytes_processed: AtomicU64::new(0),
+            packets_dropped: AtomicU64::new(0),
+            packets_forwarded: AtomicU64::new(0),
+            packets_routed: AtomicU64::new(0),
+            errors: AtomicU64::new(0),
+            start_time: Instant::now(),
         }
     }
 
-    /// Process a packet through the engine
-    pub fn process_packet(&mut self, packet: &Packet) -> Result<(), String> {
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+    fn to_statistics(&self) -> Statistics {
+        Statistics {
+            packets_processed: self.packets_processed.load(Ordering::Relaxed),
+            bytes_processed: self.bytes_processed.load(Ordering::Relaxed),
+            packets_dropped: self.packets_dropped.load(Ordering::Relaxed),
+            packets_forwarded: self.packets_forwarded.load(Ordering::Relaxed),
+            packets_routed: self.packets_routed.load(Ordering::Relaxed),
+            errors: self.errors.load(Ordering::Relaxed),
+            uptime_seconds: self.start_time.elapsed().as_secs(),
+            packets_per_second: self.calculate_packets_per_second(),
+            bytes_per_second: self.calculate_bytes_per_second(),
+        }
+    }
 
-        // Update basic statistics
-        self.total_packets += 1;
-        self.total_bytes += packet.size as u64;
-        self.last_packet_time = current_time;
+    fn calculate_packets_per_second(&self) -> f64 {
+        let packets = self.packets_processed.load(Ordering::Relaxed) as f64;
+        let uptime = self.start_time.elapsed().as_secs_f64();
+        if uptime > 0.0 {
+            packets / uptime
+        } else {
+            0.0
+        }
+    }
 
-        // Update protocol statistics
-        *self.protocol_counts.entry(packet.protocol).or_insert(0) += 1;
+    fn calculate_bytes_per_second(&self) -> f64 {
+        let bytes = self.bytes_processed.load(Ordering::Relaxed) as f64;
+        let uptime = self.start_time.elapsed().as_secs_f64();
+        if uptime > 0.0 {
+            bytes / uptime
+        } else {
+            0.0
+        }
+    }
+}
 
-        // Update port statistics
-        *self.port_counts.entry(packet.source_port).or_insert(0) += 1;
-        *self.port_counts.entry(packet.dest_port).or_insert(0) += 1;
+impl PacketEngine {
+    /// Create a new packet engine
+    pub fn new(config: Config, routing_table: Arc<RwLock<RoutingTable>>) -> Result<Self> {
+        info!("Initializing packet engine");
 
-        // Update IP statistics
-        *self.source_ip_counts.entry(packet.source_ip.clone()).or_insert(0) += 1;
-        *self.dest_ip_counts.entry(packet.dest_ip.clone()).or_insert(0) += 1;
+        let interfaces = datalink::interfaces();
+        info!("Found {} network interfaces", interfaces.len());
 
-        // Update interface statistics (simplified)
-        let interface_key = format!("{}->{}", packet.source_ip, packet.dest_ip);
-        *self.packet_counts.entry(interface_key.clone()).or_insert(0) += 1;
-        *self.byte_counts.entry(interface_key).or_insert(0) += packet.size as u64;
+        let stats = Arc::new(PacketStats::new());
+
+        Ok(Self {
+            config,
+            routing_table,
+            interfaces,
+            running: Arc::new(AtomicUsize::new(0)),
+            stats,
+        })
+    }
+
+    /// Start packet processing
+    pub async fn start(&self) -> Result<()> {
+        info!("Starting packet engine");
+
+        self.running.store(1, Ordering::Relaxed);
+
+        // Start packet capture on each interface
+        for interface in &self.interfaces {
+            if interface.is_up() && !interface.is_loopback() {
+                self.start_interface_capture(interface.clone()).await?;
+            }
+        }
+
+        info!("Packet engine started on {} interfaces", self.interfaces.len());
+        Ok(())
+    }
+
+    /// Stop packet processing
+    pub async fn stop(&self) -> Result<()> {
+        info!("Stopping packet engine");
+        self.running.store(0, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Get current statistics
+    pub async fn get_stats(&self) -> Statistics {
+        self.stats.to_statistics()
+    }
+
+    async fn start_interface_capture(&self, interface: NetworkInterface) -> Result<()> {
+        let running = self.running.clone();
+        let stats = self.stats.clone();
+        let routing_table = self.routing_table.clone();
+        let config = self.config.clone();
+
+        tokio::spawn(async move {
+            info!("Starting packet capture on interface: {}", interface.name);
+
+            let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
+                Ok(datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
+                Ok(_) => {
+                    error!("Unsupported datalink type for interface: {}", interface.name);
+                    return;
+                }
+                Err(e) => {
+                    error!("Failed to create datalink channel for interface {}: {}", interface.name, e);
+                    return;
+                }
+            };
+
+            while running.load(Ordering::Relaxed) == 1 {
+                match rx.next() {
+                    Ok(packet) => {
+                        if let Err(e) = Self::process_packet(&packet, &stats, &routing_table, &config).await {
+                            error!("Error processing packet: {}", e);
+                            stats.errors.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error receiving packet: {}", e);
+                        stats.errors.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+
+            info!("Stopped packet capture on interface: {}", interface.name);
+        });
 
         Ok(())
     }
 
-    /// Drop a packet (for traffic shaping, etc.)
-    pub fn drop_packet(&mut self, packet: &Packet) {
-        self.dropped_packets += 1;
-        self.dropped_bytes += packet.size as u64;
-    }
+    async fn process_packet(
+        packet: &[u8],
+        stats: &PacketStats,
+        routing_table: &Arc<RwLock<RoutingTable>>,
+        config: &Config,
+    ) -> Result<()> {
+        stats.packets_processed.fetch_add(1, Ordering::Relaxed);
+        stats.bytes_processed.fetch_add(packet.len() as u64, Ordering::Relaxed);
 
-    /// Get current statistics
-    pub fn get_stats(&self) -> PacketStats {
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-
-        let elapsed_seconds = if current_time > self.start_time {
-            (current_time - self.start_time) as f64 / 1000.0
-        } else {
-            1.0
+        // Parse Ethernet frame
+        let ethernet = match EthernetPacket::new(packet) {
+            Some(ethernet) => ethernet,
+            None => {
+                debug!("Invalid Ethernet packet");
+                stats.packets_dropped.fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
         };
 
-        let packets_per_second = if elapsed_seconds > 0.0 {
-            self.total_packets as f64 / elapsed_seconds
-        } else {
-            0.0
-        };
-
-        let bytes_per_second = if elapsed_seconds > 0.0 {
-            self.total_bytes as f64 / elapsed_seconds
-        } else {
-            0.0
-        };
-
-        let average_packet_size = if self.total_packets > 0 {
-            self.total_bytes as f64 / self.total_packets as f64
-        } else {
-            0.0
-        };
-
-        PacketStats {
-            total_packets: self.total_packets,
-            total_bytes: self.total_bytes,
-            packets_per_second,
-            bytes_per_second,
-            dropped_packets: self.dropped_packets,
-            dropped_bytes: self.dropped_bytes,
-            average_packet_size,
-            last_packet_time: self.last_packet_time,
+        // Process based on EtherType
+        match ethernet.get_ethertype() {
+            EtherTypes::Ipv4 => {
+                Self::process_ipv4_packet(&ethernet, stats, routing_table, config).await?;
+            }
+            EtherTypes::Ipv6 => {
+                Self::process_ipv6_packet(&ethernet, stats, routing_table, config).await?;
+            }
+            EtherTypes::Arp => {
+                Self::process_arp_packet(&ethernet, stats).await?;
+            }
+            _ => {
+                debug!("Unsupported EtherType: {:?}", ethernet.get_ethertype());
+                stats.packets_dropped.fetch_add(1, Ordering::Relaxed);
+            }
         }
+
+        Ok(())
     }
 
-    /// Get protocol statistics
-    pub fn get_protocol_stats(&self) -> HashMap<u8, u64> {
-        self.protocol_counts.clone()
-    }
+    async fn process_ipv4_packet(
+        ethernet: &EthernetPacket,
+        stats: &PacketStats,
+        routing_table: &Arc<RwLock<RoutingTable>>,
+        config: &Config,
+    ) -> Result<()> {
+        let ipv4 = match Ipv4Packet::new(ethernet.payload()) {
+            Some(ipv4) => ipv4,
+            None => {
+                debug!("Invalid IPv4 packet");
+                stats.packets_dropped.fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+        };
 
-    /// Get port statistics
-    pub fn get_port_stats(&self) -> HashMap<u16, u64> {
-        self.port_counts.clone()
-    }
+        debug!("Processing IPv4 packet: {} -> {}", ipv4.get_source(), ipv4.get_destination());
 
-    /// Get source IP statistics
-    pub fn get_source_ip_stats(&self) -> HashMap<String, u64> {
-        self.source_ip_counts.clone()
-    }
-
-    /// Get destination IP statistics
-    pub fn get_dest_ip_stats(&self) -> HashMap<String, u64> {
-        self.dest_ip_counts.clone()
-    }
-
-    /// Get interface statistics
-    pub fn get_interface_stats(&self) -> HashMap<String, (u64, u64)> {
-        let mut stats = HashMap::new();
-        for (interface, packet_count) in &self.packet_counts {
-            let byte_count = self.byte_counts.get(interface).unwrap_or(&0);
-            stats.insert(interface.clone(), (*packet_count, *byte_count));
+        // Check if packet is for this router
+        if Self::is_local_packet(&ipv4, config) {
+            Self::process_local_ipv4_packet(&ipv4, stats).await?;
+        } else {
+            // Forward packet
+            Self::forward_ipv4_packet(&ipv4, stats, routing_table).await?;
         }
-        stats
+
+        Ok(())
     }
 
-    /// Get top N protocols by packet count
-    pub fn get_top_protocols(&self, n: usize) -> Vec<(u8, u64)> {
-        let mut protocols: Vec<(u8, u64)> = self.protocol_counts.iter()
-            .map(|(k, v)| (*k, *v))
-            .collect();
-        protocols.sort_by(|a, b| b.1.cmp(&a.1));
-        protocols.truncate(n);
-        protocols
-    }
-
-    /// Get top N ports by packet count
-    pub fn get_top_ports(&self, n: usize) -> Vec<(u16, u64)> {
-        let mut ports: Vec<(u16, u64)> = self.port_counts.iter()
-            .map(|(k, v)| (*k, *v))
-            .collect();
-        ports.sort_by(|a, b| b.1.cmp(&a.1));
-        ports.truncate(n);
-        ports
-    }
-
-    /// Get top N source IPs by packet count
-    pub fn get_top_source_ips(&self, n: usize) -> Vec<(String, u64)> {
-        let mut ips: Vec<(String, u64)> = self.source_ip_counts.iter()
-            .map(|(k, v)| (k.clone(), *v))
-            .collect();
-        ips.sort_by(|a, b| b.1.cmp(&a.1));
-        ips.truncate(n);
-        ips
-    }
-
-    /// Get top N destination IPs by packet count
-    pub fn get_top_dest_ips(&self, n: usize) -> Vec<(String, u64)> {
-        let mut ips: Vec<(String, u64)> = self.dest_ip_counts.iter()
-            .map(|(k, v)| (k.clone(), *v))
-            .collect();
-        ips.sort_by(|a, b| b.1.cmp(&a.1));
-        ips.truncate(n);
-        ips
-    }
-
-    /// Get packet rate over time window
-    pub fn get_packet_rate(&self, window_seconds: u64) -> f64 {
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-
-        let window_start = if current_time > window_seconds * 1000 {
-            current_time - (window_seconds * 1000)
-        } else {
-            self.start_time
+    async fn process_ipv6_packet(
+        ethernet: &EthernetPacket,
+        stats: &PacketStats,
+        routing_table: &Arc<RwLock<RoutingTable>>,
+        config: &Config,
+    ) -> Result<()> {
+        let ipv6 = match Ipv6Packet::new(ethernet.payload()) {
+            Some(ipv6) => ipv6,
+            None => {
+                debug!("Invalid IPv6 packet");
+                stats.packets_dropped.fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
         };
 
-        // This is a simplified implementation
-        // In a real implementation, you would track packets over time windows
-        let elapsed_seconds = if current_time > window_start {
-            (current_time - window_start) as f64 / 1000.0
-        } else {
-            1.0
-        };
+        debug!("Processing IPv6 packet: {} -> {}", ipv6.get_source(), ipv6.get_destination());
 
-        if elapsed_seconds > 0.0 {
-            self.total_packets as f64 / elapsed_seconds
+        // Check if packet is for this router
+        if Self::is_local_ipv6_packet(&ipv6, config) {
+            Self::process_local_ipv6_packet(&ipv6, stats).await?;
         } else {
-            0.0
+            // Forward packet
+            Self::forward_ipv6_packet(&ipv6, stats, routing_table).await?;
         }
+
+        Ok(())
     }
 
-    /// Get byte rate over time window
-    pub fn get_byte_rate(&self, window_seconds: u64) -> f64 {
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+    async fn process_arp_packet(
+        ethernet: &EthernetPacket,
+        stats: &PacketStats,
+    ) -> Result<()> {
+        debug!("Processing ARP packet");
+        // ARP processing logic would go here
+        stats.packets_forwarded.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
 
-        let window_start = if current_time > window_seconds * 1000 {
-            current_time - (window_seconds * 1000)
-        } else {
-            self.start_time
-        };
-
-        let elapsed_seconds = if current_time > window_start {
-            (current_time - window_start) as f64 / 1000.0
-        } else {
-            1.0
-        };
-
-        if elapsed_seconds > 0.0 {
-            self.total_bytes as f64 / elapsed_seconds
-        } else {
-            0.0
+    fn is_local_packet(ipv4: &Ipv4Packet, config: &Config) -> bool {
+        // Check if packet is destined for this router's interfaces
+        for interface in &config.interfaces {
+            if let Ok(ip) = interface.ip.parse::<std::net::Ipv4Addr>() {
+                if ip == ipv4.get_destination() {
+                    return true;
+                }
+            }
         }
+        false
     }
 
-    /// Check if packet should be dropped based on rate limiting
-    pub fn should_drop_packet(&self, packet: &Packet, max_packets_per_second: u64) -> bool {
-        let current_rate = self.get_packet_rate(1);
-        current_rate > max_packets_per_second as f64
-    }
-
-    /// Check if packet should be dropped based on bandwidth limiting
-    pub fn should_drop_packet_bandwidth(&self, packet: &Packet, max_bytes_per_second: u64) -> bool {
-        let current_rate = self.get_byte_rate(1);
-        current_rate > max_bytes_per_second as f64
-    }
-
-    /// Reset all statistics
-    pub fn reset(&mut self) {
-        self.total_packets = 0;
-        self.total_bytes = 0;
-        self.dropped_packets = 0;
-        self.dropped_bytes = 0;
-        self.last_packet_time = 0;
-        self.start_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        self.packet_counts.clear();
-        self.byte_counts.clear();
-        self.protocol_counts.clear();
-        self.port_counts.clear();
-        self.source_ip_counts.clear();
-        self.dest_ip_counts.clear();
-    }
-
-    /// Get detailed statistics for analysis
-    pub fn get_detailed_stats(&self) -> DetailedPacketStats {
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-
-        let elapsed_seconds = if current_time > self.start_time {
-            (current_time - self.start_time) as f64 / 1000.0
-        } else {
-            1.0
-        };
-
-        DetailedPacketStats {
-            basic_stats: self.get_stats(),
-            protocol_distribution: self.get_protocol_stats(),
-            port_distribution: self.get_port_stats(),
-            source_ip_distribution: self.get_source_ip_stats(),
-            dest_ip_distribution: self.get_dest_ip_stats(),
-            interface_stats: self.get_interface_stats(),
-            top_protocols: self.get_top_protocols(10),
-            top_ports: self.get_top_ports(10),
-            top_source_ips: self.get_top_source_ips(10),
-            top_dest_ips: self.get_top_dest_ips(10),
-            uptime_seconds: elapsed_seconds,
+    fn is_local_ipv6_packet(ipv6: &Ipv6Packet, config: &Config) -> bool {
+        // Check if packet is destined for this router's interfaces
+        for interface in &config.interfaces {
+            if let Ok(ip) = interface.ip.parse::<std::net::Ipv6Addr>() {
+                if ip == ipv6.get_destination() {
+                    return true;
+                }
+            }
         }
+        false
     }
-}
 
-/// Detailed packet statistics
-#[derive(Debug, Clone)]
-pub struct DetailedPacketStats {
-    pub basic_stats: PacketStats,
-    pub protocol_distribution: HashMap<u8, u64>,
-    pub port_distribution: HashMap<u16, u64>,
-    pub source_ip_distribution: HashMap<String, u64>,
-    pub dest_ip_distribution: HashMap<String, u64>,
-    pub interface_stats: HashMap<String, (u64, u64)>,
-    pub top_protocols: Vec<(u8, u64)>,
-    pub top_ports: Vec<(u16, u64)>,
-    pub top_source_ips: Vec<(String, u64)>,
-    pub top_dest_ips: Vec<(String, u64)>,
-    pub uptime_seconds: f64,
-}
+    async fn process_local_ipv4_packet(ipv4: &Ipv4Packet, stats: &PacketStats) -> Result<()> {
+        match ipv4.get_next_level_protocol() {
+            IpNextHeaderProtocols::Tcp => {
+                Self::process_tcp_packet(ipv4.payload(), stats).await?;
+            }
+            IpNextHeaderProtocols::Udp => {
+                Self::process_udp_packet(ipv4.payload(), stats).await?;
+            }
+            IpNextHeaderProtocols::Icmp => {
+                Self::process_icmp_packet(ipv4.payload(), stats).await?;
+            }
+            _ => {
+                debug!("Unsupported IPv4 protocol: {:?}", ipv4.get_next_level_protocol());
+            }
+        }
+        Ok(())
+    }
 
-impl Default for PacketEngine {
-    fn default() -> Self {
-        Self::new()
+    async fn process_local_ipv6_packet(ipv6: &Ipv6Packet, stats: &PacketStats) -> Result<()> {
+        // IPv6 local processing logic would go here
+        debug!("Processing local IPv6 packet");
+        Ok(())
+    }
+
+    async fn process_tcp_packet(payload: &[u8], stats: &PacketStats) -> Result<()> {
+        if let Some(tcp) = TcpPacket::new(payload) {
+            debug!("Processing TCP packet: {} -> {}", tcp.get_source(), tcp.get_destination());
+            // TCP processing logic would go here
+        }
+        Ok(())
+    }
+
+    async fn process_udp_packet(payload: &[u8], stats: &PacketStats) -> Result<()> {
+        if let Some(udp) = UdpPacket::new(payload) {
+            debug!("Processing UDP packet: {} -> {}", udp.get_source(), udp.get_destination());
+            // UDP processing logic would go here
+        }
+        Ok(())
+    }
+
+    async fn process_icmp_packet(payload: &[u8], stats: &PacketStats) -> Result<()> {
+        if let Some(icmp) = IcmpPacket::new(payload) {
+            debug!("Processing ICMP packet");
+            // ICMP processing logic would go here
+        }
+        Ok(())
+    }
+
+    async fn forward_ipv4_packet(
+        ipv4: &Ipv4Packet,
+        stats: &PacketStats,
+        routing_table: &Arc<RwLock<RoutingTable>>,
+    ) -> Result<()> {
+        let destination = ipv4.get_destination();
+        let table = routing_table.read().await;
+        
+        if let Some(route) = table.find_route(destination) {
+            debug!("Forwarding IPv4 packet to next hop: {}", route.next_hop);
+            stats.packets_routed.fetch_add(1, Ordering::Relaxed);
+            // Forwarding logic would go here
+        } else {
+            debug!("No route found for destination: {}", destination);
+            stats.packets_dropped.fetch_add(1, Ordering::Relaxed);
+        }
+
+        Ok(())
+    }
+
+    async fn forward_ipv6_packet(
+        ipv6: &Ipv6Packet,
+        stats: &PacketStats,
+        routing_table: &Arc<RwLock<RoutingTable>>,
+    ) -> Result<()> {
+        let destination = ipv6.get_destination();
+        let table = routing_table.read().await;
+        
+        if let Some(route) = table.find_route_v6(destination) {
+            debug!("Forwarding IPv6 packet to next hop: {}", route.next_hop);
+            stats.packets_routed.fetch_add(1, Ordering::Relaxed);
+            // Forwarding logic would go here
+        } else {
+            debug!("No route found for destination: {}", destination);
+            stats.packets_dropped.fetch_add(1, Ordering::Relaxed);
+        }
+
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
 
-    #[test]
-    fn test_packet_engine_creation() {
-        let engine = PacketEngine::new();
-        let stats = engine.get_stats();
-        assert_eq!(stats.total_packets, 0);
-        assert_eq!(stats.total_bytes, 0);
+    #[tokio::test]
+    async fn test_packet_engine_creation() {
+        let config = Config::default();
+        let routing_table = Arc::new(RwLock::new(RoutingTable::new()));
+        let engine = PacketEngine::new(config, routing_table);
+        assert!(engine.is_ok());
     }
 
-    #[test]
-    fn test_packet_processing() {
-        let mut engine = PacketEngine::new();
-        let packet = Packet::new(
-            1,
-            1500,
-            1,
-            "192.168.1.1".to_string(),
-            "192.168.1.2".to_string(),
-            80,
-            8080,
-            6,
-        );
-
-        assert!(engine.process_packet(&packet).is_ok());
-        let stats = engine.get_stats();
-        assert_eq!(stats.total_packets, 1);
-        assert_eq!(stats.total_bytes, 1500);
-    }
-
-    #[test]
-    fn test_packet_dropping() {
-        let mut engine = PacketEngine::new();
-        let packet = Packet::new(
-            1,
-            1500,
-            1,
-            "192.168.1.1".to_string(),
-            "192.168.1.2".to_string(),
-            80,
-            8080,
-            6,
-        );
-
-        engine.drop_packet(&packet);
-        let stats = engine.get_stats();
-        assert_eq!(stats.dropped_packets, 1);
-        assert_eq!(stats.dropped_bytes, 1500);
-    }
-
-    #[test]
-    fn test_protocol_statistics() {
-        let mut engine = PacketEngine::new();
-        let packet1 = Packet::new(
-            1,
-            1500,
-            1,
-            "192.168.1.1".to_string(),
-            "192.168.1.2".to_string(),
-            80,
-            8080,
-            6, // TCP
-        );
-        let packet2 = Packet::new(
-            2,
-            1000,
-            1,
-            "192.168.1.1".to_string(),
-            "192.168.1.2".to_string(),
-            53,
-            53,
-            17, // UDP
-        );
-
-        engine.process_packet(&packet1).unwrap();
-        engine.process_packet(&packet2).unwrap();
-
-        let protocol_stats = engine.get_protocol_stats();
-        assert_eq!(protocol_stats.get(&6), Some(&1));
-        assert_eq!(protocol_stats.get(&17), Some(&1));
-    }
-
-    #[test]
-    fn test_reset() {
-        let mut engine = PacketEngine::new();
-        let packet = Packet::new(
-            1,
-            1500,
-            1,
-            "192.168.1.1".to_string(),
-            "192.168.1.2".to_string(),
-            80,
-            8080,
-            6,
-        );
-
-        engine.process_packet(&packet).unwrap();
-        engine.reset();
-
-        let stats = engine.get_stats();
-        assert_eq!(stats.total_packets, 0);
-        assert_eq!(stats.total_bytes, 0);
+    #[tokio::test]
+    async fn test_packet_stats() {
+        let stats = PacketStats::new();
+        let statistics = stats.to_statistics();
+        assert_eq!(statistics.packets_processed, 0);
+        assert_eq!(statistics.bytes_processed, 0);
     }
 }

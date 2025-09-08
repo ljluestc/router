@@ -1,233 +1,263 @@
 package cloudpods
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
+
+	"router-sim/internal/config"
 )
 
-// CloudPodsClient represents a client for CloudPods API
-type CloudPodsClient struct {
-	baseURL    string
-	apiKey     string
+// Client represents a CloudPods client
+type Client struct {
+	config     config.CloudPodsConfig
 	httpClient *http.Client
+	baseURL    string
 }
 
-// CloudPodsConfig represents CloudPods configuration
-type CloudPodsConfig struct {
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
-	Timeout int    `json:"timeout_seconds"`
+// NewClient creates a new CloudPods client
+func NewClient(config config.CloudPodsConfig) (*Client, error) {
+	httpClient := &http.Client{
+		Timeout: config.Timeout,
+	}
+
+	baseURL := fmt.Sprintf("%s/api/v1", config.Endpoint)
+
+	return &Client{
+		config:     config,
+		httpClient: httpClient,
+		baseURL:    baseURL,
+	}, nil
 }
 
-// CloudPodsResource represents a CloudPods resource
-type CloudPodsResource struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	Type        string                 `json:"type"`
-	Status      string                 `json:"status"`
-	Region      string                 `json:"region"`
-	Zone        string                 `json:"zone"`
-	CreatedAt   time.Time              `json:"created_at"`
-	UpdatedAt   time.Time              `json:"updated_at"`
-	Properties  map[string]interface{} `json:"properties"`
-	Tags        map[string]string      `json:"tags"`
-}
-
-// CloudPodsNetwork represents a CloudPods network
-type CloudPodsNetwork struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	CIDR        string   `json:"cidr"`
-	Gateway     string   `json:"gateway"`
-	DNS         []string `json:"dns"`
-	VLAN        int      `json:"vlan"`
-	Status      string   `json:"status"`
-	Description string   `json:"description"`
-}
-
-// CloudPodsVM represents a CloudPods virtual machine
-type CloudPodsVM struct {
+// CloudResource represents a cloud resource
+type CloudResource struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
+	Type        string            `json:"type"`
 	Status      string            `json:"status"`
-	CPU         int               `json:"cpu"`
-	Memory      int64             `json:"memory"`
-	Disk        int64             `json:"disk"`
-	Image       string            `json:"image"`
-	Network     string            `json:"network"`
-	IPAddress   string            `json:"ip_address"`
+	Region      string            `json:"region"`
+	Zone        string            `json:"zone"`
+	Provider    string            `json:"provider"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
+	Tags        map[string]string `json:"tags"`
 	Properties  map[string]interface{} `json:"properties"`
 }
 
-// CloudPodsLoadBalancer represents a CloudPods load balancer
-type CloudPodsLoadBalancer struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Status      string   `json:"status"`
+// VirtualMachine represents a virtual machine
+type VirtualMachine struct {
+	CloudResource
+	CPU        int    `json:"cpu"`
+	Memory     int    `json:"memory"`
+	Disk       int    `json:"disk"`
+	OS         string `json:"os"`
+	IPAddress  string `json:"ip_address"`
+	State      string `json:"state"`
+	PowerState string `json:"power_state"`
+}
+
+// Network represents a network
+type Network struct {
+	CloudResource
+	CIDR       string `json:"cidr"`
+	Gateway    string `json:"gateway"`
+	VLAN       int    `json:"vlan"`
+	VPC        string `json:"vpc"`
+	Subnet     string `json:"subnet"`
+}
+
+// LoadBalancer represents a load balancer
+type LoadBalancer struct {
+	CloudResource
 	Type        string   `json:"type"`
 	Algorithm   string   `json:"algorithm"`
-	Ports       []int    `json:"ports"`
+	Ports       []Port   `json:"ports"`
 	Backends    []string `json:"backends"`
-	HealthCheck string   `json:"health_check"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	HealthCheck HealthCheck `json:"health_check"`
 }
 
-// CloudPodsAPIResponse represents a generic API response
-type CloudPodsAPIResponse struct {
-	Success bool                   `json:"success"`
-	Message string                 `json:"message"`
-	Data    interface{}            `json:"data"`
-	Error   string                 `json:"error"`
-	Meta    map[string]interface{} `json:"meta"`
+// Port represents a port configuration
+type Port struct {
+	Protocol string `json:"protocol"`
+	Port     int    `json:"port"`
+	Target   int    `json:"target"`
 }
 
-// NewCloudPodsClient creates a new CloudPods client
-func NewCloudPodsClient(config CloudPodsConfig) *CloudPodsClient {
-	timeout := time.Duration(config.Timeout) * time.Second
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
-
-	return &CloudPodsClient{
-		baseURL: config.BaseURL,
-		apiKey:  config.APIKey,
-		httpClient: &http.Client{
-			Timeout: timeout,
-		},
-	}
+// HealthCheck represents health check configuration
+type HealthCheck struct {
+	Protocol string `json:"protocol"`
+	Path     string `json:"path"`
+	Port     int    `json:"port"`
+	Interval int    `json:"interval"`
+	Timeout  int    `json:"timeout"`
+	Retries  int    `json:"retries"`
 }
 
-// GetNetworks retrieves all networks
-func (c *CloudPodsClient) GetNetworks(ctx context.Context) ([]CloudPodsNetwork, error) {
-	url := fmt.Sprintf("%s/api/v1/networks", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	var apiResp CloudPodsAPIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Error)
-	}
-
-	// Convert data to networks
-	networksData, ok := apiResp.Data.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid response data format")
-	}
-
-	var networks []CloudPodsNetwork
-	for _, item := range networksData {
-		itemBytes, err := json.Marshal(item)
-		if err != nil {
-			continue
-		}
-
-		var network CloudPodsNetwork
-		if err := json.Unmarshal(itemBytes, &network); err != nil {
-			continue
-		}
-
-		networks = append(networks, network)
-	}
-
-	return networks, nil
+// SecurityGroup represents a security group
+type SecurityGroup struct {
+	CloudResource
+	Rules []SecurityRule `json:"rules"`
 }
 
-// GetNetwork retrieves a specific network by ID
-func (c *CloudPodsClient) GetNetwork(ctx context.Context, networkID string) (*CloudPodsNetwork, error) {
-	url := fmt.Sprintf("%s/api/v1/networks/%s", c.baseURL, networkID)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	var apiResp CloudPodsAPIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Error)
-	}
-
-	// Convert data to network
-	networkData, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal network data: %w", err)
-	}
-
-	var network CloudPodsNetwork
-	if err := json.Unmarshal(networkData, &network); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal network: %w", err)
-	}
-
-	return &network, nil
+// SecurityRule represents a security rule
+type SecurityRule struct {
+	Direction   string `json:"direction"`
+	Protocol    string `json:"protocol"`
+	Port        int    `json:"port"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	Action      string `json:"action"`
+	Priority    int    `json:"priority"`
 }
 
-// CreateNetwork creates a new network
-func (c *CloudPodsClient) CreateNetwork(ctx context.Context, network CloudPodsNetwork) (*CloudPodsNetwork, error) {
-	url := fmt.Sprintf("%s/api/v1/networks", c.baseURL)
+// GetVirtualMachines retrieves virtual machines
+func (c *Client) GetVirtualMachines(ctx context.Context) ([]VirtualMachine, error) {
+	url := fmt.Sprintf("%s/vms", c.baseURL)
 	
-	networkData, err := json.Marshal(network)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal network: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(networkData))
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("request failed with status: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data []VirtualMachine `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Data, nil
+}
+
+// GetNetworks retrieves networks
+func (c *Client) GetNetworks(ctx context.Context) ([]Network, error) {
+	url := fmt.Sprintf("%s/networks", c.baseURL)
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("request failed with status: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data []Network `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Data, nil
+}
+
+// GetLoadBalancers retrieves load balancers
+func (c *Client) GetLoadBalancers(ctx context.Context) ([]LoadBalancer, error) {
+	url := fmt.Sprintf("%s/loadbalancers", c.baseURL)
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("request failed with status: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data []LoadBalancer `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Data, nil
+}
+
+// GetSecurityGroups retrieves security groups
+func (c *Client) GetSecurityGroups(ctx context.Context) ([]SecurityGroup, error) {
+	url := fmt.Sprintf("%s/securitygroups", c.baseURL)
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("request failed with status: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data []SecurityGroup `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Data, nil
+}
+
+// CreateVirtualMachine creates a virtual machine
+func (c *Client) CreateVirtualMachine(ctx context.Context, vm VirtualMachine) (*VirtualMachine, error) {
+	url := fmt.Sprintf("%s/vms", c.baseURL)
+	
+	body, err := json.Marshal(vm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.setHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -236,47 +266,32 @@ func (c *CloudPodsClient) CreateNetwork(ctx context.Context, network CloudPodsNe
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("request failed with status: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+	var result VirtualMachine
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	var apiResp CloudPodsAPIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Error)
-	}
-
-	// Convert data to network
-	networkData, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal network data: %w", err)
-	}
-
-	var createdNetwork CloudPodsNetwork
-	if err := json.Unmarshal(networkData, &createdNetwork); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal network: %w", err)
-	}
-
-	return &createdNetwork, nil
+	return &result, nil
 }
 
-// GetVMs retrieves all virtual machines
-func (c *CloudPodsClient) GetVMs(ctx context.Context) ([]CloudPodsVM, error) {
-	url := fmt.Sprintf("%s/api/v1/vms", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+// UpdateVirtualMachine updates a virtual machine
+func (c *Client) UpdateVirtualMachine(ctx context.Context, id string, vm VirtualMachine) (*VirtualMachine, error) {
+	url := fmt.Sprintf("%s/vms/%s", c.baseURL, id)
+	
+	body, err := json.Marshal(vm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewBuffer(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	c.setHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -285,175 +300,27 @@ func (c *CloudPodsClient) GetVMs(ctx context.Context) ([]CloudPodsVM, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("request failed with status: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+	var result VirtualMachine
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	var apiResp CloudPodsAPIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Error)
-	}
-
-	// Convert data to VMs
-	vmsData, ok := apiResp.Data.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid response data format")
-	}
-
-	var vms []CloudPodsVM
-	for _, item := range vmsData {
-		itemBytes, err := json.Marshal(item)
-		if err != nil {
-			continue
-		}
-
-		var vm CloudPodsVM
-		if err := json.Unmarshal(itemBytes, &vm); err != nil {
-			continue
-		}
-
-		vms = append(vms, vm)
-	}
-
-	return vms, nil
+	return &result, nil
 }
 
-// GetLoadBalancers retrieves all load balancers
-func (c *CloudPodsClient) GetLoadBalancers(ctx context.Context) ([]CloudPodsLoadBalancer, error) {
-	url := fmt.Sprintf("%s/api/v1/loadbalancers", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	var apiResp CloudPodsAPIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Error)
-	}
-
-	// Convert data to load balancers
-	lbData, ok := apiResp.Data.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid response data format")
-	}
-
-	var loadBalancers []CloudPodsLoadBalancer
-	for _, item := range lbData {
-		itemBytes, err := json.Marshal(item)
-		if err != nil {
-			continue
-		}
-
-		var lb CloudPodsLoadBalancer
-		if err := json.Unmarshal(itemBytes, &lb); err != nil {
-			continue
-		}
-
-		loadBalancers = append(loadBalancers, lb)
-	}
-
-	return loadBalancers, nil
-}
-
-// GetResources retrieves all resources of a specific type
-func (c *CloudPodsClient) GetResources(ctx context.Context, resourceType string) ([]CloudPodsResource, error) {
-	url := fmt.Sprintf("%s/api/v1/resources/%s", c.baseURL, resourceType)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	var apiResp CloudPodsAPIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Error)
-	}
-
-	// Convert data to resources
-	resourcesData, ok := apiResp.Data.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid response data format")
-	}
-
-	var resources []CloudPodsResource
-	for _, item := range resourcesData {
-		itemBytes, err := json.Marshal(item)
-		if err != nil {
-			continue
-		}
-
-		var resource CloudPodsResource
-		if err := json.Unmarshal(itemBytes, &resource); err != nil {
-			continue
-		}
-
-		resources = append(resources, resource)
-	}
-
-	return resources, nil
-}
-
-// HealthCheck performs a health check on the CloudPods API
-func (c *CloudPodsClient) HealthCheck(ctx context.Context) error {
-	url := fmt.Sprintf("%s/api/v1/health", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+// DeleteVirtualMachine deletes a virtual machine
+func (c *Client) DeleteVirtualMachine(ctx context.Context, id string) error {
+	url := fmt.Sprintf("%s/vms/%s", c.baseURL, id)
+	
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	c.setHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -461,9 +328,79 @@ func (c *CloudPodsClient) HealthCheck(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health check failed with status: %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("request failed with status: %d", resp.StatusCode)
 	}
 
 	return nil
+}
+
+// GetResourceMetrics retrieves resource metrics
+func (c *Client) GetResourceMetrics(ctx context.Context, resourceType, resourceID string) (map[string]interface{}, error) {
+	url := fmt.Sprintf("%s/resources/%s/%s/metrics", c.baseURL, resourceType, resourceID)
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("request failed with status: %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result, nil
+}
+
+// GetTopology retrieves network topology
+func (c *Client) GetTopology(ctx context.Context) (map[string]interface{}, error) {
+	url := fmt.Sprintf("%s/topology", c.baseURL)
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("request failed with status: %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result, nil
+}
+
+// setHeaders sets common headers for requests
+func (c *Client) setHeaders(req *http.Request) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "router-sim/1.0.0")
+	
+	// Add custom headers from config
+	for key, value := range c.config.Headers {
+		req.Header.Set(key, value)
+	}
 }

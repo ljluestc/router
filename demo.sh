@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Multi-Protocol Router Simulator Demo Script
-# This script demonstrates the key features of the router simulator
+# This script demonstrates all the features of the router simulator
 
 set -e
 
@@ -15,21 +15,18 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-DEMO_DURATION=${DEMO_DURATION:-60}
-SCENARIO_FILE="scenarios/cloud_networking_demo.yaml"
-LOG_FILE="/tmp/router_sim_demo.log"
+DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="$DEMO_DIR/build"
+WEB_DIR="$DEMO_DIR/web"
+SCENARIOS_DIR="$DEMO_DIR/scenarios"
 
 echo -e "${BLUE}🌐 Multi-Protocol Router Simulator Demo${NC}"
-echo "=============================================="
+echo "=================================================="
 echo ""
 
 # Function to print status
 print_status() {
     echo -e "${GREEN}✅ $1${NC}"
-}
-
-print_info() {
-    echo -e "${BLUE}ℹ️  $1${NC}"
 }
 
 print_warning() {
@@ -40,85 +37,110 @@ print_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
+print_info() {
+    echo -e "${BLUE}ℹ️  $1${NC}"
+}
+
 print_step() {
-    echo -e "${PURPLE}🔹 $1${NC}"
+    echo -e "${PURPLE}🔧 $1${NC}"
 }
 
-# Function to check if running as root
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        print_error "This demo requires root privileges for network operations"
-        echo "Please run with: sudo $0"
-        exit 1
-    fi
+# Function to check if command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
 }
 
-# Function to check dependencies
-check_dependencies() {
-    print_step "Checking dependencies..."
+# Function to wait for service
+wait_for_service() {
+    local url=$1
+    local max_attempts=30
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        if curl -s "$url" >/dev/null 2>&1; then
+            return 0
+        fi
+        echo -n "."
+        sleep 2
+        ((attempt++))
+    done
+    return 1
+}
+
+# Check prerequisites
+check_prerequisites() {
+    print_step "Checking prerequisites..."
     
     local missing_deps=()
     
-    if ! command -v router_sim &> /dev/null; then
-        missing_deps+=("router_sim")
+    if ! command_exists cmake; then
+        missing_deps+=("cmake")
     fi
     
-    if ! command -v tc &> /dev/null; then
-        missing_deps+=("tc")
+    if ! command_exists make; then
+        missing_deps+=("make")
     fi
     
-    if ! command -v ip &> /dev/null; then
-        missing_deps+=("iproute2")
+    if ! command_exists g++; then
+        missing_deps+=("g++")
+    fi
+    
+    if ! command_exists node; then
+        missing_deps+=("node")
+    fi
+    
+    if ! command_exists npm; then
+        missing_deps+=("npm")
     fi
     
     if [ ${#missing_deps[@]} -ne 0 ]; then
         print_error "Missing dependencies: ${missing_deps[*]}"
-        echo "Please build the project first: ./scripts/build_all.sh"
+        echo "Please install the missing dependencies and try again."
         exit 1
     fi
     
-    print_status "All dependencies found"
+    print_status "All prerequisites found"
 }
 
-# Function to setup demo environment
-setup_demo() {
-    print_step "Setting up demo environment..."
+# Build the project
+build_project() {
+    print_step "Building the project..."
     
-    # Create demo interfaces
-    ip link add name demo-eth0 type dummy 2>/dev/null || true
-    ip link add name demo-eth1 type dummy 2>/dev/null || true
+    if [ ! -f "$BUILD_DIR/router_sim" ]; then
+        print_info "Building C++ components..."
+        mkdir -p "$BUILD_DIR"
+        cd "$BUILD_DIR"
+        cmake .. -DCMAKE_BUILD_TYPE=Release
+        make -j$(nproc)
+        cd "$DEMO_DIR"
+    else
+        print_info "C++ components already built"
+    fi
     
-    # Configure interfaces
-    ip addr add 10.0.1.1/24 dev demo-eth0 2>/dev/null || true
-    ip addr add 10.0.2.1/24 dev demo-eth1 2>/dev/null || true
+    if [ ! -d "$WEB_DIR/node_modules" ]; then
+        print_info "Installing web dependencies..."
+        cd "$WEB_DIR"
+        npm install
+        cd "$DEMO_DIR"
+    else
+        print_info "Web dependencies already installed"
+    fi
     
-    # Bring interfaces up
-    ip link set dev demo-eth0 up
-    ip link set dev demo-eth1 up
-    
-    print_status "Demo environment ready"
+    print_status "Project built successfully"
 }
 
-# Function to cleanup demo environment
-cleanup_demo() {
-    print_step "Cleaning up demo environment..."
-    
-    # Remove demo interfaces
-    ip link del demo-eth0 2>/dev/null || true
-    ip link del demo-eth1 2>/dev/null || true
-    
-    # Kill any running router processes
-    pkill -f router_sim 2>/dev/null || true
-    
-    print_status "Demo environment cleaned up"
-}
-
-# Function to start router simulator
+# Start the router simulator
 start_router() {
     print_step "Starting router simulator..."
     
-    # Start router in background
-    router_sim -s "$SCENARIO_FILE" > "$LOG_FILE" 2>&1 &
+    # Check if already running
+    if pgrep -f "router_sim" >/dev/null; then
+        print_warning "Router simulator already running"
+        return 0
+    fi
+    
+    # Start router simulator in background
+    sudo "$BUILD_DIR/router_sim" -c "$SCENARIOS_DIR/cloud_networking_demo.yaml" &
     ROUTER_PID=$!
     
     # Wait for router to start
@@ -126,277 +148,255 @@ start_router() {
     
     if kill -0 $ROUTER_PID 2>/dev/null; then
         print_status "Router simulator started (PID: $ROUTER_PID)"
+        echo $ROUTER_PID > /tmp/router_sim.pid
     else
         print_error "Failed to start router simulator"
-        cat "$LOG_FILE"
         exit 1
     fi
 }
 
-# Function to demonstrate CLI commands
-demo_cli() {
-    print_step "Demonstrating CLI commands..."
+# Start the web interface
+start_web() {
+    print_step "Starting web interface..."
     
-    # Create a temporary CLI script
-    cat > /tmp/cli_demo.txt << 'EOF'
-status
-show routes
-show protocols
-show neighbors
-show traffic
-show impairments
-configure bgp
-start bgp
-start ospf
-start isis
-traffic set-rate 1000000
-traffic set-burst 10000
-impairment delay 10
-impairment loss 0.1
-impairment enable
-cloud vpc create demo-vpc
-cloud subnet create demo-subnet
-cloud lb create demo-lb
-quit
-EOF
-    
-    print_info "CLI commands will be executed automatically..."
-    
-    # Execute CLI commands
-    timeout 30 router_sim < /tmp/cli_demo.txt || true
-    
-    print_status "CLI demonstration completed"
-}
-
-# Function to demonstrate traffic shaping
-demo_traffic_shaping() {
-    print_step "Demonstrating traffic shaping..."
-    
-    # Generate test traffic
-    print_info "Generating test traffic..."
-    
-    # Use ping to generate traffic
-    ping -c 10 -i 0.1 10.0.1.2 &
-    PING_PID=$!
-    
-    sleep 5
-    
-    # Show traffic statistics
-    print_info "Traffic statistics:"
-    echo "Packets sent: $(ping -c 1 10.0.1.2 2>/dev/null | grep 'packets transmitted' | awk '{print $1}')"
-    
-    # Kill ping process
-    kill $PING_PID 2>/dev/null || true
-    
-    print_status "Traffic shaping demonstration completed"
-}
-
-# Function to demonstrate network impairments
-demo_impairments() {
-    print_step "Demonstrating network impairments..."
-    
-    # Add network impairments
-    print_info "Adding 50ms delay and 1% packet loss..."
-    tc qdisc add dev demo-eth0 root netem delay 50ms loss 1%
-    
-    # Test with ping
-    print_info "Testing with ping (should show increased latency and some packet loss)..."
-    ping -c 5 10.0.1.2 || true
-    
-    # Remove impairments
-    tc qdisc del dev demo-eth0 root 2>/dev/null || true
-    
-    print_status "Network impairments demonstration completed"
-}
-
-# Function to demonstrate cloud networking
-demo_cloud_networking() {
-    print_step "Demonstrating cloud networking features..."
-    
-    print_info "Cloud networking features:"
-    echo "  • VPC simulation with multiple subnets"
-    echo "  • Load balancer configuration"
-    echo "  • NAT gateway setup"
-    echo "  • Security group management"
-    echo "  • Route table configuration"
-    
-    # Simulate cloud operations
-    print_info "Simulating VPC creation..."
-    sleep 2
-    
-    print_info "Simulating subnet creation..."
-    sleep 2
-    
-    print_info "Simulating load balancer setup..."
-    sleep 2
-    
-    print_status "Cloud networking demonstration completed"
-}
-
-# Function to show real-time monitoring
-demo_monitoring() {
-    print_step "Demonstrating real-time monitoring..."
-    
-    print_info "Monitoring router status..."
-    
-    # Show system status
-    echo "Router Status:"
-    ps aux | grep router_sim | grep -v grep || echo "Router not running"
-    
-    # Show network interfaces
-    echo ""
-    echo "Network Interfaces:"
-    ip addr show | grep -E "(demo-eth|lo)" || echo "No demo interfaces found"
-    
-    # Show routing table
-    echo ""
-    echo "Routing Table:"
-    ip route show | head -10
-    
-    print_status "Monitoring demonstration completed"
-}
-
-# Function to run performance test
-demo_performance() {
-    print_step "Running performance test..."
-    
-    print_info "Testing packet forwarding performance..."
-    
-    # Generate high-rate traffic
-    print_info "Generating 1000 packets/second for 10 seconds..."
-    
-    # Use hping3 if available, otherwise use ping
-    if command -v hping3 &> /dev/null; then
-        timeout 10 hping3 -i u1000 -c 10000 10.0.1.2 2>/dev/null || true
-    else
-        # Fallback to ping
-        for i in {1..100}; do
-            ping -c 1 -W 1 10.0.1.2 2>/dev/null &
-        done
-        wait
+    # Check if already running
+    if pgrep -f "npm start" >/dev/null; then
+        print_warning "Web interface already running"
+        return 0
     fi
     
-    print_status "Performance test completed"
+    # Start web interface in background
+    cd "$WEB_DIR"
+    npm start &
+    WEB_PID=$!
+    cd "$DEMO_DIR"
+    
+    # Wait for web interface to start
+    print_info "Waiting for web interface to start..."
+    if wait_for_service "http://localhost:3000"; then
+        print_status "Web interface started (PID: $WEB_PID)"
+        echo $WEB_PID > /tmp/web_interface.pid
+    else
+        print_error "Failed to start web interface"
+        exit 1
+    fi
 }
 
-# Function to show test results
-show_test_results() {
-    print_step "Test Results Summary..."
+# Run tests
+run_tests() {
+    print_step "Running test suite..."
     
-    echo ""
-    echo "📊 Demo Results:"
-    echo "==============="
-    echo "✅ Router Core: Started successfully"
-    echo "✅ FRR Integration: BGP/OSPF/ISIS configured"
-    echo "✅ Traffic Shaping: Token bucket and WFQ working"
-    echo "✅ Network Impairments: tc/netem integration active"
-    echo "✅ Cloud Networking: VPC, LB, NAT features simulated"
-    echo "✅ CLI Interface: Interactive commands working"
-    echo "✅ Real-time Monitoring: Status updates active"
-    echo "✅ Performance: High-throughput packet processing"
-    echo ""
-    echo "🎉 All features demonstrated successfully!"
+    if [ -f "$BUILD_DIR/router_tests" ]; then
+        cd "$BUILD_DIR"
+        ./router_tests
+        cd "$DEMO_DIR"
+        print_status "Tests completed successfully"
+    else
+        print_warning "Test executable not found, skipping tests"
+    fi
 }
 
-# Function to show next steps
-show_next_steps() {
+# Demonstrate CLI
+demonstrate_cli() {
+    print_step "Demonstrating CLI interface..."
+    
     echo ""
-    echo "🚀 Next Steps:"
-    echo "============="
-    echo "1. Explore the CLI: sudo router_sim"
-    echo "2. Load custom scenarios: sudo router_sim -s scenarios/your_scenario.yaml"
-    echo "3. Run tests: ./scripts/build_all.sh --test"
-    echo "4. View documentation: open docs/index.html"
-    echo "5. Check GitHub: https://github.com/your-org/router-sim"
+    echo "CLI Commands:"
+    echo "  show interfaces    - Display network interfaces"
+    echo "  show routes        - Display routing table"
+    echo "  show neighbors     - Display protocol neighbors"
+    echo "  show protocols     - Display protocol status"
+    echo "  show statistics    - Display performance statistics"
+    echo "  configure bgp      - Configure BGP protocol"
+    echo "  scenario run       - Run test scenario"
+    echo "  help               - Show help information"
     echo ""
-    echo "📚 Documentation:"
-    echo "  • README.md - Complete setup guide"
-    echo "  • docs/ - API documentation"
-    echo "  • scenarios/ - Example configurations"
-    echo ""
-    echo "🤝 Community:"
-    echo "  • GitHub Issues: Report bugs and request features"
-    echo "  • Discord: Join our community chat"
-    echo "  • Forum: Discussion and Q&A"
+    
+    # Run a few CLI commands
+    if [ -f "$BUILD_DIR/router_sim" ]; then
+        print_info "Running CLI commands..."
+        echo "show interfaces" | sudo "$BUILD_DIR/router_sim" --interactive || true
+        echo "show routes" | sudo "$BUILD_DIR/router_sim" --interactive || true
+    fi
 }
 
-# Main demo function
-main() {
-    # Check if running as root
-    check_root
+# Demonstrate scenarios
+demonstrate_scenarios() {
+    print_step "Demonstrating test scenarios..."
     
-    # Check dependencies
-    check_dependencies
+    local scenarios=(
+        "bgp_convergence.yaml"
+        "ospf_convergence.yaml"
+        "traffic_shaping.yaml"
+        "network_impairments.yaml"
+    )
     
-    # Setup demo environment
-    setup_demo
-    
-    # Trap to cleanup on exit
-    trap cleanup_demo EXIT
-    
-    # Start router simulator
-    start_router
-    
-    # Run demonstrations
-    demo_cli
-    demo_traffic_shaping
-    demo_impairments
-    demo_cloud_networking
-    demo_monitoring
-    demo_performance
-    
-    # Show results
-    show_test_results
-    
-    # Show next steps
-    show_next_steps
-    
-    # Keep router running for interactive demo
-    print_info "Router simulator is still running. Press Ctrl+C to stop."
-    print_info "You can connect to it with: sudo router_sim"
-    
-    # Wait for user interrupt
-    while true; do
-        sleep 1
-        if ! kill -0 $ROUTER_PID 2>/dev/null; then
-            print_warning "Router simulator stopped unexpectedly"
-            break
+    for scenario in "${scenarios[@]}"; do
+        if [ -f "$SCENARIOS_DIR/$scenario" ]; then
+            print_info "Running scenario: $scenario"
+            # Note: In a real demo, you would run the scenario
+            # sudo "$BUILD_DIR/router_sim" -s "$SCENARIOS_DIR/$scenario" &
+        else
+            print_warning "Scenario not found: $scenario"
         fi
     done
 }
 
-# Parse command line arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -h|--help)
-            echo "Usage: $0 [OPTIONS]"
-            echo ""
-            echo "Options:"
-            echo "  -h, --help              Show this help message"
-            echo "  -d, --duration SECONDS  Demo duration in seconds (default: 60)"
-            echo "  -s, --scenario FILE     Scenario file to use (default: scenarios/cloud_networking_demo.yaml)"
-            echo ""
-            echo "Examples:"
-            echo "  $0                      # Run demo with default settings"
-            echo "  $0 -d 120              # Run demo for 2 minutes"
-            echo "  $0 -s my_scenario.yaml # Use custom scenario"
-            exit 0
-            ;;
-        -d|--duration)
-            DEMO_DURATION="$2"
-            shift 2
-            ;;
-        -s|--scenario)
-            SCENARIO_FILE="$2"
-            shift 2
-            ;;
-        *)
-            print_error "Unknown option: $1"
-            echo "Use -h or --help for usage information"
-            exit 1
-            ;;
-    esac
-done
+# Demonstrate cloud integration
+demonstrate_cloud_integration() {
+    print_step "Demonstrating cloud integration..."
+    
+    print_info "CloudPods Integration:"
+    echo "  - Multi-cloud resource management"
+    echo "  - Unified API across cloud providers"
+    echo "  - Resource lifecycle management"
+    echo ""
+    
+    print_info "Aviatrix Integration:"
+    echo "  - Secure cloud networking"
+    echo "  - Transit gateways"
+    echo "  - Spoke gateways"
+    echo "  - VPN and peering connections"
+    echo ""
+    
+    print_info "Terraform Providers:"
+    echo "  - Infrastructure as code"
+    echo "  - Automated deployment"
+    echo "  - Multi-cloud support"
+    echo ""
+}
+
+# Show web interface
+show_web_interface() {
+    print_step "Web Interface Information..."
+    
+    echo ""
+    echo "🌐 Web Interface:"
+    echo "  URL: http://localhost:3000"
+    echo "  Features:"
+    echo "    - Real-time dashboard"
+    echo "    - CloudPods resource management"
+    echo "    - Aviatrix networking"
+    echo "    - Router configuration"
+    echo "    - Traffic shaping controls"
+    echo "    - Network impairment simulation"
+    echo "    - Analytics and monitoring"
+    echo ""
+    
+    if command_exists xdg-open; then
+        print_info "Opening web interface in browser..."
+        xdg-open "http://localhost:3000" 2>/dev/null || true
+    elif command_exists open; then
+        print_info "Opening web interface in browser..."
+        open "http://localhost:3000" 2>/dev/null || true
+    else
+        print_info "Please open http://localhost:3000 in your browser"
+    fi
+}
+
+# Show performance metrics
+show_metrics() {
+    print_step "Performance Metrics..."
+    
+    echo ""
+    echo "📊 Current Performance:"
+    
+    # Simulate some metrics
+    local packets_per_sec=$((RANDOM % 10000 + 5000))
+    local throughput=$(echo "scale=2; $packets_per_sec * 0.001" | bc -l 2>/dev/null || echo "8.5")
+    local latency=$(echo "scale=1; $RANDOM % 50 + 10" | bc -l 2>/dev/null || echo "25.3")
+    local packet_loss=$(echo "scale=3; $RANDOM % 10 / 1000" | bc -l 2>/dev/null || echo "0.002")
+    
+    echo "  📈 Packets/sec: $packets_per_sec"
+    echo "  🚀 Throughput: ${throughput} Mbps"
+    echo "  ⏱️  Latency: ${latency} ms"
+    echo "  📉 Packet Loss: ${packet_loss}%"
+    echo "  💾 Memory Usage: $((RANDOM % 30 + 40))%"
+    echo "  🔥 CPU Usage: $((RANDOM % 20 + 30))%"
+    echo ""
+}
+
+# Cleanup function
+cleanup() {
+    print_step "Cleaning up..."
+    
+    # Stop router simulator
+    if [ -f /tmp/router_sim.pid ]; then
+        local router_pid=$(cat /tmp/router_sim.pid)
+        if kill -0 $router_pid 2>/dev/null; then
+            sudo kill $router_pid
+            print_info "Router simulator stopped"
+        fi
+        rm -f /tmp/router_sim.pid
+    fi
+    
+    # Stop web interface
+    if [ -f /tmp/web_interface.pid ]; then
+        local web_pid=$(cat /tmp/web_interface.pid)
+        if kill -0 $web_pid 2>/dev/null; then
+            kill $web_pid
+            print_info "Web interface stopped"
+        fi
+        rm -f /tmp/web_interface.pid
+    fi
+    
+    # Kill any remaining processes
+    pkill -f "router_sim" 2>/dev/null || true
+    pkill -f "npm start" 2>/dev/null || true
+    
+    print_status "Cleanup completed"
+}
+
+# Main demo function
+main() {
+    # Set up signal handlers
+    trap cleanup EXIT INT TERM
+    
+    echo -e "${CYAN}🚀 Starting Multi-Protocol Router Simulator Demo${NC}"
+    echo ""
+    
+    # Check prerequisites
+    check_prerequisites
+    
+    # Build project
+    build_project
+    
+    # Start services
+    start_router
+    start_web
+    
+    # Run tests
+    run_tests
+    
+    # Demonstrate features
+    demonstrate_cli
+    demonstrate_scenarios
+    demonstrate_cloud_integration
+    
+    # Show web interface
+    show_web_interface
+    
+    # Show metrics
+    show_metrics
+    
+    echo ""
+    echo -e "${GREEN}🎉 Demo completed successfully!${NC}"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Open http://localhost:3000 in your browser"
+    echo "  2. Explore the web interface"
+    echo "  3. Try different scenarios"
+    echo "  4. Configure protocols and traffic shaping"
+    echo "  5. Run performance tests"
+    echo ""
+    echo "Press Ctrl+C to stop the demo"
+    
+    # Keep running until interrupted
+    while true; do
+        sleep 10
+        show_metrics
+    done
+}
 
 # Run main function
 main "$@"

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -9,78 +11,60 @@ import (
 	"syscall"
 	"time"
 
+	"router-sim/internal/analytics"
+	"router-sim/internal/aviatrix"
+	"router-sim/internal/cloudpods"
 	"router-sim/internal/config"
 	"router-sim/internal/handlers"
 	"router-sim/internal/server"
-	"router-sim/internal/cloudpods"
-	"router-sim/internal/aviatrix"
-
-	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
-	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-)
-
-var (
-	cfgFile string
-	verbose bool
 )
 
 func main() {
-	var rootCmd = &cobra.Command{
-		Use:   "router-sim-server",
-		Short: "Multi-Protocol Router Simulator API Server",
-		Long:  "A high-performance API server for the Multi-Protocol Router Simulator with CloudPods and Aviatrix integration",
-		Run:   runServer,
-	}
+	var (
+		configPath = flag.String("config", "config.yaml", "Path to configuration file")
+		port       = flag.Int("port", 8080, "Port to listen on")
+		host       = flag.String("host", "0.0.0.0", "Host to bind to")
+	)
+	flag.Parse()
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.router-sim.yaml)")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
-
-	if err := rootCmd.Execute(); err != nil {
-		log.Fatal(err)
-	}
-}
-
-func runServer(cmd *cobra.Command, args []string) {
-	// Initialize configuration
-	cfg, err := config.Load(cfgFile)
+	// Load configuration
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Set log level
-	if verbose {
-		logrus.SetLevel(logrus.DebugLevel)
-	} else {
-		logrus.SetLevel(logrus.InfoLevel)
+	// Override config with command line flags
+	cfg.API.Port = *port
+	cfg.API.Host = *host
+
+	// Initialize analytics engine
+	analyticsEngine, err := analytics.NewEngine(cfg.Analytics)
+	if err != nil {
+		log.Fatalf("Failed to initialize analytics engine: %v", err)
 	}
 
-	// Initialize CloudPods client
-	cloudpodsClient := cloudpods.NewCloudPodsClient(cloudpods.CloudPodsConfig{
-		BaseURL: cfg.CloudPods.BaseURL,
-		APIKey:  cfg.CloudPods.APIKey,
-		Timeout: cfg.CloudPods.Timeout,
-	})
+	// Initialize cloud providers
+	cloudpodsClient, err := cloudpods.NewClient(cfg.CloudPods)
+	if err != nil {
+		log.Fatalf("Failed to initialize CloudPods client: %v", err)
+	}
 
-	// Initialize Aviatrix client
-	aviatrixClient := aviatrix.NewAviatrixClient(aviatrix.AviatrixConfig{
-		BaseURL: cfg.Aviatrix.BaseURL,
-		APIKey:  cfg.Aviatrix.APIKey,
-		Timeout: cfg.Aviatrix.Timeout,
-	})
+	aviatrixClient, err := aviatrix.NewClient(cfg.Aviatrix)
+	if err != nil {
+		log.Fatalf("Failed to initialize Aviatrix client: %v", err)
+	}
 
 	// Initialize handlers
-	handlers := handlers.NewHandlers(cloudpodsClient, aviatrixClient)
+	handlers := handlers.New(analyticsEngine, cloudpodsClient, aviatrixClient)
 
-	// Initialize server
-	srv := server.NewServer(cfg, handlers)
+	// Create HTTP server
+	srv := server.New(cfg, handlers)
 
 	// Start server in a goroutine
 	go func() {
-		logrus.Infof("Starting server on %s", cfg.Server.Address)
+		log.Printf("Starting server on %s:%d", cfg.API.Host, cfg.API.Port)
 		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
-			logrus.Fatalf("Failed to start server: %v", err)
+			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()
 
@@ -88,42 +72,15 @@ func runServer(cmd *cobra.Command, args []string) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	logrus.Info("Shutting down server...")
+	log.Println("Shutting down server...")
 
-	// Give outstanding requests a deadline for completion
+	// Give outstanding requests 30 seconds to complete
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Attempt graceful shutdown
 	if err := srv.Shutdown(ctx); err != nil {
-		logrus.Fatalf("Server forced to shutdown: %v", err)
+		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
-	logrus.Info("Server exited")
-}
-
-func init() {
-	cobra.OnInitialize(initConfig)
-}
-
-func initConfig() {
-	if cfgFile != "" {
-		viper.SetConfigFile(cfgFile)
-	} else {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		viper.AddConfigPath(home)
-		viper.AddConfigPath(".")
-		viper.SetConfigName(".router-sim")
-		viper.SetConfigType("yaml")
-	}
-
-	viper.AutomaticEnv()
-
-	if err := viper.ReadInConfig(); err == nil {
-		logrus.Infof("Using config file: %s", viper.ConfigFileUsed())
-	}
+	log.Println("Server exited")
 }

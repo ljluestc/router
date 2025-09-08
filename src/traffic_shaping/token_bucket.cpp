@@ -1,255 +1,268 @@
 #include "traffic_shaping.h"
 #include <iostream>
-#include <algorithm>
 #include <chrono>
+#include <algorithm>
 
-namespace router_sim {
+namespace RouterSim {
 
-TokenBucketShaper::TokenBucketShaper() 
-    : running_(false), refill_running_(false) {
+TokenBucket::TokenBucket(uint64_t capacity, uint64_t refill_rate, uint64_t burst_size)
+    : capacity_(capacity), refill_rate_(refill_rate), burst_size_(burst_size),
+      tokens_(capacity), last_refill_time_(std::chrono::steady_clock::now()) {
 }
 
-bool TokenBucketShaper::initialize(const std::map<std::string, std::string>& config) {
-    // Parse configuration
-    auto it = config.find("rate_bps");
-    if (it != config.end()) {
-        config_.rate_bps = std::stoull(it->second);
-    }
-    
-    it = config.find("burst_size");
-    if (it != config.end()) {
-        config_.burst_size = std::stoull(it->second);
-    }
-    
-    // Set defaults if not specified
-    if (config_.rate_bps == 0) {
-        config_.rate_bps = 1000000; // 1 Mbps default
-    }
-    if (config_.burst_size == 0) {
-        config_.burst_size = 10000; // 10 KB default
-    }
-    
-    config_.current_tokens = config_.burst_size;
-    config_.last_update = std::chrono::steady_clock::now();
-    
-    return true;
+TokenBucket::~TokenBucket() {
 }
 
-bool TokenBucketShaper::start() {
-    if (running_) {
+bool TokenBucket::consume_tokens(uint64_t tokens) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // Refill tokens based on time elapsed
+    refill_tokens();
+    
+    if (tokens_ >= tokens) {
+        tokens_ -= tokens;
         return true;
-    }
-    
-    running_ = true;
-    refill_running_ = true;
-    
-    // Start token refill thread
-    refill_thread_ = std::thread(&TokenBucketShaper::token_refill_loop, this);
-    
-    return true;
-}
-
-bool TokenBucketShaper::stop() {
-    if (!running_) {
-        return true;
-    }
-    
-    running_ = false;
-    refill_running_ = false;
-    
-    if (refill_thread_.joinable()) {
-        refill_thread_.join();
-    }
-    
-    return true;
-}
-
-bool TokenBucketShaper::is_running() const {
-    return running_;
-}
-
-bool TokenBucketShaper::enqueue_packet(const PacketInfo& packet) {
-    if (!running_) {
-        return false;
-    }
-    
-    std::lock_guard<std::mutex> lock(queue_mutex_);
-    
-    // Check if queue is full (simple size limit for now)
-    const size_t MAX_QUEUE_SIZE = 1000;
-    if (packet_queue_.size() >= MAX_QUEUE_SIZE) {
-        if (queue_full_callback_) {
-            queue_full_callback_();
-        }
-        return false;
-    }
-    
-    packet_queue_.push(packet);
-    return true;
-}
-
-bool TokenBucketShaper::dequeue_packet(PacketInfo& packet, int timeout_ms) {
-    if (!running_) {
-        return false;
-    }
-    
-    auto start_time = std::chrono::steady_clock::now();
-    
-    while (running_) {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        
-        if (!packet_queue_.empty()) {
-            PacketInfo queued_packet = packet_queue_.front();
-            
-            // Check if we have enough tokens
-            if (consume_tokens(queued_packet.size)) {
-                packet = queued_packet;
-                packet_queue_.pop();
-                
-                // Update statistics
-                {
-                    std::lock_guard<std::mutex> stats_lock(stats_mutex_);
-                    statistics_.packets_processed++;
-                    statistics_.bytes_processed += packet.size;
-                }
-                
-                return true;
-            }
-        }
-        
-        // Check timeout
-        auto current_time = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_time);
-        if (elapsed.count() >= timeout_ms) {
-            break;
-        }
-        
-        // Small delay before retry
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     
     return false;
 }
 
-size_t TokenBucketShaper::queue_size() const {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
-    return packet_queue_.size();
-}
-
-bool TokenBucketShaper::is_queue_full() const {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
-    const size_t MAX_QUEUE_SIZE = 1000;
-    return packet_queue_.size() >= MAX_QUEUE_SIZE;
-}
-
-bool TokenBucketShaper::add_traffic_class(const TrafficClass& traffic_class) {
-    std::lock_guard<std::mutex> lock(classes_mutex_);
-    traffic_classes_[traffic_class.class_id] = traffic_class;
-    return true;
-}
-
-bool TokenBucketShaper::remove_traffic_class(int class_id) {
-    std::lock_guard<std::mutex> lock(classes_mutex_);
-    auto it = traffic_classes_.find(class_id);
-    if (it != traffic_classes_.end()) {
-        traffic_classes_.erase(it);
+bool TokenBucket::try_consume_tokens(uint64_t tokens) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // Refill tokens based on time elapsed
+    refill_tokens();
+    
+    if (tokens_ >= tokens) {
+        tokens_ -= tokens;
         return true;
     }
+    
     return false;
 }
 
-bool TokenBucketShaper::update_traffic_class(const TrafficClass& traffic_class) {
-    std::lock_guard<std::mutex> lock(classes_mutex_);
-    auto it = traffic_classes_.find(traffic_class.class_id);
-    if (it != traffic_classes_.end()) {
-        it->second = traffic_class;
-        return true;
-    }
-    return false;
+uint64_t TokenBucket::get_available_tokens() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // Refill tokens based on time elapsed
+    const_cast<TokenBucket*>(this)->refill_tokens();
+    
+    return tokens_;
 }
 
-std::vector<TrafficClass> TokenBucketShaper::get_traffic_classes() const {
-    std::lock_guard<std::mutex> lock(classes_mutex_);
-    std::vector<TrafficClass> classes;
-    for (const auto& pair : traffic_classes_) {
-        classes.push_back(pair.second);
-    }
-    return classes;
-}
-
-ShapingStatistics TokenBucketShaper::get_statistics() const {
-    std::lock_guard<std::mutex> lock(stats_mutex_);
-    return statistics_;
-}
-
-ShapingStatistics TokenBucketShaper::get_class_statistics(int class_id) const {
-    std::lock_guard<std::mutex> lock(stats_mutex_);
-    auto it = class_statistics_.find(class_id);
-    if (it != class_statistics_.end()) {
-        return it->second;
-    }
-    return ShapingStatistics{};
-}
-
-void TokenBucketShaper::set_packet_dropped_callback(std::function<void(const PacketInfo&)> callback) {
-    packet_dropped_callback_ = callback;
-}
-
-void TokenBucketShaper::set_queue_full_callback(std::function<void()> callback) {
-    queue_full_callback_ = callback;
-}
-
-bool TokenBucketShaper::add_tokens(uint64_t tokens) {
-    std::lock_guard<std::mutex> lock(stats_mutex_);
-    config_.current_tokens = std::min(config_.current_tokens + tokens, config_.burst_size);
-    statistics_.tokens_generated += tokens;
-    return true;
-}
-
-bool TokenBucketShaper::consume_tokens(uint64_t tokens) {
-    if (config_.current_tokens >= tokens) {
-        config_.current_tokens -= tokens;
-        {
-            std::lock_guard<std::mutex> lock(stats_mutex_);
-            statistics_.tokens_consumed += tokens;
-        }
-        return true;
-    }
-    return false;
-}
-
-uint64_t TokenBucketShaper::get_available_tokens() const {
-    return config_.current_tokens;
-}
-
-bool TokenBucketShaper::refill_tokens() {
-    auto current_time = std::chrono::steady_clock::now();
+void TokenBucket::refill_tokens() {
+    auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-        current_time - config_.last_update);
+        now - last_refill_time_).count();
     
-    // Calculate tokens to add based on elapsed time and rate
-    double elapsed_seconds = elapsed.count() / 1000000.0;
-    uint64_t tokens_to_add = static_cast<uint64_t>(config_.rate_bps * elapsed_seconds / 8.0);
+    if (elapsed > 0) {
+        // Calculate tokens to add based on elapsed time
+        uint64_t tokens_to_add = (refill_rate_ * elapsed) / 1000000; // Convert to tokens per microsecond
+        
+        // Apply burst limit
+        tokens_to_add = std::min(tokens_to_add, burst_size_);
+        
+        tokens_ = std::min(capacity_, tokens_ + tokens_to_add);
+        last_refill_time_ = now;
+    }
+}
+
+void TokenBucket::set_capacity(uint64_t capacity) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    capacity_ = capacity;
+    tokens_ = std::min(tokens_, capacity_);
+}
+
+void TokenBucket::set_refill_rate(uint64_t refill_rate) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    refill_rate_ = refill_rate;
+}
+
+void TokenBucket::set_burst_size(uint64_t burst_size) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    burst_size_ = burst_size;
+}
+
+TokenBucket::Statistics TokenBucket::get_statistics() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return stats_;
+}
+
+void TokenBucket::reset_statistics() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stats_ = Statistics();
+}
+
+// TokenBucketShaper implementation
+TokenBucketShaper::TokenBucketShaper(uint64_t rate_bps, uint64_t burst_bytes)
+    : rate_bps_(rate_bps), burst_bytes_(burst_bytes),
+      token_bucket_(burst_bytes * 8, rate_bps, burst_bytes * 8) {
+}
+
+TokenBucketShaper::~TokenBucketShaper() {
+}
+
+bool TokenBucketShaper::shape_packet(const Packet& packet) {
+    uint64_t packet_bits = packet.size * 8;
     
-    if (tokens_to_add > 0) {
-        add_tokens(tokens_to_add);
-        config_.last_update = current_time;
+    if (token_bucket_.consume_tokens(packet_bits)) {
+        stats_.packets_passed++;
+        stats_.bytes_passed += packet.size;
+        return true;
+    } else {
+        stats_.packets_dropped++;
+        stats_.bytes_dropped += packet.size;
+        return false;
+    }
+}
+
+bool TokenBucketShaper::shape_packet_non_blocking(const Packet& packet) {
+    uint64_t packet_bits = packet.size * 8;
+    
+    if (token_bucket_.try_consume_tokens(packet_bits)) {
+        stats_.packets_passed++;
+        stats_.bytes_passed += packet.size;
+        return true;
+    } else {
+        stats_.packets_dropped++;
+        stats_.bytes_dropped += packet.size;
+        return false;
+    }
+}
+
+void TokenBucketShaper::set_rate(uint64_t rate_bps) {
+    rate_bps_ = rate_bps;
+    token_bucket_.set_refill_rate(rate_bps);
+}
+
+void TokenBucketShaper::set_burst_size(uint64_t burst_bytes) {
+    burst_bytes_ = burst_bytes;
+    token_bucket_.set_capacity(burst_bytes * 8);
+    token_bucket_.set_burst_size(burst_bytes * 8);
+}
+
+TokenBucketShaper::Statistics TokenBucketShaper::get_statistics() const {
+    return stats_;
+}
+
+void TokenBucketShaper::reset_statistics() {
+    stats_ = Statistics();
+}
+
+// MultiTokenBucketShaper implementation
+MultiTokenBucketShaper::MultiTokenBucketShaper() {
+}
+
+MultiTokenBucketShaper::~MultiTokenBucketShaper() {
+}
+
+bool MultiTokenBucketShaper::add_shaper(const std::string& name, 
+                                       uint64_t rate_bps, 
+                                       uint64_t burst_bytes) {
+    std::lock_guard<std::mutex> lock(shapers_mutex_);
+    
+    auto shaper = std::make_unique<TokenBucketShaper>(rate_bps, burst_bytes);
+    shapers_[name] = std::move(shaper);
+    
+    std::cout << "Added token bucket shaper: " << name 
+              << " (rate: " << rate_bps << " bps, burst: " << burst_bytes << " bytes)" << std::endl;
+    return true;
+}
+
+bool MultiTokenBucketShaper::remove_shaper(const std::string& name) {
+    std::lock_guard<std::mutex> lock(shapers_mutex_);
+    
+    auto it = shapers_.find(name);
+    if (it != shapers_.end()) {
+        shapers_.erase(it);
+        std::cout << "Removed token bucket shaper: " << name << std::endl;
         return true;
     }
     
     return false;
 }
 
-void TokenBucketShaper::token_refill_loop() {
-    while (refill_running_) {
-        refill_tokens();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+bool MultiTokenBucketShaper::shape_packet(const std::string& shaper_name, const Packet& packet) {
+    std::lock_guard<std::mutex> lock(shapers_mutex_);
+    
+    auto it = shapers_.find(shaper_name);
+    if (it != shapers_.end()) {
+        return it->second->shape_packet(packet);
+    }
+    
+    return false;
+}
+
+bool MultiTokenBucketShaper::shape_packet_non_blocking(const std::string& shaper_name, const Packet& packet) {
+    std::lock_guard<std::mutex> lock(shapers_mutex_);
+    
+    auto it = shapers_.find(shaper_name);
+    if (it != shapers_.end()) {
+        return it->second->shape_packet_non_blocking(packet);
+    }
+    
+    return false;
+}
+
+void MultiTokenBucketShaper::set_shaper_rate(const std::string& name, uint64_t rate_bps) {
+    std::lock_guard<std::mutex> lock(shapers_mutex_);
+    
+    auto it = shapers_.find(name);
+    if (it != shapers_.end()) {
+        it->second->set_rate(rate_bps);
     }
 }
 
-bool TokenBucketShaper::process_packet(const PacketInfo& packet) {
-    // This method can be used for additional packet processing logic
-    return true;
+void MultiTokenBucketShaper::set_shaper_burst_size(const std::string& name, uint64_t burst_bytes) {
+    std::lock_guard<std::mutex> lock(shapers_mutex_);
+    
+    auto it = shapers_.find(name);
+    if (it != shapers_.end()) {
+        it->second->set_burst_size(burst_bytes);
+    }
 }
 
-} // namespace router_sim
+std::vector<std::string> MultiTokenBucketShaper::get_shaper_names() const {
+    std::lock_guard<std::mutex> lock(shapers_mutex_);
+    
+    std::vector<std::string> names;
+    for (const auto& pair : shapers_) {
+        names.push_back(pair.first);
+    }
+    return names;
+}
+
+TokenBucketShaper::Statistics MultiTokenBucketShaper::get_shaper_statistics(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(shapers_mutex_);
+    
+    auto it = shapers_.find(name);
+    if (it != shapers_.end()) {
+        return it->second->get_statistics();
+    }
+    
+    return TokenBucketShaper::Statistics();
+}
+
+MultiTokenBucketShaper::Statistics MultiTokenBucketShaper::get_total_statistics() const {
+    std::lock_guard<std::mutex> lock(shapers_mutex_);
+    
+    Statistics total;
+    for (const auto& pair : shapers_) {
+        auto stats = pair.second->get_statistics();
+        total.packets_passed += stats.packets_passed;
+        total.bytes_passed += stats.bytes_passed;
+        total.packets_dropped += stats.packets_dropped;
+        total.bytes_dropped += stats.bytes_dropped;
+    }
+    return total;
+}
+
+void MultiTokenBucketShaper::reset_all_statistics() {
+    std::lock_guard<std::mutex> lock(shapers_mutex_);
+    
+    for (const auto& pair : shapers_) {
+        pair.second->reset_statistics();
+    }
+}
+
+} // namespace RouterSim
