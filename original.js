@@ -2020,7 +2020,50 @@
                     this.log(`Found ${uniqueButtons.length} unique buttons: ${uniqueButtons.map(b => b.textContent.trim()).join(', ')}`);
                 }
                 
+                // Sort buttons by priority for Cursor IDE workflow
+                if (this.ideType === 'cursor') {
+                    return this.prioritizeButtons(uniqueButtons);
+                }
+                
                 return uniqueButtons;
+            }
+            
+            // Prioritize buttons for Cursor IDE workflow (Accept -> Keep -> Run)
+            prioritizeButtons(buttons) {
+                if (!buttons || buttons.length === 0) return buttons;
+                
+                const buttonPriorities = {
+                    'accept all': 1,
+                    'accept': 2,
+                    'keep all': 3,
+                    'keep': 4,
+                    'run command': 5,
+                    'run': 6,
+                    'apply': 7,
+                    'execute': 8,
+                    'resume': 9,
+                    'try again': 10
+                };
+                
+                return buttons.sort((a, b) => {
+                    const textA = a.textContent.toLowerCase().trim();
+                    const textB = b.textContent.toLowerCase().trim();
+                    
+                    // Find the best matching pattern for each button
+                    let priorityA = 999;
+                    let priorityB = 999;
+                    
+                    for (const [pattern, priority] of Object.entries(buttonPriorities)) {
+                        if (textA.includes(pattern)) {
+                            priorityA = Math.min(priorityA, priority);
+                        }
+                        if (textB.includes(pattern)) {
+                            priorityB = Math.min(priorityB, priority);
+                        }
+                    }
+                    
+                    return priorityA - priorityB;
+                });
             }
             
             // Find accept buttons within a specific element
@@ -2067,7 +2110,11 @@
                     'div.conversations',
                     'div[class*="conversation"]',
                     'div[class*="message"]',
-                    'div[class*="chat"]'
+                    'div[class*="chat"]',
+                    // Additional Cursor IDE specific containers
+                    'div[class*="composer"]',
+                    'div[class*="code-block"]',
+                    'div[class*="diff"]'
                 ];
                 
                 for (const selector of conversationSelectors) {
@@ -2090,11 +2137,15 @@
                     'button[class*="keep"]',
                     'div[class*="button"][class*="accept"]',
                     'div[class*="button"][class*="keep"]',
-                    // Review next file workflow buttons
-                    'button:contains("Accept")',
-                    'button:contains("Keep")',
-                    'div:contains("Accept")',
-                    'div:contains("Keep")'
+                    // More comprehensive selectors for Cursor IDE
+                    'button',
+                    'div[role="button"]',
+                    'span[role="button"]',
+                    '[class*="button"]',
+                    '[class*="btn"]',
+                    // Text-based selectors (fallback)
+                    '*[onclick]',
+                    '*[style*="cursor: pointer"]'
                 ];
                 
                 for (const selector of cursorButtonSelectors) {
@@ -2217,16 +2268,18 @@
                 
                 // Enhanced validation for Cursor IDE specific cases
                 if (this.ideType === 'cursor') {
-                    // Check for Cursor IDE specific classes or attributes
-                    const hasCursorClasses = element.className.includes('anysphere') ||
-                                           element.className.includes('cursor') ||
-                                           element.className.includes('button') ||
-                                           element.tagName.toLowerCase() === 'button';
-                    
                     // For Accept/Keep buttons, be more lenient with class detection
                     if (bestMatch.includes('accept') || bestMatch.includes('keep')) {
                         return true; // Accept/Keep buttons are valid even without specific classes
                     }
+                    
+                    // Check for Cursor IDE specific classes or attributes
+                    const hasCursorClasses = element.className.includes('anysphere') ||
+                                           element.className.includes('cursor') ||
+                                           element.className.includes('button') ||
+                                           element.tagName.toLowerCase() === 'button' ||
+                                           element.getAttribute('role') === 'button' ||
+                                           element.style.cursor === 'pointer';
                     
                     return hasCursorClasses;
                 }
@@ -2457,7 +2510,7 @@
                 }
             }
             
-            // Main execution
+            // Main execution with enhanced workflow handling
             checkAndClick() {
                 try {
                     const buttons = this.findAcceptButtons();
@@ -2467,19 +2520,76 @@
                         return;
                     }
                     
-                    // Click the first button found
+                    // Click the highest priority button found
                     const button = buttons[0];
                     const buttonText = button.textContent.trim().substring(0, 30);
+                    
+                    if (this.debugMode) {
+                        this.log(`Attempting to click: "${buttonText}" (Priority: ${this.getButtonPriority(button)})`);
+                    }
                     
                     const success = this.clickElement(button);
                     if (success) {
                         this.totalClicks++;
                         this.updatePanelStatus();
+                        
+                        // For Cursor IDE, wait for UI to update after clicking any button
+                        if (this.ideType === 'cursor') {
+                            this.logToPanel(`✓ Clicked ${buttonText} - waiting for UI update...`, 'info');
+                            // Add a small delay to allow UI to update and check for more buttons
+                            setTimeout(() => {
+                                this.checkAndClick(); // Continue checking for more buttons
+                            }, 1000);
+                        }
                     }
                     
                 } catch (error) {
                     this.log(`Error executing: ${error.message}`);
                 }
+            }
+            
+            // Check for Keep buttons after Accept workflow
+            checkForKeepButtons() {
+                try {
+                    const keepButtons = this.findAcceptButtons().filter(button => {
+                        const text = button.textContent.toLowerCase().trim();
+                        return text.includes('keep') && this.isElementVisible(button) && this.isElementClickable(button);
+                    });
+                    
+                    if (keepButtons.length > 0) {
+                        this.logToPanel(`Found ${keepButtons.length} Keep button(s) - continuing workflow`, 'info');
+                        // Continue the workflow by clicking the next button
+                        setTimeout(() => {
+                            this.checkAndClick();
+                        }, 500);
+                    }
+                } catch (error) {
+                    this.log(`Error checking for Keep buttons: ${error.message}`);
+                }
+            }
+            
+            // Get button priority for debugging
+            getButtonPriority(button) {
+                const text = button.textContent.toLowerCase().trim();
+                const priorities = {
+                    'accept all': 1,
+                    'accept': 2,
+                    'keep all': 3,
+                    'keep': 4,
+                    'run command': 5,
+                    'run': 6,
+                    'apply': 7,
+                    'execute': 8,
+                    'resume': 9,
+                    'try again': 10
+                };
+                
+                for (const [pattern, priority] of Object.entries(priorities)) {
+                    if (text.includes(pattern)) {
+                        return priority;
+                    }
+                }
+                return 999;
             }
             
             start() {

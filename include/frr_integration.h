@@ -1,6 +1,6 @@
 #pragma once
 
-#include "router_core.h"
+#include "protocol_interface.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -8,8 +8,14 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <functional>
 
 namespace RouterSim {
+
+// Forward declarations
+struct RouteInfo;
+struct NeighborInfo;
+struct FRRConfig;
 
 // FRR protocol integration
 class FRRIntegration {
@@ -18,116 +24,135 @@ public:
     ~FRRIntegration();
 
     // Initialization
-    bool initialize();
-    void shutdown();
+    bool initialize(const FRRConfig& config);
+    bool start();
+    bool stop();
+    bool is_running() const;
 
-    // BGP integration
-    bool start_bgp(const std::string& as_number, const std::string& router_id);
-    bool stop_bgp();
-    bool add_bgp_neighbor(const std::string& neighbor_ip, 
-                         const std::string& remote_as,
-                         const std::string& local_as = "");
-    bool remove_bgp_neighbor(const std::string& neighbor_ip);
-    bool advertise_network(const std::string& network, 
-                          const std::string& mask,
-                          const std::string& next_hop = "");
-    bool withdraw_network(const std::string& network, 
-                         const std::string& mask);
-    std::vector<Route> get_bgp_routes() const;
-    std::vector<Neighbor> get_bgp_neighbors() const;
+    // Protocol management
+    bool start_protocol(const std::string& protocol, const std::map<std::string, std::string>& config);
+    bool stop_protocol(const std::string& protocol);
+    bool is_protocol_running(const std::string& protocol) const;
 
-    // OSPF integration
-    bool start_ospf(const std::string& router_id, const std::string& area_id = "0.0.0.0");
-    bool stop_ospf();
-    bool add_ospf_interface(const std::string& interface, 
-                           const std::string& area_id = "0.0.0.0",
-                           int cost = 1);
+    // BGP operations
+    bool add_bgp_neighbor(const std::string& address, const std::map<std::string, std::string>& config);
+    bool remove_bgp_neighbor(const std::string& address);
+    bool advertise_bgp_route(const std::string& prefix, const std::map<std::string, std::string>& attributes);
+    bool withdraw_bgp_route(const std::string& prefix);
+    std::vector<RouteInfo> get_bgp_routes() const;
+    std::vector<NeighborInfo> get_bgp_neighbors() const;
+
+    // OSPF operations
+    bool add_ospf_interface(const std::string& interface, const std::map<std::string, std::string>& config);
     bool remove_ospf_interface(const std::string& interface);
-    bool add_ospf_network(const std::string& network, 
-                         const std::string& mask,
-                         const std::string& area_id = "0.0.0.0");
-    std::vector<Route> get_ospf_routes() const;
-    std::vector<Neighbor> get_ospf_neighbors() const;
+    bool advertise_ospf_route(const std::string& prefix, const std::map<std::string, std::string>& attributes);
+    bool withdraw_ospf_route(const std::string& prefix);
+    std::vector<RouteInfo> get_ospf_routes() const;
+    std::vector<NeighborInfo> get_ospf_neighbors() const;
 
-    // IS-IS integration
-    bool start_isis(const std::string& system_id, const std::string& area_id = "49.0001");
-    bool stop_isis();
-    bool add_isis_interface(const std::string& interface, 
-                           const std::string& level = "2");
+    // IS-IS operations
+    bool add_isis_interface(const std::string& interface, const std::map<std::string, std::string>& config);
     bool remove_isis_interface(const std::string& interface);
-    bool add_isis_network(const std::string& network, 
-                         const std::string& mask);
-    std::vector<Route> get_isis_routes() const;
-    std::vector<Neighbor> get_isis_neighbors() const;
+    bool advertise_isis_route(const std::string& prefix, const std::map<std::string, std::string>& attributes);
+    bool withdraw_isis_route(const std::string& prefix);
+    std::vector<RouteInfo> get_isis_routes() const;
+    std::vector<NeighborInfo> get_isis_neighbors() const;
 
     // Route management
-    bool install_route(const Route& route);
-    bool uninstall_route(const std::string& destination);
-    std::vector<Route> get_all_routes() const;
+    std::vector<RouteInfo> get_routes() const;
+    std::vector<RouteInfo> get_routes_by_protocol(const std::string& protocol) const;
+    std::vector<NeighborInfo> get_neighbors() const;
+    std::vector<NeighborInfo> get_neighbors_by_protocol(const std::string& protocol) const;
 
-    // Configuration management
-    bool load_config(const std::string& config_file);
-    bool save_config(const std::string& config_file);
-    std::string get_running_config() const;
+    // Statistics
+    std::map<std::string, uint64_t> get_protocol_statistics(const std::string& protocol) const;
+    std::map<std::string, uint64_t> get_bgp_statistics() const;
+    std::map<std::string, uint64_t> get_ospf_statistics() const;
+    std::map<std::string, uint64_t> get_isis_statistics() const;
 
-    // Status and monitoring
-    bool is_protocol_running(Protocol protocol) const;
-    std::map<std::string, std::string> get_protocol_status() const;
-    std::map<std::string, uint64_t> get_protocol_statistics() const;
+    // Configuration
+    bool update_config(const std::map<std::string, std::string>& config);
+    std::map<std::string, std::string> get_config() const;
+    bool save_config() const;
+    bool load_config();
 
     // Event callbacks
-    using RouteUpdateCallback = std::function<void(const Route&, bool)>;
-    using NeighborUpdateCallback = std::function<void(const Neighbor&, bool)>;
-    using ProtocolStatusCallback = std::function<void(Protocol, bool)>;
+    void set_route_update_callback(std::function<void(const RouteInfo&, bool)> callback);
+    void set_neighbor_update_callback(std::function<void(const NeighborInfo&, bool)> callback);
 
-    void set_route_update_callback(RouteUpdateCallback callback);
-    void set_neighbor_update_callback(NeighborUpdateCallback callback);
-    void set_protocol_status_callback(ProtocolStatusCallback callback);
-
-private:
-    // FRR daemon management
-    bool start_frr_daemon();
-    bool stop_frr_daemon();
-    bool is_frr_running() const;
-
-    // Protocol-specific implementations
-    bool configure_bgp();
-    bool configure_ospf();
-    bool configure_isis();
-
-    // VTY shell integration
+    // VTY interface
     bool execute_vty_command(const std::string& command);
     std::string get_vty_output(const std::string& command);
 
-    // Route parsing
-    std::vector<Route> parse_bgp_routes(const std::string& output) const;
-    std::vector<Route> parse_ospf_routes(const std::string& output) const;
-    std::vector<Route> parse_isis_routes(const std::string& output) const;
-    std::vector<Neighbor> parse_bgp_neighbors(const std::string& output) const;
-    std::vector<Neighbor> parse_ospf_neighbors(const std::string& output) const;
-    std::vector<Neighbor> parse_isis_neighbors(const std::string& output) const;
+    // Logging
+    void set_log_level(const std::string& level);
+    std::vector<std::string> get_logs() const;
+    void clear_logs();
+
+private:
+    // FRR daemon management
+    bool initialize_frr_daemon();
+    bool start_frr_daemon();
+    bool stop_frr_daemon();
+    bool is_frr_daemon_running() const;
+
+    // Configuration management
+    bool load_frr_config();
+    bool save_frr_config() const;
+    bool create_default_config() const;
+    bool validate_frr_config() const;
+
+    // VTY communication
+    bool connect_to_vty();
+    void disconnect_from_vty();
+    bool send_vty_command(const std::string& command);
+    std::string receive_vty_output();
+
+    // Event handling
+    void on_route_update(const RouteInfo& route, bool is_advertisement);
+    void on_neighbor_update(const NeighborInfo& neighbor, bool is_up);
+
+    // Logging
+    void log_message(const std::string& level, const std::string& message);
+    void parse_frr_logs();
 
     // State
-    std::atomic<bool> initialized_;
-    std::atomic<bool> frr_running_;
-    std::map<Protocol, bool> protocol_status_;
-    std::map<Protocol, std::string> protocol_configs_;
+    std::atomic<bool> running_;
+    std::atomic<bool> daemon_running_;
+    FRRConfig config_;
+    
+    // Protocol handlers
+    std::unique_ptr<router_sim::ProtocolInterface> bgp_protocol_;
+    std::unique_ptr<router_sim::ProtocolInterface> ospf_protocol_;
+    std::unique_ptr<router_sim::ProtocolInterface> isis_protocol_;
     
     // Threading
-    std::thread monitor_thread_;
-    std::atomic<bool> monitor_running_;
-    mutable std::mutex state_mutex_;
-
+    std::thread frr_daemon_thread_;
+    int vty_socket_;
+    
+    // Synchronization
+    mutable std::mutex config_mutex_;
+    mutable std::mutex logs_mutex_;
+    
     // Callbacks
-    RouteUpdateCallback route_update_callback_;
-    NeighborUpdateCallback neighbor_update_callback_;
-    ProtocolStatusCallback protocol_status_callback_;
+    std::function<void(const RouteInfo&, bool)> route_update_callback_;
+    std::function<void(const NeighborInfo&, bool)> neighbor_update_callback_;
+    
+    // Logs
+    std::vector<std::string> logs_;
+};
 
-    // Internal monitoring
-    void monitor_loop();
-    void process_route_updates();
-    void process_neighbor_updates();
-    void process_protocol_status();
+// FRR Configuration structure
+struct FRRConfig {
+    std::string config_file = "/etc/frr/frr.conf";
+    std::string log_file = "/var/log/frr/frr.log";
+    std::map<std::string, std::string> global_config;
+    std::map<std::string, std::map<std::string, std::string>> protocol_configs;
+    
+    FRRConfig() {
+        global_config["hostname"] = "router-sim";
+        global_config["log"] = "syslog informational";
+    }
 };
 
 } // namespace RouterSim
