@@ -1,56 +1,26 @@
 #include "clickhouse_client.h"
-#include <curl/curl.h>
-#include <json/json.h>
+#include <iostream>
 #include <sstream>
-#include <iomanip>
-#include <algorithm>
+#include <thread>
+#include <chrono>
+#include <cstring>
 
-namespace router_sim {
-namespace analytics {
+namespace RouterSim {
 
-ClickHouseClient::ClickHouseClient(const std::string& host, 
-                                 uint16_t port,
-                                 const std::string& database,
-                                 const std::string& username,
-                                 const std::string& password)
+ClickHouseClient::ClickHouseClient(const std::string& host, uint16_t port, const std::string& database)
     : host_(host)
     , port_(port)
     , database_(database)
-    , username_(username)
-    , password_(password)
     , connected_(false)
-    , insert_count_(0)
-    , query_count_(0)
-    , total_insert_time_ms_(0.0)
-    , total_query_time_ms_(0.0)
-    , batch_size_(1000)
-    , flush_interval_(std::chrono::milliseconds(100))
-    , max_queue_size_(10000)
-    , stop_workers_(false)
+    , total_queries_executed_(0)
+    , total_queries_failed_(0)
+    , total_bytes_sent_(0)
+    , total_bytes_received_(0)
 {
-    curl_global_init(CURL_GLOBAL_DEFAULT);
 }
 
 ClickHouseClient::~ClickHouseClient() {
-    stop_workers_ = true;
-    
-    if (metrics_worker_.joinable()) {
-        metrics_cv_.notify_all();
-        metrics_worker_.join();
-    }
-    
-    if (packet_metrics_worker_.joinable()) {
-        packet_metrics_cv_.notify_all();
-        packet_metrics_worker_.join();
-    }
-    
-    if (routing_metrics_worker_.joinable()) {
-        routing_metrics_cv_.notify_all();
-        routing_metrics_worker_.join();
-    }
-    
     disconnect();
-    curl_global_cleanup();
 }
 
 bool ClickHouseClient::connect() {
@@ -58,454 +28,466 @@ bool ClickHouseClient::connect() {
         return true;
     }
     
-    // Test connection
-    std::string test_query = "SELECT 1";
-    if (!execute_query(test_query)) {
+    std::cout << "Connecting to ClickHouse at " << host_ << ":" << port_ << std::endl;
+    
+    try {
+        // Create ClickHouse client
+        client_ = std::make_unique<clickhouse::Client>(
+            clickhouse::ClientOptions()
+                .SetHost(host_)
+                .SetPort(port_)
+                .SetDefaultDatabase(database_)
+                .SetUser("default")
+                .SetPassword("")
+                .SetPingBeforeQuery(true)
+        );
+        
+        // Test connection
+        if (testConnection()) {
+            connected_ = true;
+            std::cout << "Successfully connected to ClickHouse" << std::endl;
+            return true;
+        } else {
+            std::cerr << "Failed to connect to ClickHouse" << std::endl;
+            return false;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "ClickHouse connection error: " << e.what() << std::endl;
         return false;
     }
-    
-    connected_ = true;
-    
-    // Create tables
-    create_tables();
-    
-    // Start worker threads
-    stop_workers_ = false;
-    metrics_worker_ = std::thread(&ClickHouseClient::metrics_worker_loop, this);
-    packet_metrics_worker_ = std::thread(&ClickHouseClient::packet_metrics_worker_loop, this);
-    routing_metrics_worker_ = std::thread(&ClickHouseClient::routing_metrics_worker_loop, this);
-    
-    return true;
 }
 
 void ClickHouseClient::disconnect() {
-    if (!connected_) {
-        return;
+    if (connected_) {
+        client_.reset();
+        connected_ = false;
+        std::cout << "Disconnected from ClickHouse" << std::endl;
     }
-    
-    stop_workers_ = true;
-    connected_ = false;
 }
 
-bool ClickHouseClient::is_connected() const {
+bool ClickHouseClient::isConnected() const {
     return connected_;
 }
 
-bool ClickHouseClient::insert_metrics(const std::vector<MetricData>& metrics) {
-    if (!connected_ || metrics.empty()) {
+bool ClickHouseClient::createTables() {
+    if (!connected_) {
+        std::cerr << "Not connected to ClickHouse" << std::endl;
         return false;
     }
     
-    auto start = std::chrono::high_resolution_clock::now();
+    std::cout << "Creating ClickHouse tables..." << std::endl;
     
-    std::string data = serialize_metrics(metrics);
-    bool result = execute_insert("metrics", data);
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    
-    if (result) {
-        insert_count_ += metrics.size();
-        total_insert_time_ms_ += duration.count() / 1000.0;
+    try {
+        // Create router_metrics table
+        std::string create_metrics_table = R"(
+            CREATE TABLE IF NOT EXISTS router_metrics (
+                timestamp DateTime64(3),
+                router_id String,
+                interface_name String,
+                metric_name String,
+                metric_value Float64,
+                tags Map(String, String)
+            ) ENGINE = MergeTree()
+            ORDER BY (timestamp, router_id, interface_name, metric_name)
+            TTL timestamp + INTERVAL 30 DAY
+        )";
+        
+        if (!executeQuery(create_metrics_table)) {
+            return false;
+        }
+        
+        // Create packet_analytics table
+        std::string create_packets_table = R"(
+            CREATE TABLE IF NOT EXISTS packet_analytics (
+                timestamp DateTime64(3),
+                router_id String,
+                interface_name String,
+                source_ip String,
+                dest_ip String,
+                source_port UInt16,
+                dest_port UInt16,
+                protocol UInt8,
+                packet_size UInt32,
+                packet_count UInt64,
+                bytes_transferred UInt64
+            ) ENGINE = MergeTree()
+            ORDER BY (timestamp, router_id, interface_name, source_ip, dest_ip)
+            TTL timestamp + INTERVAL 7 DAY
+        )";
+        
+        if (!executeQuery(create_packets_table)) {
+            return false;
+        }
+        
+        // Create routing_events table
+        std::string create_routing_table = R"(
+            CREATE TABLE IF NOT EXISTS routing_events (
+                timestamp DateTime64(3),
+                router_id String,
+                event_type String,
+                protocol String,
+                destination String,
+                gateway String,
+                interface String,
+                metric UInt32,
+                action String,
+                details Map(String, String)
+            ) ENGINE = MergeTree()
+            ORDER BY (timestamp, router_id, event_type, protocol)
+            TTL timestamp + INTERVAL 14 DAY
+        )";
+        
+        if (!executeQuery(create_routing_table)) {
+            return false;
+        }
+        
+        // Create traffic_shaping_events table
+        std::string create_shaping_table = R"(
+            CREATE TABLE IF NOT EXISTS traffic_shaping_events (
+                timestamp DateTime64(3),
+                router_id String,
+                interface_name String,
+                shaping_type String,
+                queue_id UInt32,
+                packets_processed UInt64,
+                bytes_processed UInt64,
+                packets_dropped UInt64,
+                bytes_dropped UInt64,
+                utilization_percentage Float64
+            ) ENGINE = MergeTree()
+            ORDER BY (timestamp, router_id, interface_name, shaping_type)
+            TTL timestamp + INTERVAL 7 DAY
+        )";
+        
+        if (!executeQuery(create_shaping_table)) {
+            return false;
+        }
+        
+        std::cout << "ClickHouse tables created successfully" << std::endl;
+        return true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error creating ClickHouse tables: " << e.what() << std::endl;
+        return false;
     }
-    
-    return result;
 }
 
-bool ClickHouseClient::insert_packet_metrics(const std::vector<PacketMetrics>& metrics) {
-    if (!connected_ || metrics.empty()) {
+bool ClickHouseClient::insertMetric(const Metric& metric) {
+    if (!connected_) {
         return false;
     }
     
-    auto start = std::chrono::high_resolution_clock::now();
-    
-    std::string data = serialize_packet_metrics(metrics);
-    bool result = execute_insert("packet_metrics", data);
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    
-    if (result) {
-        insert_count_ += metrics.size();
-        total_insert_time_ms_ += duration.count() / 1000.0;
+    try {
+        clickhouse::Block block;
+        
+        // Add columns
+        block.AppendColumn("timestamp", std::make_shared<clickhouse::ColumnDateTime64>(3));
+        block.AppendColumn("router_id", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("interface_name", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("metric_name", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("metric_value", std::make_shared<clickhouse::ColumnFloat64>());
+        block.AppendColumn("tags", std::make_shared<clickhouse::ColumnMap>(
+            std::make_shared<clickhouse::ColumnString>(),
+            std::make_shared<clickhouse::ColumnString>()
+        ));
+        
+        // Add data
+        auto timestamp_col = block[0]->As<clickhouse::ColumnDateTime64>();
+        auto router_id_col = block[1]->As<clickhouse::ColumnString>();
+        auto interface_col = block[2]->As<clickhouse::ColumnString>();
+        auto metric_name_col = block[3]->As<clickhouse::ColumnString>();
+        auto metric_value_col = block[4]->As<clickhouse::ColumnFloat64>();
+        auto tags_col = block[5]->As<clickhouse::ColumnMap>();
+        
+        timestamp_col->Append(metric.timestamp);
+        router_id_col->Append(metric.router_id);
+        interface_col->Append(metric.interface_name);
+        metric_name_col->Append(metric.metric_name);
+        metric_value_col->Append(metric.metric_value);
+        
+        // Add tags
+        clickhouse::ColumnString tag_keys, tag_values;
+        for (const auto& tag : metric.tags) {
+            tag_keys.Append(tag.first);
+            tag_values.Append(tag.second);
+        }
+        tags_col->Append(tag_keys, tag_values);
+        
+        // Insert data
+        client_->Insert("router_metrics", block);
+        
+        total_queries_executed_++;
+        return true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error inserting metric: " << e.what() << std::endl;
+        total_queries_failed_++;
+        return false;
     }
-    
-    return result;
 }
 
-bool ClickHouseClient::insert_routing_metrics(const std::vector<RoutingMetrics>& metrics) {
-    if (!connected_ || metrics.empty()) {
+bool ClickHouseClient::insertPacketAnalytics(const PacketAnalytics& analytics) {
+    if (!connected_) {
         return false;
     }
     
-    auto start = std::chrono::high_resolution_clock::now();
-    
-    std::string data = serialize_routing_metrics(metrics);
-    bool result = execute_insert("routing_metrics", data);
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    
-    if (result) {
-        insert_count_ += metrics.size();
-        total_insert_time_ms_ += duration.count() / 1000.0;
-    }
-    
-    return result;
-}
-
-void ClickHouseClient::async_insert_metrics(const std::vector<MetricData>& metrics) {
-    if (!connected_ || metrics.empty()) {
-        return;
-    }
-    
-    std::lock_guard<std::mutex> lock(metrics_mutex_);
-    if (metrics_queue_.size() < max_queue_size_) {
-        metrics_queue_.push(metrics);
-        metrics_cv_.notify_one();
-    }
-}
-
-void ClickHouseClient::async_insert_packet_metrics(const std::vector<PacketMetrics>& metrics) {
-    if (!connected_ || metrics.empty()) {
-        return;
-    }
-    
-    std::lock_guard<std::mutex> lock(packet_metrics_mutex_);
-    if (packet_metrics_queue_.size() < max_queue_size_) {
-        packet_metrics_queue_.push(metrics);
-        packet_metrics_cv_.notify_one();
-    }
-}
-
-void ClickHouseClient::async_insert_routing_metrics(const std::vector<RoutingMetrics>& metrics) {
-    if (!connected_ || metrics.empty()) {
-        return;
-    }
-    
-    std::lock_guard<std::mutex> lock(routing_metrics_mutex_);
-    if (routing_metrics_queue_.size() < max_queue_size_) {
-        routing_metrics_queue_.push(metrics);
-        routing_metrics_cv_.notify_one();
-    }
-}
-
-std::vector<MetricData> ClickHouseClient::query_metrics(const std::string& query) {
-    // Implementation for querying metrics
-    // This would parse the ClickHouse response and return MetricData objects
-    return {};
-}
-
-std::vector<PacketMetrics> ClickHouseClient::query_packet_metrics(const std::string& query) {
-    // Implementation for querying packet metrics
-    return {};
-}
-
-std::vector<RoutingMetrics> ClickHouseClient::query_routing_metrics(const std::string& query) {
-    // Implementation for querying routing metrics
-    return {};
-}
-
-uint64_t ClickHouseClient::get_insert_count() const {
-    return insert_count_.load();
-}
-
-uint64_t ClickHouseClient::get_query_count() const {
-    return query_count_.load();
-}
-
-double ClickHouseClient::get_avg_insert_time_ms() const {
-    uint64_t count = insert_count_.load();
-    return count > 0 ? total_insert_time_ms_.load() / count : 0.0;
-}
-
-double ClickHouseClient::get_avg_query_time_ms() const {
-    uint64_t count = query_count_.load();
-    return count > 0 ? total_query_time_ms_.load() / count : 0.0;
-}
-
-void ClickHouseClient::set_batch_size(size_t size) {
-    batch_size_ = size;
-}
-
-void ClickHouseClient::set_flush_interval(std::chrono::milliseconds interval) {
-    flush_interval_ = interval;
-}
-
-void ClickHouseClient::set_max_queue_size(size_t size) {
-    max_queue_size_ = size;
-}
-
-void ClickHouseClient::metrics_worker_loop() {
-    std::vector<MetricData> batch;
-    batch.reserve(batch_size_);
-    
-    while (!stop_workers_) {
-        std::unique_lock<std::mutex> lock(metrics_mutex_);
+    try {
+        clickhouse::Block block;
         
-        if (metrics_queue_.empty()) {
-            metrics_cv_.wait_for(lock, flush_interval_);
-            if (metrics_queue_.empty() && !batch.empty()) {
-                // Flush remaining batch
-                insert_metrics(batch);
-                batch.clear();
-            }
-            continue;
-        }
+        // Add columns
+        block.AppendColumn("timestamp", std::make_shared<clickhouse::ColumnDateTime64>(3));
+        block.AppendColumn("router_id", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("interface_name", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("source_ip", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("dest_ip", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("source_port", std::make_shared<clickhouse::ColumnUInt16>());
+        block.AppendColumn("dest_port", std::make_shared<clickhouse::ColumnUInt16>());
+        block.AppendColumn("protocol", std::make_shared<clickhouse::ColumnUInt8>());
+        block.AppendColumn("packet_size", std::make_shared<clickhouse::ColumnUInt32>());
+        block.AppendColumn("packet_count", std::make_shared<clickhouse::ColumnUInt64>());
+        block.AppendColumn("bytes_transferred", std::make_shared<clickhouse::ColumnUInt64>());
         
-        // Collect batch
-        while (!metrics_queue_.empty() && batch.size() < batch_size_) {
-            const auto& metrics = metrics_queue_.front();
-            batch.insert(batch.end(), metrics.begin(), metrics.end());
-            metrics_queue_.pop();
-        }
+        // Add data
+        auto timestamp_col = block[0]->As<clickhouse::ColumnDateTime64>();
+        auto router_id_col = block[1]->As<clickhouse::ColumnString>();
+        auto interface_col = block[2]->As<clickhouse::ColumnString>();
+        auto source_ip_col = block[3]->As<clickhouse::ColumnString>();
+        auto dest_ip_col = block[4]->As<clickhouse::ColumnString>();
+        auto source_port_col = block[5]->As<clickhouse::ColumnUInt16>();
+        auto dest_port_col = block[6]->As<clickhouse::ColumnUInt16>();
+        auto protocol_col = block[7]->As<clickhouse::ColumnUInt8>();
+        auto packet_size_col = block[8]->As<clickhouse::ColumnUInt32>();
+        auto packet_count_col = block[9]->As<clickhouse::ColumnUInt64>();
+        auto bytes_col = block[10]->As<clickhouse::ColumnUInt64>();
         
-        lock.unlock();
+        timestamp_col->Append(analytics.timestamp);
+        router_id_col->Append(analytics.router_id);
+        interface_col->Append(analytics.interface_name);
+        source_ip_col->Append(analytics.source_ip);
+        dest_ip_col->Append(analytics.dest_ip);
+        source_port_col->Append(analytics.source_port);
+        dest_port_col->Append(analytics.dest_port);
+        protocol_col->Append(analytics.protocol);
+        packet_size_col->Append(analytics.packet_size);
+        packet_count_col->Append(analytics.packet_count);
+        bytes_col->Append(analytics.bytes_transferred);
         
-        if (!batch.empty()) {
-            insert_metrics(batch);
-            batch.clear();
-        }
+        // Insert data
+        client_->Insert("packet_analytics", block);
+        
+        total_queries_executed_++;
+        return true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error inserting packet analytics: " << e.what() << std::endl;
+        total_queries_failed_++;
+        return false;
     }
 }
 
-void ClickHouseClient::packet_metrics_worker_loop() {
-    std::vector<PacketMetrics> batch;
-    batch.reserve(batch_size_);
-    
-    while (!stop_workers_) {
-        std::unique_lock<std::mutex> lock(packet_metrics_mutex_);
-        
-        if (packet_metrics_queue_.empty()) {
-            packet_metrics_cv_.wait_for(lock, flush_interval_);
-            if (packet_metrics_queue_.empty() && !batch.empty()) {
-                insert_packet_metrics(batch);
-                batch.clear();
-            }
-            continue;
-        }
-        
-        while (!packet_metrics_queue_.empty() && batch.size() < batch_size_) {
-            const auto& metrics = packet_metrics_queue_.front();
-            batch.insert(batch.end(), metrics.begin(), metrics.end());
-            packet_metrics_queue_.pop();
-        }
-        
-        lock.unlock();
-        
-        if (!batch.empty()) {
-            insert_packet_metrics(batch);
-            batch.clear();
-        }
-    }
-}
-
-void ClickHouseClient::routing_metrics_worker_loop() {
-    std::vector<RoutingMetrics> batch;
-    batch.reserve(batch_size_);
-    
-    while (!stop_workers_) {
-        std::unique_lock<std::mutex> lock(routing_metrics_mutex_);
-        
-        if (routing_metrics_queue_.empty()) {
-            routing_metrics_cv_.wait_for(lock, flush_interval_);
-            if (routing_metrics_queue_.empty() && !batch.empty()) {
-                insert_routing_metrics(batch);
-                batch.clear();
-            }
-            continue;
-        }
-        
-        while (!routing_metrics_queue_.empty() && batch.size() < batch_size_) {
-            const auto& metrics = routing_metrics_queue_.front();
-            batch.insert(batch.end(), metrics.begin(), metrics.end());
-            routing_metrics_queue_.pop();
-        }
-        
-        lock.unlock();
-        
-        if (!batch.empty()) {
-            insert_routing_metrics(batch);
-            batch.clear();
-        }
-    }
-}
-
-bool ClickHouseClient::execute_query(const std::string& query) {
-    CURL* curl = curl_easy_init();
-    if (!curl) {
+bool ClickHouseClient::insertRoutingEvent(const RoutingEvent& event) {
+    if (!connected_) {
         return false;
     }
     
-    std::string url = "http://" + host_ + ":" + std::to_string(port_) + "/";
-    std::string post_data = query;
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, post_data.length());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, [](void* contents, size_t size, size_t nmemb, void* userp) {
-        return size * nmemb;
-    });
-    
-    CURLcode res = curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
-    
-    return res == CURLE_OK;
+    try {
+        clickhouse::Block block;
+        
+        // Add columns
+        block.AppendColumn("timestamp", std::make_shared<clickhouse::ColumnDateTime64>(3));
+        block.AppendColumn("router_id", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("event_type", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("protocol", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("destination", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("gateway", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("interface", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("metric", std::make_shared<clickhouse::ColumnUInt32>());
+        block.AppendColumn("action", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("details", std::make_shared<clickhouse::ColumnMap>(
+            std::make_shared<clickhouse::ColumnString>(),
+            std::make_shared<clickhouse::ColumnString>()
+        ));
+        
+        // Add data
+        auto timestamp_col = block[0]->As<clickhouse::ColumnDateTime64>();
+        auto router_id_col = block[1]->As<clickhouse::ColumnString>();
+        auto event_type_col = block[2]->As<clickhouse::ColumnString>();
+        auto protocol_col = block[3]->As<clickhouse::ColumnString>();
+        auto destination_col = block[4]->As<clickhouse::ColumnString>();
+        auto gateway_col = block[5]->As<clickhouse::ColumnString>();
+        auto interface_col = block[6]->As<clickhouse::ColumnString>();
+        auto metric_col = block[7]->As<clickhouse::ColumnUInt32>();
+        auto action_col = block[8]->As<clickhouse::ColumnString>();
+        auto details_col = block[9]->As<clickhouse::ColumnMap>();
+        
+        timestamp_col->Append(event.timestamp);
+        router_id_col->Append(event.router_id);
+        event_type_col->Append(event.event_type);
+        protocol_col->Append(event.protocol);
+        destination_col->Append(event.destination);
+        gateway_col->Append(event.gateway);
+        interface_col->Append(event.interface);
+        metric_col->Append(event.metric);
+        action_col->Append(event.action);
+        
+        // Add details
+        clickhouse::ColumnString detail_keys, detail_values;
+        for (const auto& detail : event.details) {
+            detail_keys.Append(detail.first);
+            detail_values.Append(detail.second);
+        }
+        details_col->Append(detail_keys, detail_values);
+        
+        // Insert data
+        client_->Insert("routing_events", block);
+        
+        total_queries_executed_++;
+        return true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error inserting routing event: " << e.what() << std::endl;
+        total_queries_failed_++;
+        return false;
+    }
 }
 
-bool ClickHouseClient::execute_insert(const std::string& table, const std::string& data) {
-    CURL* curl = curl_easy_init();
-    if (!curl) {
+bool ClickHouseClient::insertTrafficShapingEvent(const TrafficShapingEvent& event) {
+    if (!connected_) {
         return false;
     }
     
-    std::string url = "http://" + host_ + ":" + std::to_string(port_) + "/?database=" + database_ + "&query=INSERT INTO " + table + " FORMAT JSONEachRow";
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, data.length());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, [](void* contents, size_t size, size_t nmemb, void* userp) {
-        return size * nmemb;
-    });
-    
-    CURLcode res = curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
-    
-    return res == CURLE_OK;
+    try {
+        clickhouse::Block block;
+        
+        // Add columns
+        block.AppendColumn("timestamp", std::make_shared<clickhouse::ColumnDateTime64>(3));
+        block.AppendColumn("router_id", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("interface_name", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("shaping_type", std::make_shared<clickhouse::ColumnString>());
+        block.AppendColumn("queue_id", std::make_shared<clickhouse::ColumnUInt32>());
+        block.AppendColumn("packets_processed", std::make_shared<clickhouse::ColumnUInt64>());
+        block.AppendColumn("bytes_processed", std::make_shared<clickhouse::ColumnUInt64>());
+        block.AppendColumn("packets_dropped", std::make_shared<clickhouse::ColumnUInt64>());
+        block.AppendColumn("bytes_dropped", std::make_shared<clickhouse::ColumnUInt64>());
+        block.AppendColumn("utilization_percentage", std::make_shared<clickhouse::ColumnFloat64>());
+        
+        // Add data
+        auto timestamp_col = block[0]->As<clickhouse::ColumnDateTime64>();
+        auto router_id_col = block[1]->As<clickhouse::ColumnString>();
+        auto interface_col = block[2]->As<clickhouse::ColumnString>();
+        auto shaping_type_col = block[3]->As<clickhouse::ColumnString>();
+        auto queue_id_col = block[4]->As<clickhouse::ColumnUInt32>();
+        auto packets_processed_col = block[5]->As<clickhouse::ColumnUInt64>();
+        auto bytes_processed_col = block[6]->As<clickhouse::ColumnUInt64>();
+        auto packets_dropped_col = block[7]->As<clickhouse::ColumnUInt64>();
+        auto bytes_dropped_col = block[8]->As<clickhouse::ColumnUInt64>();
+        auto utilization_col = block[9]->As<clickhouse::ColumnFloat64>();
+        
+        timestamp_col->Append(event.timestamp);
+        router_id_col->Append(event.router_id);
+        interface_col->Append(event.interface_name);
+        shaping_type_col->Append(event.shaping_type);
+        queue_id_col->Append(event.queue_id);
+        packets_processed_col->Append(event.packets_processed);
+        bytes_processed_col->Append(event.bytes_processed);
+        packets_dropped_col->Append(event.packets_dropped);
+        bytes_dropped_col->Append(event.bytes_dropped);
+        utilization_col->Append(event.utilization_percentage);
+        
+        // Insert data
+        client_->Insert("traffic_shaping_events", block);
+        
+        total_queries_executed_++;
+        return true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error inserting traffic shaping event: " << e.what() << std::endl;
+        total_queries_failed_++;
+        return false;
+    }
 }
 
-std::string ClickHouseClient::serialize_metrics(const std::vector<MetricData>& metrics) {
-    std::ostringstream oss;
+std::vector<Metric> ClickHouseClient::queryMetrics(const std::string& query) {
+    std::vector<Metric> metrics;
     
-    for (const auto& metric : metrics) {
-        Json::Value json;
-        json["name"] = metric.name;
-        json["value"] = metric.value;
-        json["labels"] = metric.labels;
-        json["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
-            metric.timestamp.time_since_epoch()).count();
-        json["source"] = metric.source;
-        json["type"] = metric.type;
-        
-        Json::StreamWriterBuilder builder;
-        builder["indentation"] = "";
-        std::unique_ptr<Json::StreamWriter> writer(builder.newStreamWriter());
-        writer->write(json, &oss);
-        oss << "\n";
+    if (!connected_) {
+        return metrics;
     }
     
-    return oss.str();
+    try {
+        clickhouse::Block block;
+        client_->Select(query, &block);
+        
+        // Parse results (simplified implementation)
+        // In a real implementation, you would parse the block and convert to Metric objects
+        
+        total_queries_executed_++;
+        return metrics;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error querying metrics: " << e.what() << std::endl;
+        total_queries_failed_++;
+        return metrics;
+    }
 }
 
-std::string ClickHouseClient::serialize_packet_metrics(const std::vector<PacketMetrics>& metrics) {
-    std::ostringstream oss;
-    
-    for (const auto& metric : metrics) {
-        Json::Value json;
-        json["total_packets"] = metric.total_packets;
-        json["bytes_transferred"] = metric.bytes_transferred;
-        json["packets_dropped"] = metric.packets_dropped;
-        json["packets_duplicated"] = metric.packets_duplicated;
-        json["packets_reordered"] = metric.packets_reordered;
-        json["avg_latency_ms"] = metric.avg_latency_ms;
-        json["max_latency_ms"] = metric.max_latency_ms;
-        json["min_latency_ms"] = metric.min_latency_ms;
-        json["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
-            metric.timestamp.time_since_epoch()).count();
-        
-        Json::StreamWriterBuilder builder;
-        builder["indentation"] = "";
-        std::unique_ptr<Json::StreamWriter> writer(builder.newStreamWriter());
-        writer->write(json, &oss);
-        oss << "\n";
+bool ClickHouseClient::executeQuery(const std::string& query) {
+    if (!connected_) {
+        return false;
     }
     
-    return oss.str();
+    try {
+        client_->Execute(query);
+        total_queries_executed_++;
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Error executing query: " << e.what() << std::endl;
+        total_queries_failed_++;
+        return false;
+    }
 }
 
-std::string ClickHouseClient::serialize_routing_metrics(const std::vector<RoutingMetrics>& metrics) {
-    std::ostringstream oss;
+bool ClickHouseClient::testConnection() {
+    try {
+        std::string query = "SELECT 1";
+        client_->Execute(query);
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "ClickHouse connection test failed: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+ClickHouseClient::Statistics ClickHouseClient::getStatistics() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     
-    for (const auto& metric : metrics) {
-        Json::Value json;
-        json["total_routes"] = metric.total_routes;
-        json["bgp_routes"] = metric.bgp_routes;
-        json["ospf_routes"] = metric.ospf_routes;
-        json["isis_routes"] = metric.isis_routes;
-        json["static_routes"] = metric.static_routes;
-        json["route_changes"] = metric.route_changes;
-        json["convergence_time_ms"] = metric.convergence_time_ms;
-        json["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
-            metric.timestamp.time_since_epoch()).count();
-        
-        Json::StreamWriterBuilder builder;
-        builder["indentation"] = "";
-        std::unique_ptr<Json::StreamWriter> writer(builder.newStreamWriter());
-        writer->write(json, &oss);
-        oss << "\n";
+    Statistics stats;
+    stats.connected = connected_;
+    stats.host = host_;
+    stats.port = port_;
+    stats.database = database_;
+    stats.total_queries_executed = total_queries_executed_;
+    stats.total_queries_failed = total_queries_failed_;
+    stats.total_bytes_sent = total_bytes_sent_;
+    stats.total_bytes_received = total_bytes_received_;
+    
+    if (total_queries_executed_ + total_queries_failed_ > 0) {
+        stats.success_rate = (double)total_queries_executed_ / 
+                           (total_queries_executed_ + total_queries_failed_) * 100.0;
+    } else {
+        stats.success_rate = 0.0;
     }
     
-    return oss.str();
+    return stats;
 }
 
-void ClickHouseClient::create_tables() {
-    create_metrics_table();
-    create_packet_metrics_table();
-    create_routing_metrics_table();
-}
-
-void ClickHouseClient::create_metrics_table() {
-    std::string query = R"(
-        CREATE TABLE IF NOT EXISTS metrics (
-            name String,
-            value String,
-            labels String,
-            timestamp UInt64,
-            source String,
-            type String
-        ) ENGINE = MergeTree()
-        ORDER BY (timestamp, name)
-    )";
+void ClickHouseClient::reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
     
-    execute_query(query);
+    total_queries_executed_ = 0;
+    total_queries_failed_ = 0;
+    total_bytes_sent_ = 0;
+    total_bytes_received_ = 0;
 }
 
-void ClickHouseClient::create_packet_metrics_table() {
-    std::string query = R"(
-        CREATE TABLE IF NOT EXISTS packet_metrics (
-            total_packets UInt64,
-            bytes_transferred UInt64,
-            packets_dropped UInt64,
-            packets_duplicated UInt64,
-            packets_reordered UInt64,
-            avg_latency_ms Float64,
-            max_latency_ms Float64,
-            min_latency_ms Float64,
-            timestamp UInt64
-        ) ENGINE = MergeTree()
-        ORDER BY timestamp
-    )";
-    
-    execute_query(query);
-}
-
-void ClickHouseClient::create_routing_metrics_table() {
-    std::string query = R"(
-        CREATE TABLE IF NOT EXISTS routing_metrics (
-            total_routes UInt64,
-            bgp_routes UInt64,
-            ospf_routes UInt64,
-            isis_routes UInt64,
-            static_routes UInt64,
-            route_changes UInt64,
-            convergence_time_ms Float64,
-            timestamp UInt64
-        ) ENGINE = MergeTree()
-        ORDER BY timestamp
-    )";
-    
-    execute_query(query);
-}
-
-} // namespace analytics
-} // namespace router_sim
+} // namespace RouterSim

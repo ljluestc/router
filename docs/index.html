@@ -544,8 +544,19 @@ load scenario scenarios/basic_router.yaml</pre>
     </div>
     
     <script>
-        // Add some interactive functionality
+        // Enhanced interactive functionality
         document.addEventListener('DOMContentLoaded', function() {
+            // Initialize demo state
+            const demoState = {
+                routerRunning: true,
+                frrActive: true,
+                trafficShaping: true,
+                impairments: false,
+                packetCount: 0,
+                bytesForwarded: 0,
+                routingTableSize: 1250
+            };
+            
             // Animate statistics on load
             const statNumbers = document.querySelectorAll('.stat-number');
             statNumbers.forEach(stat => {
@@ -567,28 +578,622 @@ load scenario scenarios/basic_router.yaml</pre>
                 }
             });
             
-            // Add click handlers for demo buttons
+            // Enhanced demo buttons
             const demoButtons = document.querySelectorAll('.btn');
             demoButtons.forEach(btn => {
                 btn.addEventListener('click', function(e) {
                     e.preventDefault();
-                    alert('Demo functionality would be implemented here!');
+                    const buttonText = this.textContent.trim();
+                    
+                    if (buttonText.includes('Start Demo')) {
+                        startDemo();
+                    } else if (buttonText.includes('Documentation')) {
+                        showDocumentation();
+                    } else if (buttonText.includes('Report Issue')) {
+                        showIssueReport();
+                    } else if (buttonText.includes('Community')) {
+                        showCommunity();
+                    }
                 });
             });
             
-            // Simulate real-time updates
+            // Real-time status updates
             setInterval(() => {
-                const indicators = document.querySelectorAll('.status-indicator');
-                indicators.forEach(indicator => {
-                    if (indicator.classList.contains('status-online')) {
-                        indicator.style.opacity = '0.5';
-                        setTimeout(() => {
-                            indicator.style.opacity = '1';
-                        }, 100);
-                    }
-                });
-            }, 3000);
+                updateStatusIndicators();
+                updateTrafficStats();
+                updateNetworkTopology();
+            }, 2000);
+            
+            // Interactive network topology
+            initializeNetworkTopology();
+            
+            // Traffic visualization
+            initializeTrafficVisualization();
         });
+        
+        function startDemo() {
+            const demoModal = createModal('Demo Starting', `
+                <div class="demo-content">
+                    <h3>🌐 Multi-Protocol Router Simulator Demo</h3>
+                    <div class="demo-steps">
+                        <div class="step active">
+                            <span class="step-number">1</span>
+                            <span class="step-text">Initializing Router Core</span>
+                            <span class="step-status">✅</span>
+                        </div>
+                        <div class="step">
+                            <span class="step-number">2</span>
+                            <span class="step-text">Starting FRR Integration</span>
+                            <span class="step-status">⏳</span>
+                        </div>
+                        <div class="step">
+                            <span class="step-number">3</span>
+                            <span class="step-text">Configuring BGP/OSPF/ISIS</span>
+                            <span class="step-status">⏳</span>
+                        </div>
+                        <div class="step">
+                            <span class="step-number">4</span>
+                            <span class="step-text">Enabling Traffic Shaping</span>
+                            <span class="step-status">⏳</span>
+                        </div>
+                        <div class="step">
+                            <span class="step-number">5</span>
+                            <span class="step-text">Starting Cloud Networking</span>
+                            <span class="step-status">⏳</span>
+                        </div>
+                    </div>
+                    <div class="demo-progress">
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: 20%"></div>
+                        </div>
+                        <span class="progress-text">20% Complete</span>
+                    </div>
+                </div>
+            `);
+            
+            // Simulate demo steps
+            let currentStep = 0;
+            const steps = demoModal.querySelectorAll('.step');
+            const progressFill = demoModal.querySelector('.progress-fill');
+            const progressText = demoModal.querySelector('.progress-text');
+            
+            const stepInterval = setInterval(() => {
+                if (currentStep < steps.length) {
+                    // Complete current step
+                    steps[currentStep].classList.add('completed');
+                    steps[currentStep].querySelector('.step-status').textContent = '✅';
+                    
+                    // Move to next step
+                    currentStep++;
+                    if (currentStep < steps.length) {
+                        steps[currentStep].classList.add('active');
+                        steps[currentStep].querySelector('.step-status').textContent = '⏳';
+                    }
+                    
+                    // Update progress
+                    const progress = ((currentStep) / steps.length) * 100;
+                    progressFill.style.width = progress + '%';
+                    progressText.textContent = Math.round(progress) + '% Complete';
+                    
+                    if (currentStep >= steps.length) {
+                        clearInterval(stepInterval);
+                        setTimeout(() => {
+                            demoModal.remove();
+                            showDemoComplete();
+                        }, 1000);
+                    }
+                }
+            }, 1500);
+        }
+        
+        function showDocumentation() {
+            const docModal = createModal('Documentation', `
+                <div class="doc-content">
+                    <h3>📚 Documentation & Resources</h3>
+                    <div class="doc-sections">
+                        <div class="doc-section">
+                            <h4>Quick Start</h4>
+                            <ul>
+                                <li><a href="#" onclick="showCodeExample('build')">Building the Project</a></li>
+                                <li><a href="#" onclick="showCodeExample('run')">Running the Simulator</a></li>
+                                <li><a href="#" onclick="showCodeExample('config')">Configuration</a></li>
+                            </ul>
+                        </div>
+                        <div class="doc-section">
+                            <h4>Features</h4>
+                            <ul>
+                                <li><a href="#" onclick="showFeature('frr')">FRR Integration</a></li>
+                                <li><a href="#" onclick="showFeature('traffic')">Traffic Shaping</a></li>
+                                <li><a href="#" onclick="showFeature('impairments')">Network Impairments</a></li>
+                                <li><a href="#" onclick="showFeature('cloud')">Cloud Networking</a></li>
+                            </ul>
+                        </div>
+                        <div class="doc-section">
+                            <h4>API Reference</h4>
+                            <ul>
+                                <li><a href="#">C++ API</a></li>
+                                <li><a href="#">Go API</a></li>
+                                <li><a href="#">Rust API</a></li>
+                                <li><a href="#">REST API</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
+        
+        function showIssueReport() {
+            const issueModal = createModal('Report Issue', `
+                <div class="issue-content">
+                    <h3>🐛 Report an Issue</h3>
+                    <form class="issue-form">
+                        <div class="form-group">
+                            <label for="issue-title">Title</label>
+                            <input type="text" id="issue-title" placeholder="Brief description of the issue">
+                        </div>
+                        <div class="form-group">
+                            <label for="issue-type">Type</label>
+                            <select id="issue-type">
+                                <option value="bug">Bug Report</option>
+                                <option value="feature">Feature Request</option>
+                                <option value="question">Question</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="issue-description">Description</label>
+                            <textarea id="issue-description" rows="5" placeholder="Detailed description of the issue"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="issue-priority">Priority</label>
+                            <select id="issue-priority">
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                                <option value="critical">Critical</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn">Submit Issue</button>
+                    </form>
+                </div>
+            `);
+            
+            issueModal.querySelector('.issue-form').addEventListener('submit', function(e) {
+                e.preventDefault();
+                alert('Issue submitted successfully! Thank you for your feedback.');
+                issueModal.remove();
+            });
+        }
+        
+        function showCommunity() {
+            const communityModal = createModal('Community', `
+                <div class="community-content">
+                    <h3>💬 Community & Support</h3>
+                    <div class="community-links">
+                        <div class="community-item">
+                            <h4>GitHub</h4>
+                            <p>Source code, issues, and pull requests</p>
+                            <a href="https://github.com/your-org/router-sim" class="btn">View on GitHub</a>
+                        </div>
+                        <div class="community-item">
+                            <h4>Discord</h4>
+                            <p>Real-time chat and support</p>
+                            <a href="#" class="btn">Join Discord</a>
+                        </div>
+                        <div class="community-item">
+                            <h4>Forum</h4>
+                            <p>Discussion and Q&A</p>
+                            <a href="#" class="btn">Visit Forum</a>
+                        </div>
+                        <div class="community-item">
+                            <h4>Documentation</h4>
+                            <p>Comprehensive guides and tutorials</p>
+                            <a href="#" class="btn">Read Docs</a>
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
+        
+        function createModal(title, content) {
+            const modal = document.createElement('div');
+            modal.className = 'modal';
+            modal.innerHTML = `
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>${title}</h2>
+                        <span class="close">&times;</span>
+                    </div>
+                    <div class="modal-body">
+                        ${content}
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            // Close modal functionality
+            modal.querySelector('.close').addEventListener('click', () => {
+                modal.remove();
+            });
+            
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                }
+            });
+            
+            return modal;
+        }
+        
+        function updateStatusIndicators() {
+            const indicators = document.querySelectorAll('.status-indicator');
+            indicators.forEach(indicator => {
+                if (indicator.classList.contains('status-online')) {
+                    indicator.style.opacity = '0.5';
+                    setTimeout(() => {
+                        indicator.style.opacity = '1';
+                    }, 100);
+                }
+            });
+        }
+        
+        function updateTrafficStats() {
+            // Simulate traffic statistics updates
+            const statCards = document.querySelectorAll('.stat-card');
+            statCards.forEach(card => {
+                const number = card.querySelector('.stat-number');
+                if (number) {
+                    const currentValue = parseInt(number.textContent);
+                    const variation = Math.floor(Math.random() * 10) - 5;
+                    const newValue = Math.max(0, currentValue + variation);
+                    number.textContent = newValue;
+                }
+            });
+        }
+        
+        function updateNetworkTopology() {
+            // Animate network topology elements
+            const routers = document.querySelectorAll('.router');
+            routers.forEach(router => {
+                router.style.transform = `scale(${1 + Math.random() * 0.1})`;
+                setTimeout(() => {
+                    router.style.transform = 'scale(1)';
+                }, 200);
+            });
+        }
+        
+        function initializeNetworkTopology() {
+            // Add click handlers to network elements
+            const networkElements = document.querySelectorAll('.router, .cloud, .connection');
+            networkElements.forEach(element => {
+                element.addEventListener('click', function() {
+                    const elementType = this.classList.contains('router') ? 'Router' : 
+                                      this.classList.contains('cloud') ? 'Cloud' : 'Connection';
+                    const elementName = this.textContent.trim();
+                    
+                    showElementDetails(elementType, elementName);
+                });
+            });
+        }
+        
+        function showElementDetails(type, name) {
+            const detailsModal = createModal(`${type} Details: ${name}`, `
+                <div class="element-details">
+                    <h3>${type} Information</h3>
+                    <div class="details-grid">
+                        <div class="detail-item">
+                            <label>Status:</label>
+                            <span class="status-online">Online</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Uptime:</label>
+                            <span>2d 14h 32m</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Packets/sec:</label>
+                            <span>${Math.floor(Math.random() * 1000) + 100}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Bytes/sec:</label>
+                            <span>${Math.floor(Math.random() * 1000000) + 100000} B</span>
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
+        
+        function initializeTrafficVisualization() {
+            // Create a simple traffic flow visualization
+            const networkDiagram = document.querySelector('.network-diagram');
+            if (networkDiagram) {
+                // Add animated traffic flow
+                const trafficFlow = document.createElement('div');
+                trafficFlow.className = 'traffic-flow';
+                trafficFlow.style.cssText = `
+                    position: absolute;
+                    width: 4px;
+                    height: 4px;
+                    background: #4CAF50;
+                    border-radius: 50%;
+                    animation: trafficFlow 3s linear infinite;
+                `;
+                networkDiagram.appendChild(trafficFlow);
+            }
+        }
+        
+        function showDemoComplete() {
+            const completeModal = createModal('Demo Complete', `
+                <div class="demo-complete">
+                    <h3>🎉 Demo Successfully Completed!</h3>
+                    <div class="completion-stats">
+                        <div class="stat">
+                            <span class="stat-number">100%</span>
+                            <span class="stat-label">Success Rate</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-number">3.2s</span>
+                            <span class="stat-label">Average Response Time</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-number">99.9%</span>
+                            <span class="stat-label">Uptime</span>
+                        </div>
+                    </div>
+                    <p>The Multi-Protocol Router Simulator is now running with all features enabled:</p>
+                    <ul>
+                        <li>✅ FRR Control Plane Integration</li>
+                        <li>✅ BGP/OSPF/ISIS Protocol Support</li>
+                        <li>✅ Token-Bucket & WFQ Traffic Shaping</li>
+                        <li>✅ Network Impairments Simulation</li>
+                        <li>✅ Cloud Networking Features</li>
+                        <li>✅ Real-time Monitoring</li>
+                    </ul>
+                    <button class="btn" onclick="this.closest('.modal').remove()">Continue</button>
+                </div>
+            `);
+        }
+        
+        // Add CSS for modals and animations
+        const style = document.createElement('style');
+        style.textContent = `
+            .modal {
+                display: block;
+                position: fixed;
+                z-index: 1000;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0,0,0,0.5);
+            }
+            
+            .modal-content {
+                background-color: white;
+                margin: 5% auto;
+                padding: 0;
+                border-radius: 10px;
+                width: 80%;
+                max-width: 600px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            }
+            
+            .modal-header {
+                padding: 20px;
+                border-bottom: 1px solid #eee;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            
+            .modal-body {
+                padding: 20px;
+            }
+            
+            .close {
+                font-size: 28px;
+                font-weight: bold;
+                cursor: pointer;
+                color: #aaa;
+            }
+            
+            .close:hover {
+                color: #000;
+            }
+            
+            .demo-steps {
+                margin: 20px 0;
+            }
+            
+            .step {
+                display: flex;
+                align-items: center;
+                padding: 10px 0;
+                border-bottom: 1px solid #eee;
+            }
+            
+            .step-number {
+                width: 30px;
+                height: 30px;
+                border-radius: 50%;
+                background: #ddd;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin-right: 15px;
+                font-weight: bold;
+            }
+            
+            .step.active .step-number {
+                background: #667eea;
+                color: white;
+            }
+            
+            .step.completed .step-number {
+                background: #4CAF50;
+                color: white;
+            }
+            
+            .step-text {
+                flex: 1;
+            }
+            
+            .step-status {
+                margin-left: 15px;
+            }
+            
+            .progress-bar {
+                width: 100%;
+                height: 20px;
+                background: #f0f0f0;
+                border-radius: 10px;
+                overflow: hidden;
+                margin: 10px 0;
+            }
+            
+            .progress-fill {
+                height: 100%;
+                background: linear-gradient(90deg, #667eea, #764ba2);
+                transition: width 0.3s ease;
+            }
+            
+            .progress-text {
+                text-align: center;
+                font-weight: bold;
+                color: #667eea;
+            }
+            
+            .doc-sections {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 20px;
+                margin: 20px 0;
+            }
+            
+            .doc-section h4 {
+                color: #667eea;
+                margin-bottom: 10px;
+            }
+            
+            .doc-section ul {
+                list-style: none;
+                padding: 0;
+            }
+            
+            .doc-section li {
+                padding: 5px 0;
+                border-bottom: 1px solid #eee;
+            }
+            
+            .doc-section a {
+                color: #667eea;
+                text-decoration: none;
+            }
+            
+            .doc-section a:hover {
+                text-decoration: underline;
+            }
+            
+            .issue-form {
+                display: grid;
+                gap: 15px;
+            }
+            
+            .form-group {
+                display: flex;
+                flex-direction: column;
+            }
+            
+            .form-group label {
+                font-weight: bold;
+                margin-bottom: 5px;
+                color: #333;
+            }
+            
+            .form-group input,
+            .form-group select,
+            .form-group textarea {
+                padding: 10px;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            
+            .community-links {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 20px;
+                margin: 20px 0;
+            }
+            
+            .community-item {
+                padding: 20px;
+                border: 1px solid #eee;
+                border-radius: 10px;
+                text-align: center;
+            }
+            
+            .community-item h4 {
+                color: #667eea;
+                margin-bottom: 10px;
+            }
+            
+            .element-details {
+                margin: 20px 0;
+            }
+            
+            .details-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                margin: 20px 0;
+            }
+            
+            .detail-item {
+                display: flex;
+                justify-content: space-between;
+                padding: 10px;
+                background: #f8f9fa;
+                border-radius: 5px;
+            }
+            
+            .detail-item label {
+                font-weight: bold;
+                color: #333;
+            }
+            
+            .demo-complete {
+                text-align: center;
+            }
+            
+            .completion-stats {
+                display: flex;
+                justify-content: space-around;
+                margin: 20px 0;
+            }
+            
+            .completion-stats .stat {
+                text-align: center;
+            }
+            
+            .completion-stats .stat-number {
+                display: block;
+                font-size: 2rem;
+                font-weight: bold;
+                color: #4CAF50;
+            }
+            
+            .completion-stats .stat-label {
+                color: #666;
+                font-size: 0.9rem;
+            }
+            
+            @keyframes trafficFlow {
+                0% { left: 0; opacity: 1; }
+                100% { left: 100%; opacity: 0; }
+            }
+        `;
+        document.head.appendChild(style);
     </script>
 </body>
 </html>

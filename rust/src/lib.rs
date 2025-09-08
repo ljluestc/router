@@ -1,294 +1,398 @@
-//! Router Simulation - Rust Performance Components
-//! 
-//! This crate provides high-performance Rust implementations for
-//! performance-critical parts of the router simulation.
-
-use std::sync::Arc;
 use std::collections::HashMap;
-use std::sync::RwLock;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-/// High-performance packet processing engine
 pub mod packet_engine;
-/// Fast routing table implementation
 pub mod routing_table;
-/// Performance monitoring and metrics
-pub mod metrics;
-/// Memory pool for packet buffers
-pub mod memory_pool;
 
-/// Packet structure optimized for performance
-#[derive(Clone, Debug)]
-pub struct FastPacket {
-    pub id: u64,
-    pub timestamp: u64,
-    pub src_ip: u32,
-    pub dst_ip: u32,
-    pub src_port: u16,
-    pub dst_port: u16,
-    pub protocol: u8,
-    pub size: u32,
-    pub ttl: u8,
-    pub priority: u32,
-    pub data: Vec<u8>,
+// Re-export main components
+pub use packet_engine::PacketEngine;
+pub use routing_table::RoutingTable;
+
+/// Router Analytics Engine
+/// High-performance analytics engine for router simulation
+pub struct RouterAnalytics {
+    packet_engine: Arc<Mutex<PacketEngine>>,
+    routing_table: Arc<Mutex<RoutingTable>>,
+    metrics: Arc<Mutex<HashMap<String, f64>>>,
 }
 
-impl FastPacket {
-    /// Create a new packet with pre-allocated buffer
-    pub fn new(id: u64, size: u32) -> Self {
-        Self {
-            id,
-            timestamp: 0,
-            src_ip: 0,
-            dst_ip: 0,
-            src_port: 0,
-            dst_port: 0,
-            protocol: 0,
-            size,
-            ttl: 64,
-            priority: 0,
-            data: vec![0u8; size as usize],
-        }
-    }
-    
-    /// Get packet header as bytes for fast processing
-    pub fn header_bytes(&self) -> [u8; 20] {
-        let mut header = [0u8; 20];
-        header[0..8].copy_from_slice(&self.id.to_le_bytes());
-        header[8..12].copy_from_slice(&self.src_ip.to_le_bytes());
-        header[12..16].copy_from_slice(&self.dst_ip.to_le_bytes());
-        header[16..18].copy_from_slice(&self.src_port.to_le_bytes());
-        header[18..20].copy_from_slice(&self.dst_port.to_le_bytes());
-        header
-    }
-}
-
-/// Performance statistics
-#[derive(Default, Debug)]
-pub struct PerformanceStats {
-    pub packets_processed: u64,
-    pub bytes_processed: u64,
-    pub processing_time_ns: u64,
-    pub average_latency_ns: u64,
-    pub max_latency_ns: u64,
-    pub min_latency_ns: u64,
-    pub errors: u64,
-}
-
-impl PerformanceStats {
-    /// Update statistics with a new packet processing time
-    pub fn update(&mut self, packet_size: u32, processing_time_ns: u64) {
-        self.packets_processed += 1;
-        self.bytes_processed += packet_size as u64;
-        self.processing_time_ns += processing_time_ns;
-        
-        if self.min_latency_ns == 0 || processing_time_ns < self.min_latency_ns {
-            self.min_latency_ns = processing_time_ns;
-        }
-        
-        if processing_time_ns > self.max_latency_ns {
-            self.max_latency_ns = processing_time_ns;
-        }
-        
-        self.average_latency_ns = self.processing_time_ns / self.packets_processed;
-    }
-    
-    /// Get throughput in packets per second
-    pub fn throughput_pps(&self) -> f64 {
-        if self.processing_time_ns == 0 {
-            return 0.0;
-        }
-        self.packets_processed as f64 * 1_000_000_000.0 / self.processing_time_ns as f64
-    }
-    
-    /// Get throughput in bits per second
-    pub fn throughput_bps(&self) -> f64 {
-        if self.processing_time_ns == 0 {
-            return 0.0;
-        }
-        self.bytes_processed as f64 * 8.0 * 1_000_000_000.0 / self.processing_time_ns as f64
-    }
-}
-
-/// High-performance router core
-pub struct FastRouter {
-    routing_table: Arc<RwLock<routing_table::FastRoutingTable>>,
-    packet_engine: Arc<packet_engine::PacketEngine>,
-    memory_pool: Arc<memory_pool::MemoryPool>,
-    stats: Arc<RwLock<PerformanceStats>>,
-}
-
-impl FastRouter {
-    /// Create a new fast router instance
+impl RouterAnalytics {
     pub fn new() -> Self {
         Self {
-            routing_table: Arc::new(RwLock::new(routing_table::FastRoutingTable::new())),
-            packet_engine: Arc::new(packet_engine::PacketEngine::new()),
-            memory_pool: Arc::new(memory_pool::MemoryPool::new(1000, 1500)),
-            stats: Arc::new(RwLock::new(PerformanceStats::default())),
+            packet_engine: Arc::new(Mutex::new(PacketEngine::new())),
+            routing_table: Arc::new(Mutex::new(RoutingTable::new())),
+            metrics: Arc::new(Mutex::new(HashMap::new())),
         }
     }
-    
-    /// Process a packet with high performance
-    pub fn process_packet(&self, packet: &mut FastPacket) -> Result<(), String> {
-        let start_time = Instant::now();
-        
-        // Get packet from memory pool
-        let mut pooled_packet = self.memory_pool.get_packet(packet.size)?;
-        pooled_packet.copy_from(packet);
-        
-        // Process packet
-        let result = self.packet_engine.process_packet(&mut pooled_packet, &self.routing_table);
-        
-        // Update statistics
-        let processing_time = start_time.elapsed();
-        let mut stats = self.stats.write().unwrap();
-        stats.update(packet.size, processing_time.as_nanos() as u64);
-        
-        // Return packet to pool
-        self.memory_pool.return_packet(pooled_packet);
-        
-        result
+
+    /// Process a packet through the analytics engine
+    pub fn process_packet(&self, packet: &Packet) -> Result<(), String> {
+        let mut engine = self.packet_engine.lock().map_err(|e| e.to_string())?;
+        engine.process_packet(packet)?;
+        Ok(())
     }
-    
+
     /// Add a route to the routing table
-    pub fn add_route(&self, network: u32, mask: u32, next_hop: u32, interface: String, metric: u32) {
-        let mut table = self.routing_table.write().unwrap();
-        table.add_route(network, mask, next_hop, interface, metric);
+    pub fn add_route(&self, route: &Route) -> Result<(), String> {
+        let mut table = self.routing_table.lock().map_err(|e| e.to_string())?;
+        table.add_route(route)?;
+        Ok(())
     }
-    
+
     /// Remove a route from the routing table
-    pub fn remove_route(&self, network: u32, mask: u32) -> bool {
-        let mut table = self.routing_table.write().unwrap();
-        table.remove_route(network, mask)
+    pub fn remove_route(&self, destination: &str) -> Result<(), String> {
+        let mut table = self.routing_table.lock().map_err(|e| e.to_string())?;
+        table.remove_route(destination)?;
+        Ok(())
     }
-    
-    /// Get performance statistics
-    pub fn get_stats(&self) -> PerformanceStats {
-        self.stats.read().unwrap().clone()
+
+    /// Get routing statistics
+    pub fn get_routing_stats(&self) -> Result<RoutingStats, String> {
+        let table = self.routing_table.lock().map_err(|e| e.to_string())?;
+        Ok(table.get_stats())
     }
-    
-    /// Reset statistics
-    pub fn reset_stats(&self) {
-        let mut stats = self.stats.write().unwrap();
-        *stats = PerformanceStats::default();
+
+    /// Get packet processing statistics
+    pub fn get_packet_stats(&self) -> Result<PacketStats, String> {
+        let engine = self.packet_engine.lock().map_err(|e| e.to_string())?;
+        Ok(engine.get_stats())
+    }
+
+    /// Update a metric
+    pub fn update_metric(&self, name: &str, value: f64) -> Result<(), String> {
+        let mut metrics = self.metrics.lock().map_err(|e| e.to_string())?;
+        metrics.insert(name.to_string(), value);
+        Ok(())
+    }
+
+    /// Get all metrics
+    pub fn get_metrics(&self) -> Result<HashMap<String, f64>, String> {
+        let metrics = self.metrics.lock().map_err(|e| e.to_string())?;
+        Ok(metrics.clone())
+    }
+
+    /// Reset all statistics
+    pub fn reset(&self) -> Result<(), String> {
+        let mut engine = self.packet_engine.lock().map_err(|e| e.to_string())?;
+        engine.reset();
+        
+        let mut table = self.routing_table.lock().map_err(|e| e.to_string())?;
+        table.reset();
+        
+        let mut metrics = self.metrics.lock().map_err(|e| e.to_string())?;
+        metrics.clear();
+        
+        Ok(())
     }
 }
 
-impl Default for FastRouter {
+/// Packet representation
+#[derive(Debug, Clone)]
+pub struct Packet {
+    pub id: u64,
+    pub size: u32,
+    pub priority: u32,
+    pub source_ip: String,
+    pub dest_ip: String,
+    pub source_port: u16,
+    pub dest_port: u16,
+    pub protocol: u8,
+    pub timestamp: u64,
+}
+
+impl Packet {
+    pub fn new(
+        id: u64,
+        size: u32,
+        priority: u32,
+        source_ip: String,
+        dest_ip: String,
+        source_port: u16,
+        dest_port: u16,
+        protocol: u8,
+    ) -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        Self {
+            id,
+            size,
+            priority,
+            source_ip,
+            dest_ip,
+            source_port,
+            dest_port,
+            protocol,
+            timestamp,
+        }
+    }
+}
+
+/// Route representation
+#[derive(Debug, Clone)]
+pub struct Route {
+    pub destination: String,
+    pub gateway: String,
+    pub interface: String,
+    pub prefix_length: u8,
+    pub metric: u32,
+    pub protocol: String,
+    pub is_active: bool,
+}
+
+impl Route {
+    pub fn new(
+        destination: String,
+        gateway: String,
+        interface: String,
+        prefix_length: u8,
+        metric: u32,
+        protocol: String,
+    ) -> Self {
+        Self {
+            destination,
+            gateway,
+            interface,
+            prefix_length,
+            metric,
+            protocol,
+            is_active: true,
+        }
+    }
+}
+
+/// Routing statistics
+#[derive(Debug, Clone)]
+pub struct RoutingStats {
+    pub total_routes: usize,
+    pub active_routes: usize,
+    pub bgp_routes: usize,
+    pub ospf_routes: usize,
+    pub isis_routes: usize,
+    pub static_routes: usize,
+    pub last_update: u64,
+}
+
+/// Packet processing statistics
+#[derive(Debug, Clone)]
+pub struct PacketStats {
+    pub total_packets: u64,
+    pub total_bytes: u64,
+    pub packets_per_second: f64,
+    pub bytes_per_second: f64,
+    pub dropped_packets: u64,
+    pub dropped_bytes: u64,
+    pub average_packet_size: f64,
+    pub last_packet_time: u64,
+}
+
+/// Network interface statistics
+#[derive(Debug, Clone)]
+pub struct InterfaceStats {
+    pub name: String,
+    pub rx_packets: u64,
+    pub tx_packets: u64,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub rx_errors: u64,
+    pub tx_errors: u64,
+    pub is_up: bool,
+}
+
+/// Traffic shaping statistics
+#[derive(Debug, Clone)]
+pub struct TrafficShapingStats {
+    pub total_packets_processed: u64,
+    pub total_bytes_processed: u64,
+    pub packets_dropped: u64,
+    pub bytes_dropped: u64,
+    pub utilization_percentage: f64,
+    pub queue_lengths: Vec<u32>,
+    pub queue_utilizations: Vec<f64>,
+}
+
+/// BGP neighbor statistics
+#[derive(Debug, Clone)]
+pub struct BGPNeighborStats {
+    pub ip_address: String,
+    pub as_number: u32,
+    pub state: String,
+    pub hold_time: u32,
+    pub keepalive: u32,
+    pub routes_received: u64,
+    pub routes_advertised: u64,
+    pub last_update: u64,
+}
+
+/// OSPF area statistics
+#[derive(Debug, Clone)]
+pub struct OSPFAreaStats {
+    pub area_id: String,
+    pub area_type: String,
+    pub interfaces: Vec<String>,
+    pub networks: Vec<String>,
+    pub lsas_count: u64,
+    pub last_update: u64,
+}
+
+/// IS-IS level statistics
+#[derive(Debug, Clone)]
+pub struct ISISLevelStats {
+    pub level: u8,
+    pub system_id: String,
+    pub interfaces: Vec<String>,
+    pub networks: Vec<String>,
+    pub lsps_count: u64,
+    pub last_update: u64,
+}
+
+/// Router performance metrics
+#[derive(Debug, Clone)]
+pub struct PerformanceMetrics {
+    pub cpu_usage: f64,
+    pub memory_usage: f64,
+    pub disk_usage: f64,
+    pub network_usage: f64,
+    pub packet_processing_rate: f64,
+    pub route_update_rate: f64,
+    pub timestamp: u64,
+}
+
+/// Network topology representation
+#[derive(Debug, Clone)]
+pub struct NetworkTopology {
+    pub nodes: Vec<NetworkNode>,
+    pub links: Vec<NetworkLink>,
+    pub last_update: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct NetworkNode {
+    pub id: String,
+    pub name: String,
+    pub node_type: String,
+    pub ip_address: String,
+    pub region: String,
+    pub status: String,
+    pub properties: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NetworkLink {
+    pub id: String,
+    pub source_node: String,
+    pub dest_node: String,
+    pub bandwidth: u64,
+    pub latency: u32,
+    pub status: String,
+    pub properties: HashMap<String, String>,
+}
+
+/// Analytics query interface
+pub trait AnalyticsQuery {
+    fn query_packets(&self, filter: &PacketFilter) -> Result<Vec<Packet>, String>;
+    fn query_routes(&self, filter: &RouteFilter) -> Result<Vec<Route>, String>;
+    fn query_metrics(&self, filter: &MetricFilter) -> Result<Vec<MetricData>, String>;
+}
+
+/// Packet filter for queries
+#[derive(Debug, Clone)]
+pub struct PacketFilter {
+    pub source_ip: Option<String>,
+    pub dest_ip: Option<String>,
+    pub protocol: Option<u8>,
+    pub port_range: Option<(u16, u16)>,
+    pub time_range: Option<(u64, u64)>,
+    pub size_range: Option<(u32, u32)>,
+}
+
+/// Route filter for queries
+#[derive(Debug, Clone)]
+pub struct RouteFilter {
+    pub destination: Option<String>,
+    pub protocol: Option<String>,
+    pub interface: Option<String>,
+    pub metric_range: Option<(u32, u32)>,
+    pub is_active: Option<bool>,
+}
+
+/// Metric filter for queries
+#[derive(Debug, Clone)]
+pub struct MetricFilter {
+    pub name: Option<String>,
+    pub time_range: Option<(u64, u64)>,
+    pub value_range: Option<(f64, f64)>,
+}
+
+/// Metric data point
+#[derive(Debug, Clone)]
+pub struct MetricData {
+    pub name: String,
+    pub value: f64,
+    pub timestamp: u64,
+    pub tags: HashMap<String, String>,
+}
+
+impl Default for RouterAnalytics {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Benchmark utilities
-pub mod benchmark {
-    use super::*;
-    use std::time::Instant;
-    
-    /// Benchmark packet processing performance
-    pub fn benchmark_packet_processing(router: &FastRouter, num_packets: usize) -> BenchmarkResult {
-        let mut packets = Vec::with_capacity(num_packets);
-        
-        // Create test packets
-        for i in 0..num_packets {
-            let mut packet = FastPacket::new(i as u64, 1500);
-            packet.src_ip = 0xC0A80101; // 192.168.1.1
-            packet.dst_ip = 0x0A000001; // 10.0.0.1
-            packet.src_port = 12345;
-            packet.dst_port = 80;
-            packet.protocol = 6; // TCP
-            packet.size = 1500;
-            packet.ttl = 64;
-            packet.priority = 0;
-            packets.push(packet);
-        }
-        
-        // Benchmark processing
-        let start_time = Instant::now();
-        
-        for packet in &mut packets {
-            let _ = router.process_packet(packet);
-        }
-        
-        let end_time = Instant::now();
-        let duration = end_time.duration_since(start_time);
-        
-        let stats = router.get_stats();
-        
-        BenchmarkResult {
-            num_packets,
-            duration_ms: duration.as_millis() as u64,
-            packets_per_second: stats.throughput_pps(),
-            bits_per_second: stats.throughput_bps(),
-            average_latency_ns: stats.average_latency_ns,
-            min_latency_ns: stats.min_latency_ns,
-            max_latency_ns: stats.max_latency_ns,
-        }
-    }
-    
-    /// Benchmark result
-    #[derive(Debug)]
-    pub struct BenchmarkResult {
-        pub num_packets: usize,
-        pub duration_ms: u64,
-        pub packets_per_second: f64,
-        pub bits_per_second: f64,
-        pub average_latency_ns: u64,
-        pub min_latency_ns: u64,
-        pub max_latency_ns: u64,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
-    fn test_fast_packet_creation() {
-        let packet = FastPacket::new(1, 1500);
-        assert_eq!(packet.id, 1);
-        assert_eq!(packet.size, 1500);
-        assert_eq!(packet.data.len(), 1500);
+    fn test_router_analytics_creation() {
+        let analytics = RouterAnalytics::new();
+        assert!(analytics.get_metrics().is_ok());
     }
-    
+
     #[test]
-    fn test_fast_router_creation() {
-        let router = FastRouter::new();
-        let stats = router.get_stats();
-        assert_eq!(stats.packets_processed, 0);
+    fn test_packet_processing() {
+        let analytics = RouterAnalytics::new();
+        let packet = Packet::new(
+            1,
+            1500,
+            1,
+            "192.168.1.1".to_string(),
+            "192.168.1.2".to_string(),
+            80,
+            8080,
+            6,
+        );
+        
+        assert!(analytics.process_packet(&packet).is_ok());
     }
-    
+
     #[test]
     fn test_route_management() {
-        let router = FastRouter::new();
+        let analytics = RouterAnalytics::new();
+        let route = Route::new(
+            "192.168.1.0/24".to_string(),
+            "192.168.1.1".to_string(),
+            "eth0".to_string(),
+            24,
+            1,
+            "static".to_string(),
+        );
         
-        // Add route
-        router.add_route(0x0A000000, 0xFFFFFF00, 0xC0A80101, "eth0".to_string(), 1);
-        
-        // Process packet
-        let mut packet = FastPacket::new(1, 1500);
-        packet.src_ip = 0xC0A80102;
-        packet.dst_ip = 0x0A000001;
-        
-        let result = router.process_packet(&mut packet);
-        assert!(result.is_ok());
-        
-        let stats = router.get_stats();
-        assert_eq!(stats.packets_processed, 1);
+        assert!(analytics.add_route(&route).is_ok());
+        assert!(analytics.remove_route("192.168.1.0/24").is_ok());
     }
-    
+
     #[test]
-    fn test_performance_stats() {
-        let mut stats = PerformanceStats::default();
+    fn test_metric_updates() {
+        let analytics = RouterAnalytics::new();
+        assert!(analytics.update_metric("cpu_usage", 75.5).is_ok());
+        assert!(analytics.update_metric("memory_usage", 60.0).is_ok());
         
-        stats.update(1500, 1000);
-        stats.update(1500, 2000);
-        
-        assert_eq!(stats.packets_processed, 2);
-        assert_eq!(stats.bytes_processed, 3000);
-        assert_eq!(stats.average_latency_ns, 1500);
-        assert_eq!(stats.min_latency_ns, 1000);
-        assert_eq!(stats.max_latency_ns, 2000);
+        let metrics = analytics.get_metrics().unwrap();
+        assert_eq!(metrics.get("cpu_usage"), Some(&75.5));
+        assert_eq!(metrics.get("memory_usage"), Some(&60.0));
     }
 }
