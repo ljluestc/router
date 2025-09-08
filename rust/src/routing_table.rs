@@ -1,399 +1,496 @@
-//! High-performance routing table implementation
-//! 
-//! This module provides a fast routing table optimized for high-speed
-//! lookups using radix trees and other efficient data structures.
-
 use std::collections::HashMap;
-use std::sync::RwLock;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::str::FromStr;
 
-/// Fast routing table implementation
-pub struct FastRoutingTable {
-    /// Radix tree for fast prefix lookups
-    radix_tree: RadixTree,
-    /// Direct route cache for frequently accessed routes
-    route_cache: HashMap<u32, RouteEntry>,
-    /// Statistics
-    stats: RoutingStats,
+use crate::{Route, RoutingStats};
+
+/// High-performance routing table implementation
+pub struct RoutingTable {
+    routes: HashMap<String, Route>,
+    protocol_counts: HashMap<String, usize>,
+    interface_counts: HashMap<String, usize>,
+    last_update: u64,
+    total_updates: u64,
 }
 
-/// Route entry
-#[derive(Debug, Clone)]
-pub struct RouteEntry {
-    pub network: u32,
-    pub mask: u32,
-    pub next_hop: u32,
-    pub interface: String,
-    pub metric: u32,
-    pub admin_distance: u32,
-    pub protocol: String,
-    pub is_local: bool,
-}
-
-/// Routing statistics
-#[derive(Debug, Default)]
-pub struct RoutingStats {
-    pub lookups: u64,
-    pub cache_hits: u64,
-    pub cache_misses: u64,
-    pub longest_match_time_ns: u64,
-    pub cache_lookup_time_ns: u64,
-}
-
-/// Radix tree node
-#[derive(Debug)]
-struct RadixNode {
-    prefix: u32,
-    prefix_len: u8,
-    children: Vec<RadixNode>,
-    route: Option<RouteEntry>,
-}
-
-/// Radix tree for prefix matching
-#[derive(Debug)]
-struct RadixTree {
-    root: RadixNode,
-}
-
-impl RadixTree {
-    fn new() -> Self {
+impl RoutingTable {
+    pub fn new() -> Self {
         Self {
-            root: RadixNode {
-                prefix: 0,
-                prefix_len: 0,
-                children: Vec::new(),
-                route: None,
-            },
+            routes: HashMap::new(),
+            protocol_counts: HashMap::new(),
+            interface_counts: HashMap::new(),
+            last_update: 0,
+            total_updates: 0,
         }
     }
-    
-    fn insert(&mut self, network: u32, mask: u32, route: RouteEntry) {
-        let prefix_len = mask.count_ones() as u8;
-        self.insert_recursive(&mut self.root, network, prefix_len, route);
-    }
-    
-    fn insert_recursive(&self, node: &mut RadixNode, network: u32, prefix_len: u8, route: RouteEntry) {
-        if prefix_len == 0 {
-            node.route = Some(route);
-            return;
+
+    /// Add a route to the routing table
+    pub fn add_route(&mut self, route: &Route) -> Result<(), String> {
+        // Validate route
+        self.validate_route(route)?;
+
+        let destination = route.destination.clone();
+        let old_route = self.routes.insert(destination.clone(), route.clone());
+
+        // Update statistics
+        if old_route.is_none() {
+            *self.protocol_counts.entry(route.protocol.clone()).or_insert(0) += 1;
+            *self.interface_counts.entry(route.interface.clone()).or_insert(0) += 1;
         }
-        
-        // Find matching child or create new one
-        let child_prefix = network >> (32 - prefix_len);
-        let child_prefix_len = prefix_len;
-        
-        for child in &mut node.children {
-            if child.prefix == child_prefix && child.prefix_len == child_prefix_len {
-                self.insert_recursive(child, network, prefix_len, route);
-                return;
+
+        self.update_timestamp();
+        self.total_updates += 1;
+
+        Ok(())
+    }
+
+    /// Remove a route from the routing table
+    pub fn remove_route(&mut self, destination: &str) -> Result<(), String> {
+        if let Some(route) = self.routes.remove(destination) {
+            // Update statistics
+            if let Some(count) = self.protocol_counts.get_mut(&route.protocol) {
+                *count -= 1;
+                if *count == 0 {
+                    self.protocol_counts.remove(&route.protocol);
+                }
             }
+
+            if let Some(count) = self.interface_counts.get_mut(&route.interface) {
+                *count -= 1;
+                if *count == 0 {
+                    self.interface_counts.remove(&route.interface);
+                }
+            }
+
+            self.update_timestamp();
+            self.total_updates += 1;
         }
-        
-        // Create new child
-        let mut new_child = RadixNode {
-            prefix: child_prefix,
-            prefix_len: child_prefix_len,
-            children: Vec::new(),
-            route: None,
+
+        Ok(())
+    }
+
+    /// Update an existing route
+    pub fn update_route(&mut self, destination: &str, route: &Route) -> Result<(), String> {
+        if !self.routes.contains_key(destination) {
+            return Err(format!("Route {} not found", destination));
+        }
+
+        self.validate_route(route)?;
+        self.routes.insert(destination.to_string(), route.clone());
+        self.update_timestamp();
+        self.total_updates += 1;
+
+        Ok(())
+    }
+
+    /// Get a route by destination
+    pub fn get_route(&self, destination: &str) -> Option<&Route> {
+        self.routes.get(destination)
+    }
+
+    /// Get all routes
+    pub fn get_all_routes(&self) -> Vec<&Route> {
+        self.routes.values().collect()
+    }
+
+    /// Get routes by protocol
+    pub fn get_routes_by_protocol(&self, protocol: &str) -> Vec<&Route> {
+        self.routes.values()
+            .filter(|route| route.protocol == protocol)
+            .collect()
+    }
+
+    /// Get routes by interface
+    pub fn get_routes_by_interface(&self, interface: &str) -> Vec<&Route> {
+        self.routes.values()
+            .filter(|route| route.interface == interface)
+            .collect()
+    }
+
+    /// Get active routes only
+    pub fn get_active_routes(&self) -> Vec<&Route> {
+        self.routes.values()
+            .filter(|route| route.is_active)
+            .collect()
+    }
+
+    /// Find the best route for a destination IP
+    pub fn find_best_route(&self, dest_ip: &str) -> Option<&Route> {
+        let dest_addr = match IpAddr::from_str(dest_ip) {
+            Ok(addr) => addr,
+            Err(_) => return None,
         };
-        
-        self.insert_recursive(&mut new_child, network, prefix_len, route);
-        node.children.push(new_child);
-    }
-    
-    fn lookup(&self, destination: u32) -> Option<RouteEntry> {
-        self.lookup_recursive(&self.root, destination)
-    }
-    
-    fn lookup_recursive(&self, node: &RadixNode, destination: u32) -> Option<RouteEntry> {
-        // Check if this node has a route
-        if let Some(ref route) = node.route {
-            return Some(route.clone());
-        }
-        
-        // Look for matching child
-        for child in &node.children {
-            let child_mask = (1u32 << (32 - child.prefix_len)) - 1;
-            let child_network = child.prefix << (32 - child.prefix_len);
-            
-            if (destination & child_mask) == (child_network & child_mask) {
-                if let Some(route) = self.lookup_recursive(child, destination) {
-                    return Some(route);
+
+        let mut best_route: Option<&Route> = None;
+        let mut best_metric = u32::MAX;
+
+        for route in self.routes.values() {
+            if !route.is_active {
+                continue;
+            }
+
+            if self.matches_destination(dest_addr, &route.destination) {
+                if route.metric < best_metric {
+                    best_metric = route.metric;
+                    best_route = Some(route);
                 }
             }
         }
-        
-        None
-    }
-}
 
-impl FastRoutingTable {
-    /// Create a new fast routing table
-    pub fn new() -> Self {
-        Self {
-            radix_tree: RadixTree::new(),
-            route_cache: HashMap::new(),
-            stats: RoutingStats::default(),
+        best_route
+    }
+
+    /// Check if a destination IP matches a route
+    fn matches_destination(&self, dest_ip: IpAddr, route_dest: &str) -> bool {
+        // Parse route destination (e.g., "192.168.1.0/24")
+        let parts: Vec<&str> = route_dest.split('/').collect();
+        if parts.len() != 2 {
+            return false;
+        }
+
+        let network_addr = match IpAddr::from_str(parts[0]) {
+            Ok(addr) => addr,
+            Err(_) => return false,
+        };
+
+        let prefix_len = match parts[1].parse::<u8>() {
+            Ok(len) => len,
+            Err(_) => return false,
+        };
+
+        // Check if IPs are the same family
+        match (dest_ip, network_addr) {
+            (IpAddr::V4(dest), IpAddr::V4(net)) => {
+                self.matches_ipv4_network(dest, net, prefix_len)
+            }
+            (IpAddr::V6(dest), IpAddr::V6(net)) => {
+                self.matches_ipv6_network(dest, net, prefix_len)
+            }
+            _ => false,
         }
     }
-    
-    /// Add a route to the table
-    pub fn add_route(&mut self, network: u32, mask: u32, next_hop: u32, interface: String, metric: u32) {
-        let route = RouteEntry {
-            network,
-            mask,
-            next_hop,
-            interface,
-            metric,
-            admin_distance: 1,
-            protocol: "STATIC".to_string(),
-            is_local: false,
+
+    /// Check if an IPv4 address matches a network
+    fn matches_ipv4_network(&self, dest: Ipv4Addr, network: Ipv4Addr, prefix_len: u8) -> bool {
+        if prefix_len > 32 {
+            return false;
+        }
+
+        let mask = if prefix_len == 0 {
+            0
+        } else {
+            !((1u32 << (32 - prefix_len)) - 1)
         };
-        
-        self.radix_tree.insert(network, mask, route);
+
+        let dest_u32 = u32::from(dest);
+        let network_u32 = u32::from(network);
+
+        (dest_u32 & mask) == (network_u32 & mask)
     }
-    
-    /// Remove a route from the table
-    pub fn remove_route(&mut self, network: u32, mask: u32) -> bool {
-        // For simplicity, we'll just clear the cache
-        // In a real implementation, we'd remove from the radix tree
-        self.route_cache.clear();
+
+    /// Check if an IPv6 address matches a network
+    fn matches_ipv6_network(&self, dest: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
+        if prefix_len > 128 {
+            return false;
+        }
+
+        let dest_bytes = dest.octets();
+        let network_bytes = network.octets();
+
+        let full_bytes = (prefix_len / 8) as usize;
+        let remaining_bits = prefix_len % 8;
+
+        // Check full bytes
+        for i in 0..full_bytes {
+            if dest_bytes[i] != network_bytes[i] {
+                return false;
+            }
+        }
+
+        // Check remaining bits
+        if remaining_bits > 0 && full_bytes < 16 {
+            let mask = 0xFF << (8 - remaining_bits);
+            if (dest_bytes[full_bytes] & mask) != (network_bytes[full_bytes] & mask) {
+                return false;
+            }
+        }
+
         true
     }
-    
-    /// Look up a route for a destination
-    pub fn lookup(&self, destination: u32) -> Option<super::packet_engine::RouteInfo> {
-        let start_time = std::time::Instant::now();
-        
-        // Try cache first
-        if let Some(route) = self.route_cache.get(&destination) {
-            let cache_time = start_time.elapsed();
-            let mut stats = &mut self.stats as *mut RoutingStats as *mut RoutingStats;
-            unsafe {
-                (*stats).lookups += 1;
-                (*stats).cache_hits += 1;
-                (*stats).cache_lookup_time_ns += cache_time.as_nanos() as u64;
-            }
-            
-            return Some(super::packet_engine::RouteInfo {
-                next_hop: route.next_hop,
-                interface: route.interface.clone(),
-                metric: route.metric,
-                is_local: route.is_local,
-            });
+
+    /// Validate a route before adding/updating
+    fn validate_route(&self, route: &Route) -> Result<(), String> {
+        // Validate destination format
+        if route.destination.is_empty() {
+            return Err("Destination cannot be empty".to_string());
         }
-        
-        // Look up in radix tree
-        let lookup_start = std::time::Instant::now();
-        let route = self.radix_tree.lookup(destination);
-        let lookup_time = lookup_start.elapsed();
-        
-        let mut stats = &mut self.stats as *mut RoutingStats as *mut RoutingStats;
-        unsafe {
-            (*stats).lookups += 1;
-            (*stats).cache_misses += 1;
-            (*stats).longest_match_time_ns += lookup_time.as_nanos() as u64;
+
+        // Validate gateway format
+        if route.gateway.is_empty() {
+            return Err("Gateway cannot be empty".to_string());
         }
-        
-        route.map(|r| {
-            // Cache the result
-            let mut cache = &mut self.route_cache as *mut HashMap<u32, RouteEntry> as *mut HashMap<u32, RouteEntry>;
-            unsafe {
-                (*cache).insert(destination, r.clone());
-            }
-            
-            super::packet_engine::RouteInfo {
-                next_hop: r.next_hop,
-                interface: r.interface,
-                metric: r.metric,
-                is_local: r.is_local,
-            }
-        })
+
+        // Validate interface
+        if route.interface.is_empty() {
+            return Err("Interface cannot be empty".to_string());
+        }
+
+        // Validate prefix length
+        if route.prefix_length > 128 {
+            return Err("Prefix length cannot exceed 128".to_string());
+        }
+
+        // Validate protocol
+        if route.protocol.is_empty() {
+            return Err("Protocol cannot be empty".to_string());
+        }
+
+        Ok(())
     }
-    
+
+    /// Update timestamp
+    fn update_timestamp(&mut self) {
+        self.last_update = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+    }
+
     /// Get routing statistics
-    pub fn get_stats(&self) -> &RoutingStats {
-        &self.stats
-    }
-    
-    /// Clear the route cache
-    pub fn clear_cache(&mut self) {
-        self.route_cache.clear();
-    }
-    
-    /// Get cache hit rate
-    pub fn cache_hit_rate(&self) -> f64 {
-        if self.stats.lookups == 0 {
-            return 0.0;
+    pub fn get_stats(&self) -> RoutingStats {
+        let total_routes = self.routes.len();
+        let active_routes = self.routes.values().filter(|r| r.is_active).count();
+        let bgp_routes = self.protocol_counts.get("bgp").unwrap_or(&0);
+        let ospf_routes = self.protocol_counts.get("ospf").unwrap_or(&0);
+        let isis_routes = self.protocol_counts.get("isis").unwrap_or(&0);
+        let static_routes = self.protocol_counts.get("static").unwrap_or(&0);
+
+        RoutingStats {
+            total_routes,
+            active_routes,
+            bgp_routes: *bgp_routes,
+            ospf_routes: *ospf_routes,
+            isis_routes: *isis_routes,
+            static_routes: *static_routes,
+            last_update: self.last_update,
         }
-        self.stats.cache_hits as f64 / self.stats.lookups as f64
     }
-    
-    /// Get average lookup time in nanoseconds
-    pub fn average_lookup_time_ns(&self) -> u64 {
-        if self.stats.lookups == 0 {
-            return 0;
+
+    /// Get protocol distribution
+    pub fn get_protocol_distribution(&self) -> HashMap<String, usize> {
+        self.protocol_counts.clone()
+    }
+
+    /// Get interface distribution
+    pub fn get_interface_distribution(&self) -> HashMap<String, usize> {
+        self.interface_counts.clone()
+    }
+
+    /// Get routes by metric range
+    pub fn get_routes_by_metric_range(&self, min_metric: u32, max_metric: u32) -> Vec<&Route> {
+        self.routes.values()
+            .filter(|route| route.metric >= min_metric && route.metric <= max_metric)
+            .collect()
+    }
+
+    /// Get routes by prefix length range
+    pub fn get_routes_by_prefix_length_range(&self, min_prefix: u8, max_prefix: u8) -> Vec<&Route> {
+        self.routes.values()
+            .filter(|route| route.prefix_length >= min_prefix && route.prefix_length <= max_prefix)
+            .collect()
+    }
+
+    /// Clear all routes
+    pub fn clear(&mut self) {
+        self.routes.clear();
+        self.protocol_counts.clear();
+        self.interface_counts.clear();
+        self.last_update = 0;
+        self.total_updates = 0;
+    }
+
+    /// Reset statistics
+    pub fn reset(&mut self) {
+        self.last_update = 0;
+        self.total_updates = 0;
+    }
+
+    /// Get detailed statistics
+    pub fn get_detailed_stats(&self) -> DetailedRoutingStats {
+        let basic_stats = self.get_stats();
+        let protocol_distribution = self.get_protocol_distribution();
+        let interface_distribution = self.get_interface_distribution();
+
+        // Calculate average metric
+        let total_metric: u32 = self.routes.values().map(|r| r.metric).sum();
+        let average_metric = if self.routes.is_empty() {
+            0.0
+        } else {
+            total_metric as f64 / self.routes.len() as f64
+        };
+
+        // Calculate metric distribution
+        let mut metric_distribution = HashMap::new();
+        for route in self.routes.values() {
+            *metric_distribution.entry(route.metric).or_insert(0) += 1;
         }
-        (self.stats.longest_match_time_ns + self.stats.cache_lookup_time_ns) / self.stats.lookups
+
+        DetailedRoutingStats {
+            basic_stats,
+            protocol_distribution,
+            interface_distribution,
+            metric_distribution,
+            average_metric,
+            total_updates: self.total_updates,
+        }
     }
 }
 
-/// Route table builder for easy configuration
-pub struct RouteTableBuilder {
-    routes: Vec<(u32, u32, u32, String, u32)>,
+/// Detailed routing statistics
+#[derive(Debug, Clone)]
+pub struct DetailedRoutingStats {
+    pub basic_stats: RoutingStats,
+    pub protocol_distribution: HashMap<String, usize>,
+    pub interface_distribution: HashMap<String, usize>,
+    pub metric_distribution: HashMap<u32, usize>,
+    pub average_metric: f64,
+    pub total_updates: u64,
 }
 
-impl RouteTableBuilder {
-    pub fn new() -> Self {
-        Self {
-            routes: Vec::new(),
-        }
-    }
-    
-    pub fn add_route(mut self, network: u32, mask: u32, next_hop: u32, interface: String, metric: u32) -> Self {
-        self.routes.push((network, mask, next_hop, interface, metric));
-        self
-    }
-    
-    pub fn add_route_from_cidr(mut self, cidr: &str, next_hop: u32, interface: String, metric: u32) -> Self {
-        if let Some((network_str, prefix_len_str)) = cidr.split_once('/') {
-            if let (Ok(network), Ok(prefix_len)) = (network_str.parse::<Ipv4Addr>(), prefix_len_str.parse::<u8>()) {
-                let network_u32 = u32::from(network);
-                let mask = if prefix_len == 0 {
-                    0
-                } else {
-                    (1u32 << (32 - prefix_len)) - 1
-                };
-                self.routes.push((network_u32, mask, next_hop, interface, metric));
-            }
-        }
-        self
-    }
-    
-    pub fn build(self) -> FastRoutingTable {
-        let mut table = FastRoutingTable::new();
-        
-        for (network, mask, next_hop, interface, metric) in self.routes {
-            table.add_route(network, mask, next_hop, interface, metric);
-        }
-        
-        table
-    }
-}
-
-/// Route table utilities
-pub mod utils {
-    use super::*;
-    
-    /// Convert IP address string to u32
-    pub fn ip_to_u32(ip: &str) -> Option<u32> {
-        ip.parse::<Ipv4Addr>().ok().map(u32::from)
-    }
-    
-    /// Convert u32 to IP address string
-    pub fn u32_to_ip(ip: u32) -> String {
-        format!("{}.{}.{}.{}", 
-            (ip >> 24) & 0xFF,
-            (ip >> 16) & 0xFF,
-            (ip >> 8) & 0xFF,
-            ip & 0xFF
-        )
-    }
-    
-    /// Convert CIDR notation to network and mask
-    pub fn cidr_to_network_mask(cidr: &str) -> Option<(u32, u32)> {
-        if let Some((network_str, prefix_len_str)) = cidr.split_once('/') {
-            if let (Ok(network), Ok(prefix_len)) = (network_str.parse::<Ipv4Addr>(), prefix_len_str.parse::<u8>()) {
-                let network_u32 = u32::from(network);
-                let mask = if prefix_len == 0 {
-                    0
-                } else {
-                    (1u32 << (32 - prefix_len)) - 1
-                };
-                return Some((network_u32, mask));
-            }
-        }
-        None
-    }
-    
-    /// Check if an IP address matches a network
-    pub fn ip_matches_network(ip: u32, network: u32, mask: u32) -> bool {
-        (ip & mask) == (network & mask)
+impl Default for RoutingTable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_routing_table_creation() {
-        let table = FastRoutingTable::new();
+        let table = RoutingTable::new();
         let stats = table.get_stats();
-        assert_eq!(stats.lookups, 0);
+        assert_eq!(stats.total_routes, 0);
+        assert_eq!(stats.active_routes, 0);
     }
-    
+
     #[test]
-    fn test_route_addition_and_lookup() {
-        let mut table = FastRoutingTable::new();
-        
-        // Add route for 10.0.0.0/24
-        table.add_route(0x0A000000, 0xFFFFFF00, 0xC0A80101, "eth0".to_string(), 1);
-        
-        // Look up 10.0.0.1
-        let route = table.lookup(0x0A000001);
-        assert!(route.is_some());
-        
-        let route_info = route.unwrap();
-        assert_eq!(route_info.next_hop, 0xC0A80101);
-        assert_eq!(route_info.interface, "eth0");
-        assert_eq!(route_info.metric, 1);
+    fn test_add_route() {
+        let mut table = RoutingTable::new();
+        let route = Route::new(
+            "192.168.1.0/24".to_string(),
+            "192.168.1.1".to_string(),
+            "eth0".to_string(),
+            24,
+            1,
+            "static".to_string(),
+        );
+
+        assert!(table.add_route(&route).is_ok());
+        let stats = table.get_stats();
+        assert_eq!(stats.total_routes, 1);
+        assert_eq!(stats.active_routes, 1);
+        assert_eq!(stats.static_routes, 1);
     }
-    
+
     #[test]
-    fn test_route_builder() {
-        let table = RouteTableBuilder::new()
-            .add_route(0x0A000000, 0xFFFFFF00, 0xC0A80101, "eth0".to_string(), 1)
-            .add_route_from_cidr("192.168.1.0/24", 0x0A000001, "eth1".to_string(), 1)
-            .build();
-        
-        // Test first route
-        let route1 = table.lookup(0x0A000001);
-        assert!(route1.is_some());
-        assert_eq!(route1.unwrap().interface, "eth0");
-        
-        // Test second route
-        let route2 = table.lookup(0xC0A80101);
-        assert!(route2.is_some());
-        assert_eq!(route2.unwrap().interface, "eth1");
+    fn test_remove_route() {
+        let mut table = RoutingTable::new();
+        let route = Route::new(
+            "192.168.1.0/24".to_string(),
+            "192.168.1.1".to_string(),
+            "eth0".to_string(),
+            24,
+            1,
+            "static".to_string(),
+        );
+
+        table.add_route(&route).unwrap();
+        assert!(table.remove_route("192.168.1.0/24").is_ok());
+        let stats = table.get_stats();
+        assert_eq!(stats.total_routes, 0);
     }
-    
+
     #[test]
-    fn test_utils() {
-        assert_eq!(utils::ip_to_u32("192.168.1.1"), Some(0xC0A80101));
-        assert_eq!(utils::u32_to_ip(0xC0A80101), "192.168.1.1");
+    fn test_find_best_route() {
+        let mut table = RoutingTable::new();
         
-        let (network, mask) = utils::cidr_to_network_mask("10.0.0.0/24").unwrap();
-        assert_eq!(network, 0x0A000000);
-        assert_eq!(mask, 0xFFFFFF00);
-        
-        assert!(utils::ip_matches_network(0x0A000001, 0x0A000000, 0xFFFFFF00));
-        assert!(!utils::ip_matches_network(0x0B000001, 0x0A000000, 0xFFFFFF00));
+        // Add default route
+        let default_route = Route::new(
+            "0.0.0.0/0".to_string(),
+            "192.168.1.1".to_string(),
+            "eth0".to_string(),
+            0,
+            100,
+            "static".to_string(),
+        );
+        table.add_route(&default_route).unwrap();
+
+        // Add specific route
+        let specific_route = Route::new(
+            "192.168.1.0/24".to_string(),
+            "192.168.1.1".to_string(),
+            "eth0".to_string(),
+            24,
+            1,
+            "static".to_string(),
+        );
+        table.add_route(&specific_route).unwrap();
+
+        // Test route lookup
+        let best_route = table.find_best_route("192.168.1.100");
+        assert!(best_route.is_some());
+        assert_eq!(best_route.unwrap().destination, "192.168.1.0/24");
     }
-    
+
     #[test]
-    fn test_cache_performance() {
-        let mut table = FastRoutingTable::new();
-        table.add_route(0x0A000000, 0xFFFFFF00, 0xC0A80101, "eth0".to_string(), 1);
+    fn test_route_validation() {
+        let mut table = RoutingTable::new();
         
-        // First lookup should miss cache
-        let _ = table.lookup(0x0A000001);
-        assert_eq!(table.get_stats().cache_misses, 1);
+        // Test invalid route (empty destination)
+        let invalid_route = Route::new(
+            "".to_string(),
+            "192.168.1.1".to_string(),
+            "eth0".to_string(),
+            24,
+            1,
+            "static".to_string(),
+        );
+        assert!(table.add_route(&invalid_route).is_err());
+
+        // Test valid route
+        let valid_route = Route::new(
+            "192.168.1.0/24".to_string(),
+            "192.168.1.1".to_string(),
+            "eth0".to_string(),
+            24,
+            1,
+            "static".to_string(),
+        );
+        assert!(table.add_route(&valid_route).is_ok());
+    }
+
+    #[test]
+    fn test_ipv4_network_matching() {
+        let table = RoutingTable::new();
         
-        // Second lookup should hit cache
-        let _ = table.lookup(0x0A000001);
-        assert_eq!(table.get_stats().cache_hits, 1);
-        
-        assert!(table.cache_hit_rate() > 0.0);
+        // Test exact match
+        assert!(table.matches_destination(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            "192.168.1.100/32"
+        ));
+
+        // Test network match
+        assert!(table.matches_destination(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            "192.168.1.0/24"
+        ));
+
+        // Test no match
+        assert!(!table.matches_destination(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 2, 100)),
+            "192.168.1.0/24"
+        ));
     }
 }
