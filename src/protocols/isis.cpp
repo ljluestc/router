@@ -1,305 +1,347 @@
-#include "isis.h"
+#include "protocol_interface.h"
 #include <iostream>
-#include <sstream>
-#include <algorithm>
+#include <thread>
+#include <chrono>
+#include <map>
+#include <vector>
+#include <mutex>
 
 namespace router_sim {
 
-ISISProtocol::ISISProtocol() 
-    : running_(false)
-    , system_id_("0000.0000.0001")
-    , level_(2)
-    , area_id_("49.0001")
-    , stats_{} {
-}
-
-ISISProtocol::~ISISProtocol() {
-    stop();
-}
-
-bool ISISProtocol::initialize(const std::map<std::string, std::string>& config) {
-    std::cout << "Initializing ISIS Protocol..." << std::endl;
+class ISISProtocol : public ProtocolInterface {
+public:
+    ISISProtocol() : running_(false), system_id_(""), area_id_(""), level_(2) {}
     
-    config_ = config;
-    
-    // Parse configuration
-    auto system_id_it = config.find("system_id");
-    if (system_id_it != config.end()) {
-        system_id_ = system_id_it->second;
+    virtual ~ISISProtocol() {
+        stop();
     }
     
-    auto level_it = config.find("level");
-    if (level_it != config.end()) {
-        level_ = static_cast<uint8_t>(std::stoul(level_it->second));
-    }
-    
-    auto area_id_it = config.find("area_id");
-    if (area_id_it != config.end()) {
-        area_id_ = area_id_it->second;
-    }
-    
-    std::cout << "ISIS Protocol initialized - System ID: " << system_id_ 
-              << ", Level: " << static_cast<int>(level_) 
-              << ", Area: " << area_id_ << std::endl;
-    return true;
-}
-
-bool ISISProtocol::start() {
-    if (running_) {
-        return true;
-    }
-    
-    std::cout << "Starting ISIS Protocol..." << std::endl;
-    running_ = true;
-    
-    // Start ISIS adjacency with each neighbor
-    for (const auto& neighbor : neighbors_) {
-        if (establish_adjacency(neighbor.second)) {
-            stats_.neighbors_established++;
-        }
-    }
-    
-    std::cout << "ISIS Protocol started with " << stats_.neighbors_established 
-              << " established adjacencies" << std::endl;
-    return true;
-}
-
-bool ISISProtocol::stop() {
-    if (!running_) {
-        return true;
-    }
-    
-    std::cout << "Stopping ISIS Protocol..." << std::endl;
-    running_ = false;
-    
-    // Close all ISIS adjacencies
-    for (auto& neighbor : neighbors_) {
-        neighbor.second.state = "Down";
-        if (neighbor_update_callback_) {
-            neighbor_update_callback_(neighbor.second, false);
-        }
-    }
-    
-    stats_.neighbors_established = 0;
-    std::cout << "ISIS Protocol stopped" << std::endl;
-    return true;
-}
-
-bool ISISProtocol::is_running() const {
-    return running_;
-}
-
-bool ISISProtocol::add_neighbor(const std::string& address, const std::map<std::string, std::string>& config) {
-    std::cout << "Adding ISIS neighbor: " << address << std::endl;
-    
-    NeighborInfo neighbor;
-    neighbor.address = address;
-    neighbor.interface = config.count("interface") ? config.at("interface") : "";
-    neighbor.state = "Down";
-    neighbor.as_number = 0; // ISIS doesn't use AS numbers
-    neighbor.messages_sent = 0;
-    neighbor.messages_received = 0;
-    neighbor.last_error = "";
-    neighbor.last_seen = std::chrono::steady_clock::now();
-    
-    neighbors_[address] = neighbor;
-    
-    // Try to establish adjacency if protocol is running
-    if (running_) {
-        if (establish_adjacency(neighbor)) {
-            stats_.neighbors_established++;
-        }
-    }
-    
-    return true;
-}
-
-bool ISISProtocol::remove_neighbor(const std::string& address) {
-    std::cout << "Removing ISIS neighbor: " << address << std::endl;
-    
-    auto it = neighbors_.find(address);
-    if (it != neighbors_.end()) {
-        if (it->second.state == "Up") {
-            stats_.neighbors_established--;
-        }
-        neighbors_.erase(it);
-        return true;
-    }
-    
-    return false;
-}
-
-std::vector<NeighborInfo> ISISProtocol::get_neighbors() const {
-    std::vector<NeighborInfo> result;
-    for (const auto& pair : neighbors_) {
-        result.push_back(pair.second);
-    }
-    return result;
-}
-
-bool ISISProtocol::is_neighbor_established(const std::string& address) const {
-    auto it = neighbors_.find(address);
-    return it != neighbors_.end() && it->second.state == "Up";
-}
-
-bool ISISProtocol::advertise_route(const RouteInfo& route) {
-    std::cout << "ISIS: Advertising route " << route.destination 
-              << "/" << static_cast<int>(route.prefix_length) << std::endl;
-    
-    // Store the route
-    std::string key = route.destination + "/" + std::to_string(route.prefix_length);
-    routes_[key] = route;
-    
-    // Send LSP UPDATE to all established neighbors
-    for (auto& neighbor : neighbors_) {
-        if (neighbor.second.state == "Up") {
-            send_lsp_update(neighbor.second, route);
-            neighbor.second.messages_sent++;
-        }
-    }
-    
-    stats_.routes_advertised++;
-    return true;
-}
-
-bool ISISProtocol::withdraw_route(const std::string& destination, uint8_t prefix_length) {
-    std::cout << "ISIS: Withdrawing route " << destination 
-              << "/" << static_cast<int>(prefix_length) << std::endl;
-    
-    // Remove the route
-    std::string key = destination + "/" + std::to_string(prefix_length);
-    auto it = routes_.find(key);
-    if (it != routes_.end()) {
-        routes_.erase(it);
+    // Core protocol operations
+    virtual bool initialize(const std::map<std::string, std::string>& config) override {
+        std::lock_guard<std::mutex> lock(config_mutex_);
         
-        // Send LSP UPDATE to all established neighbors
-        for (auto& neighbor : neighbors_) {
-            if (neighbor.second.state == "Up") {
-                RouteInfo withdraw_route;
-                withdraw_route.destination = destination;
-                withdraw_route.prefix_length = prefix_length;
-                send_lsp_update(neighbor.second, withdraw_route);
-                neighbor.second.messages_sent++;
-            }
+        auto it = config.find("system_id");
+        if (it != config.end()) {
+            system_id_ = it->second;
         }
         
-        stats_.routes_withdrawn++;
+        it = config.find("area_id");
+        if (it != config.end()) {
+            area_id_ = it->second;
+        }
+        
+        it = config.find("level");
+        if (it != config.end()) {
+            level_ = std::stoi(it->second);
+        }
+        
+        it = config.find("hello_interval");
+        if (it != config.end()) {
+            hello_interval_ = std::stoi(it->second);
+        }
+        
+        it = config.find("hold_time");
+        if (it != config.end()) {
+            hold_time_ = std::stoi(it->second);
+        }
+        
+        initialized_ = true;
         return true;
     }
     
-    return false;
-}
-
-std::vector<RouteInfo> ISISProtocol::get_routes() const {
-    std::vector<RouteInfo> result;
-    for (const auto& pair : routes_) {
-        result.push_back(pair.second);
-    }
-    return result;
-}
-
-bool ISISProtocol::update_config(const std::map<std::string, std::string>& config) {
-    config_.insert(config.begin(), config.end());
-    
-    // Update system ID if specified
-    auto system_id_it = config.find("system_id");
-    if (system_id_it != config.end()) {
-        system_id_ = system_id_it->second;
-    }
-    
-    // Update level if specified
-    auto level_it = config.find("level");
-    if (level_it != config.end()) {
-        level_ = static_cast<uint8_t>(std::stoul(level_it->second));
-    }
-    
-    // Update area ID if specified
-    auto area_id_it = config.find("area_id");
-    if (area_id_it != config.end()) {
-        area_id_ = area_id_it->second;
-    }
-    
-    return true;
-}
-
-std::map<std::string, std::string> ISISProtocol::get_config() const {
-    return config_;
-}
-
-ISISProtocol::ProtocolStatistics ISISProtocol::get_statistics() const {
-    return stats_;
-}
-
-void ISISProtocol::set_route_update_callback(RouteUpdateCallback callback) {
-    route_update_callback_ = callback;
-}
-
-void ISISProtocol::set_neighbor_update_callback(NeighborUpdateCallback callback) {
-    neighbor_update_callback_ = callback;
-}
-
-bool ISISProtocol::establish_adjacency(NeighborInfo& neighbor) {
-    std::cout << "ISIS: Establishing adjacency with " << neighbor.address << std::endl;
-    
-    // Simulate ISIS adjacency establishment
-    neighbor.state = "Init";
-    
-    // Send HELLO message
-    if (send_hello_message(neighbor)) {
-        neighbor.state = "Up";
-        neighbor.messages_sent++;
+    virtual bool start() override {
+        std::lock_guard<std::mutex> lock(state_mutex_);
         
-        // Simulate receiving HELLO message
-        if (receive_hello_message(neighbor)) {
-            neighbor.messages_received++;
-            neighbor.last_seen = std::chrono::steady_clock::now();
-            
-            if (neighbor_update_callback_) {
-                neighbor_update_callback_(neighbor, true);
-            }
-            
-            std::cout << "ISIS: Adjacency established with " << neighbor.address << std::endl;
+        if (!initialized_) {
+            return false;
+        }
+        
+        if (running_) {
             return true;
         }
+        
+        running_ = true;
+        
+        // Start ISIS daemon thread
+        daemon_thread_ = std::thread(&ISISProtocol::daemon_loop, this);
+        
+        return true;
     }
     
-    neighbor.state = "Down";
-    neighbor.last_error = "Failed to establish adjacency";
-    return false;
-}
-
-bool ISISProtocol::send_hello_message(const NeighborInfo& neighbor) {
-    // Simulate sending ISIS HELLO message
-    std::cout << "ISIS: Sending HELLO message to " << neighbor.address << std::endl;
-    return true;
-}
-
-bool ISISProtocol::receive_hello_message(NeighborInfo& neighbor) {
-    // Simulate receiving ISIS HELLO message
-    std::cout << "ISIS: Received HELLO message from " << neighbor.address << std::endl;
-    return true;
-}
-
-bool ISISProtocol::send_lsp_update(const NeighborInfo& neighbor, const RouteInfo& route) {
-    // Simulate sending ISIS LSP UPDATE message
-    std::cout << "ISIS: Sending LSP UPDATE to " << neighbor.address 
-              << " for route " << route.destination << "/" << static_cast<int>(route.prefix_length) << std::endl;
-    return true;
-}
-
-void ISISProtocol::process_lsp_update(const NeighborInfo& neighbor, const RouteInfo& route) {
-    std::cout << "ISIS: Processing LSP UPDATE from " << neighbor.address 
-              << " for route " << route.destination << "/" << static_cast<int>(route.prefix_length) << std::endl;
-    
-    // Store received route
-    std::string key = route.destination + "/" + std::to_string(route.prefix_length);
-    routes_[key] = route;
-    
-    stats_.routes_received++;
-    
-    if (route_update_callback_) {
-        route_update_callback_(route, true);
+    virtual bool stop() override {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        
+        if (!running_) {
+            return true;
+        }
+        
+        running_ = false;
+        
+        if (daemon_thread_.joinable()) {
+            daemon_thread_.join();
+        }
+        
+        return true;
     }
+    
+    virtual bool is_running() const override {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        return running_;
+    }
+    
+    // Neighbor management
+    virtual bool add_neighbor(const std::string& address, const std::map<std::string, std::string>& config) override {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        NeighborInfo neighbor;
+        neighbor.address = address;
+        neighbor.protocol = "ISIS";
+        neighbor.state = "Down";
+        neighbor.last_hello = std::chrono::steady_clock::now();
+        neighbor.hold_time = hold_time_;
+        
+        // Copy additional attributes
+        for (const auto& pair : config) {
+            neighbor.attributes[pair.first] = pair.second;
+        }
+        
+        neighbors_[address] = neighbor;
+        
+        // Notify callback
+        if (neighbor_callback_) {
+            neighbor_callback_(neighbor, true);
+        }
+        
+        return true;
+    }
+    
+    virtual bool remove_neighbor(const std::string& address) override {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        auto it = neighbors_.find(address);
+        if (it == neighbors_.end()) {
+            return false;
+        }
+        
+        NeighborInfo neighbor = it->second;
+        neighbors_.erase(it);
+        
+        // Notify callback
+        if (neighbor_callback_) {
+            neighbor_callback_(neighbor, false);
+        }
+        
+        return true;
+    }
+    
+    virtual std::vector<NeighborInfo> get_neighbors() const override {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        std::vector<NeighborInfo> result;
+        for (const auto& pair : neighbors_) {
+            result.push_back(pair.second);
+        }
+        
+        return result;
+    }
+    
+    virtual bool is_neighbor_established(const std::string& address) const override {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        auto it = neighbors_.find(address);
+        if (it == neighbors_.end()) {
+            return false;
+        }
+        
+        return it->second.is_established();
+    }
+    
+    // Route management
+    virtual bool advertise_route(const RouteInfo& route) override {
+        std::lock_guard<std::mutex> lock(routes_mutex_);
+        
+        std::string key = route.destination + "/" + std::to_string(route.prefix_length);
+        routes_[key] = route;
+        
+        // Update statistics
+        stats_.routes_advertised++;
+        stats_.last_update = std::chrono::steady_clock::now();
+        
+        // Notify callback
+        if (route_callback_) {
+            route_callback_(route, true);
+        }
+        
+        return true;
+    }
+    
+    virtual bool withdraw_route(const std::string& destination, uint8_t prefix_length) override {
+        std::lock_guard<std::mutex> lock(routes_mutex_);
+        
+        std::string key = destination + "/" + std::to_string(prefix_length);
+        auto it = routes_.find(key);
+        if (it == routes_.end()) {
+            return false;
+        }
+        
+        RouteInfo route = it->second;
+        routes_.erase(it);
+        
+        // Update statistics
+        stats_.routes_withdrawn++;
+        stats_.last_update = std::chrono::steady_clock::now();
+        
+        // Notify callback
+        if (route_callback_) {
+            route_callback_(route, false);
+        }
+        
+        return true;
+    }
+    
+    virtual std::vector<RouteInfo> get_routes() const override {
+        std::lock_guard<std::mutex> lock(routes_mutex_);
+        
+        std::vector<RouteInfo> result;
+        for (const auto& pair : routes_) {
+            result.push_back(pair.second);
+        }
+        
+        return result;
+    }
+    
+    // Configuration
+    virtual bool update_config(const std::map<std::string, std::string>& config) override {
+        std::lock_guard<std::mutex> lock(config_mutex_);
+        
+        for (const auto& pair : config) {
+            config_[pair.first] = pair.second;
+        }
+        
+        return true;
+    }
+    
+    virtual std::map<std::string, std::string> get_config() const override {
+        std::lock_guard<std::mutex> lock(config_mutex_);
+        return config_;
+    }
+    
+    // Statistics
+    virtual ProtocolStatistics get_statistics() const override {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        return stats_;
+    }
+    
+    // Event callbacks
+    virtual void set_route_update_callback(RouteUpdateCallback callback) override {
+        std::lock_guard<std::mutex> lock(callbacks_mutex_);
+        route_callback_ = callback;
+    }
+    
+    virtual void set_neighbor_update_callback(NeighborUpdateCallback callback) override {
+        std::lock_guard<std::mutex> lock(callbacks_mutex_);
+        neighbor_callback_ = callback;
+    }
+
+private:
+    mutable std::mutex state_mutex_;
+    mutable std::mutex config_mutex_;
+    mutable std::mutex neighbors_mutex_;
+    mutable std::mutex routes_mutex_;
+    mutable std::mutex stats_mutex_;
+    mutable std::mutex callbacks_mutex_;
+    
+    bool initialized_;
+    bool running_;
+    std::thread daemon_thread_;
+    
+    std::string system_id_;
+    std::string area_id_;
+    int level_;
+    int hello_interval_;
+    int hold_time_;
+    
+    std::map<std::string, std::string> config_;
+    std::map<std::string, NeighborInfo> neighbors_;
+    std::map<std::string, RouteInfo> routes_;
+    ProtocolStatistics stats_;
+    
+    RouteUpdateCallback route_callback_;
+    NeighborUpdateCallback neighbor_callback_;
+    
+    void daemon_loop() {
+        while (running_) {
+            // Send hello packets
+            send_hello_packets();
+            
+            // Check neighbor timeouts
+            check_neighbor_timeouts();
+            
+            // Process received packets
+            process_received_packets();
+            
+            // Sleep for hello interval
+            std::this_thread::sleep_for(std::chrono::seconds(hello_interval_));
+        }
+    }
+    
+    void send_hello_packets() {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        for (auto& pair : neighbors_) {
+            NeighborInfo& neighbor = pair.second;
+            
+            // Update statistics
+            stats_.messages_sent++;
+            
+            // Simulate ISIS neighbor state machine
+            if (neighbor.state == "Down") {
+                neighbor.state = "Init";
+            } else if (neighbor.state == "Init") {
+                neighbor.state = "Up";
+            }
+            
+            neighbor.last_hello = std::chrono::steady_clock::now();
+        }
+    }
+    
+    void check_neighbor_timeouts() {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        auto now = std::chrono::steady_clock::now();
+        
+        for (auto it = neighbors_.begin(); it != neighbors_.end();) {
+            NeighborInfo& neighbor = it->second;
+            
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                now - neighbor.last_hello).count();
+            
+            if (elapsed > hold_time_) {
+                // Neighbor timeout
+                NeighborInfo timed_out_neighbor = neighbor;
+                it = neighbors_.erase(it);
+                
+                // Notify callback
+                if (neighbor_callback_) {
+                    neighbor_callback_(timed_out_neighbor, false);
+                }
+                
+                stats_.neighbor_down_count++;
+            } else {
+                ++it;
+            }
+        }
+    }
+    
+    void process_received_packets() {
+        // Simulate packet processing
+        stats_.messages_received++;
+    }
+};
+
+// Factory function to create ISIS protocol instance
+std::unique_ptr<ProtocolInterface> create_isis_protocol() {
+    return std::make_unique<ISISProtocol>();
 }
 
 } // namespace router_sim

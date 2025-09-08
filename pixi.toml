@@ -1,0 +1,120 @@
+[project]
+name = "router-sim"
+version = "1.0.0"
+description = "Multi-Protocol Router Simulator with CloudPods and Aviatrix Integration"
+channels = ["conda-forge", "defaults"]
+platforms = ["linux-64", "osx-64", "win-64"]
+
+[dependencies]
+# Build tools
+cmake = ">=3.20"
+ninja = "*"
+pkg-config = "*"
+
+# C++ dependencies
+gcc_linux-64 = ">=11.0"
+gxx_linux-64 = ">=11.0"
+clang_osx-64 = ">=14.0"
+clangxx_osx-64 = ">=14.0"
+msvc_win-64 = ">=19.0"
+
+# System libraries
+libpcap = "*"
+openssl = ">=3.0"
+zlib = "*"
+curl = "*"
+
+# Development tools
+git = "*"
+make = "*"
+autotools = "*"
+
+# Testing
+gtest = "*"
+gbenchmark = "*"
+
+# Documentation
+doxygen = "*"
+sphinx = "*"
+
+# Go
+go = ">=1.21"
+
+# Rust
+rust = ">=1.70"
+cargo = ">=1.70"
+
+# Python (for scripts and testing)
+python = ">=3.9"
+pytest = "*"
+pytest-cov = "*"
+black = "*"
+flake8 = "*"
+
+# Node.js (for web interface)
+nodejs = ">=18.0"
+npm = ">=9.0"
+
+# Additional tools
+jq = "*"
+yq = "*"
+docker = "*"
+kubectl = "*"
+helm = "*"
+
+[environments]
+[environments.dev]
+channels = ["conda-forge", "defaults"]
+dependencies = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "flake8",
+    "mypy",
+    "pre-commit",
+]
+
+[environments.test]
+channels = ["conda-forge", "defaults"]
+dependencies = [
+    "pytest",
+    "pytest-cov",
+    "gtest",
+    "gbenchmark",
+]
+
+[environments.docs]
+channels = ["conda-forge", "defaults"]
+dependencies = [
+    "doxygen",
+    "sphinx",
+    "sphinx-rtd-theme",
+    "myst-parser",
+]
+
+[tasks]
+build = "mkdir -p build && cd build && cmake .. -G Ninja && ninja"
+test = "cd build && ctest --output-on-failure"
+clean = "rm -rf build"
+install = "cd build && ninja install"
+
+[tasks.go-build]
+cmd = "go build -o bin/cloudnet ./go/cmd/cloudnet"
+
+[tasks.rust-build]
+cmd = "cd rust && cargo build --release"
+
+[tasks.web-build]
+cmd = "cd web && npm install && npm run build"
+
+[tasks.docs]
+cmd = "cd build && make docs"
+
+[tasks.docker-build]
+cmd = "docker build -t router-sim ."
+
+[tasks.k8s-deploy]
+cmd = "kubectl apply -f k8s/"
+
+[activation]
+scripts = ["scripts/activate.sh"]

@@ -1,305 +1,347 @@
-#include "ospf.h"
+#include "protocol_interface.h"
 #include <iostream>
-#include <sstream>
-#include <algorithm>
+#include <thread>
+#include <chrono>
+#include <map>
+#include <vector>
+#include <mutex>
 
 namespace router_sim {
 
-OSPFProtocol::OSPFProtocol() 
-    : running_(false)
-    , router_id_("")
-    , area_id_("0.0.0.0")
-    , stats_{} {
-}
-
-OSPFProtocol::~OSPFProtocol() {
-    stop();
-}
-
-bool OSPFProtocol::initialize(const std::map<std::string, std::string>& config) {
-    std::cout << "Initializing OSPF Protocol..." << std::endl;
+class OSPFProtocol : public ProtocolInterface {
+public:
+    OSPFProtocol() : running_(false), router_id_(""), area_id_("0.0.0.0") {}
     
-    config_ = config;
-    
-    // Parse configuration
-    auto router_id_it = config.find("router_id");
-    if (router_id_it != config.end()) {
-        router_id_ = router_id_it->second;
-    } else {
-        std::cerr << "OSPF: router_id not specified" << std::endl;
-        return false;
+    virtual ~OSPFProtocol() {
+        stop();
     }
     
-    auto area_id_it = config.find("area_id");
-    if (area_id_it != config.end()) {
-        area_id_ = area_id_it->second;
-    }
-    
-    std::cout << "OSPF Protocol initialized - Router ID: " << router_id_ 
-              << ", Area: " << area_id_ << std::endl;
-    return true;
-}
-
-bool OSPFProtocol::start() {
-    if (running_) {
-        return true;
-    }
-    
-    std::cout << "Starting OSPF Protocol..." << std::endl;
-    running_ = true;
-    
-    // Start OSPF adjacency with each neighbor
-    for (const auto& neighbor : neighbors_) {
-        if (establish_adjacency(neighbor.second)) {
-            stats_.neighbors_established++;
-        }
-    }
-    
-    std::cout << "OSPF Protocol started with " << stats_.neighbors_established 
-              << " established adjacencies" << std::endl;
-    return true;
-}
-
-bool OSPFProtocol::stop() {
-    if (!running_) {
-        return true;
-    }
-    
-    std::cout << "Stopping OSPF Protocol..." << std::endl;
-    running_ = false;
-    
-    // Close all OSPF adjacencies
-    for (auto& neighbor : neighbors_) {
-        neighbor.second.state = "Down";
-        if (neighbor_update_callback_) {
-            neighbor_update_callback_(neighbor.second, false);
-        }
-    }
-    
-    stats_.neighbors_established = 0;
-    std::cout << "OSPF Protocol stopped" << std::endl;
-    return true;
-}
-
-bool OSPFProtocol::is_running() const {
-    return running_;
-}
-
-bool OSPFProtocol::add_neighbor(const std::string& address, const std::map<std::string, std::string>& config) {
-    std::cout << "Adding OSPF neighbor: " << address << std::endl;
-    
-    NeighborInfo neighbor;
-    neighbor.address = address;
-    neighbor.interface = config.count("interface") ? config.at("interface") : "";
-    neighbor.state = "Down";
-    neighbor.as_number = 0; // OSPF doesn't use AS numbers
-    neighbor.messages_sent = 0;
-    neighbor.messages_received = 0;
-    neighbor.last_error = "";
-    neighbor.last_seen = std::chrono::steady_clock::now();
-    
-    neighbors_[address] = neighbor;
-    
-    // Try to establish adjacency if protocol is running
-    if (running_) {
-        if (establish_adjacency(neighbor)) {
-            stats_.neighbors_established++;
-        }
-    }
-    
-    return true;
-}
-
-bool OSPFProtocol::remove_neighbor(const std::string& address) {
-    std::cout << "Removing OSPF neighbor: " << address << std::endl;
-    
-    auto it = neighbors_.find(address);
-    if (it != neighbors_.end()) {
-        if (it->second.state == "Full") {
-            stats_.neighbors_established--;
-        }
-        neighbors_.erase(it);
-        return true;
-    }
-    
-    return false;
-}
-
-std::vector<NeighborInfo> OSPFProtocol::get_neighbors() const {
-    std::vector<NeighborInfo> result;
-    for (const auto& pair : neighbors_) {
-        result.push_back(pair.second);
-    }
-    return result;
-}
-
-bool OSPFProtocol::is_neighbor_established(const std::string& address) const {
-    auto it = neighbors_.find(address);
-    return it != neighbors_.end() && it->second.state == "Full";
-}
-
-bool OSPFProtocol::advertise_route(const RouteInfo& route) {
-    std::cout << "OSPF: Advertising route " << route.destination 
-              << "/" << static_cast<int>(route.prefix_length) << std::endl;
-    
-    // Store the route
-    std::string key = route.destination + "/" + std::to_string(route.prefix_length);
-    routes_[key] = route;
-    
-    // Send LSA UPDATE to all established neighbors
-    for (auto& neighbor : neighbors_) {
-        if (neighbor.second.state == "Full") {
-            send_lsa_update(neighbor.second, route);
-            neighbor.second.messages_sent++;
-        }
-    }
-    
-    stats_.routes_advertised++;
-    return true;
-}
-
-bool OSPFProtocol::withdraw_route(const std::string& destination, uint8_t prefix_length) {
-    std::cout << "OSPF: Withdrawing route " << destination 
-              << "/" << static_cast<int>(prefix_length) << std::endl;
-    
-    // Remove the route
-    std::string key = destination + "/" + std::to_string(prefix_length);
-    auto it = routes_.find(key);
-    if (it != routes_.end()) {
-        routes_.erase(it);
+    // Core protocol operations
+    virtual bool initialize(const std::map<std::string, std::string>& config) override {
+        std::lock_guard<std::mutex> lock(config_mutex_);
         
-        // Send LSA UPDATE to all established neighbors
-        for (auto& neighbor : neighbors_) {
-            if (neighbor.second.state == "Full") {
-                RouteInfo withdraw_route;
-                withdraw_route.destination = destination;
-                withdraw_route.prefix_length = prefix_length;
-                send_lsa_update(neighbor.second, withdraw_route);
-                neighbor.second.messages_sent++;
-            }
+        auto it = config.find("router_id");
+        if (it != config.end()) {
+            router_id_ = it->second;
         }
         
-        stats_.routes_withdrawn++;
+        it = config.find("area_id");
+        if (it != config.end()) {
+            area_id_ = it->second;
+        }
+        
+        it = config.find("hello_interval");
+        if (it != config.end()) {
+            hello_interval_ = std::stoi(it->second);
+        }
+        
+        it = config.find("dead_interval");
+        if (it != config.end()) {
+            dead_interval_ = std::stoi(it->second);
+        }
+        
+        initialized_ = true;
         return true;
     }
     
-    return false;
-}
-
-std::vector<RouteInfo> OSPFProtocol::get_routes() const {
-    std::vector<RouteInfo> result;
-    for (const auto& pair : routes_) {
-        result.push_back(pair.second);
-    }
-    return result;
-}
-
-bool OSPFProtocol::update_config(const std::map<std::string, std::string>& config) {
-    config_.insert(config.begin(), config.end());
-    
-    // Update router ID if specified
-    auto router_id_it = config.find("router_id");
-    if (router_id_it != config.end()) {
-        router_id_ = router_id_it->second;
-    }
-    
-    // Update area ID if specified
-    auto area_id_it = config.find("area_id");
-    if (area_id_it != config.end()) {
-        area_id_ = area_id_it->second;
-    }
-    
-    return true;
-}
-
-std::map<std::string, std::string> OSPFProtocol::get_config() const {
-    return config_;
-}
-
-OSPFProtocol::ProtocolStatistics OSPFProtocol::get_statistics() const {
-    return stats_;
-}
-
-void OSPFProtocol::set_route_update_callback(RouteUpdateCallback callback) {
-    route_update_callback_ = callback;
-}
-
-void OSPFProtocol::set_neighbor_update_callback(NeighborUpdateCallback callback) {
-    neighbor_update_callback_ = callback;
-}
-
-bool OSPFProtocol::establish_adjacency(NeighborInfo& neighbor) {
-    std::cout << "OSPF: Establishing adjacency with " << neighbor.address << std::endl;
-    
-    // Simulate OSPF adjacency establishment
-    neighbor.state = "Init";
-    
-    // Send HELLO message
-    if (send_hello_message(neighbor)) {
-        neighbor.state = "2-Way";
-        neighbor.messages_sent++;
+    virtual bool start() override {
+        std::lock_guard<std::mutex> lock(state_mutex_);
         
-        // Simulate receiving HELLO message
-        if (receive_hello_message(neighbor)) {
-            neighbor.state = "ExStart";
-            neighbor.messages_received++;
-            
-            // Simulate database exchange
-            neighbor.state = "Exchange";
-            
-            // Simulate loading
-            neighbor.state = "Loading";
-            
-            // Simulate full adjacency
-            neighbor.state = "Full";
-            neighbor.last_seen = std::chrono::steady_clock::now();
-            
-            if (neighbor_update_callback_) {
-                neighbor_update_callback_(neighbor, true);
-            }
-            
-            std::cout << "OSPF: Adjacency established with " << neighbor.address << std::endl;
+        if (!initialized_) {
+            return false;
+        }
+        
+        if (running_) {
             return true;
         }
+        
+        running_ = true;
+        
+        // Start OSPF daemon thread
+        daemon_thread_ = std::thread(&OSPFProtocol::daemon_loop, this);
+        
+        return true;
     }
     
-    neighbor.state = "Down";
-    neighbor.last_error = "Failed to establish adjacency";
-    return false;
-}
-
-bool OSPFProtocol::send_hello_message(const NeighborInfo& neighbor) {
-    // Simulate sending OSPF HELLO message
-    std::cout << "OSPF: Sending HELLO message to " << neighbor.address << std::endl;
-    return true;
-}
-
-bool OSPFProtocol::receive_hello_message(NeighborInfo& neighbor) {
-    // Simulate receiving OSPF HELLO message
-    std::cout << "OSPF: Received HELLO message from " << neighbor.address << std::endl;
-    return true;
-}
-
-bool OSPFProtocol::send_lsa_update(const NeighborInfo& neighbor, const RouteInfo& route) {
-    // Simulate sending OSPF LSA UPDATE message
-    std::cout << "OSPF: Sending LSA UPDATE to " << neighbor.address 
-              << " for route " << route.destination << "/" << static_cast<int>(route.prefix_length) << std::endl;
-    return true;
-}
-
-void OSPFProtocol::process_lsa_update(const NeighborInfo& neighbor, const RouteInfo& route) {
-    std::cout << "OSPF: Processing LSA UPDATE from " << neighbor.address 
-              << " for route " << route.destination << "/" << static_cast<int>(route.prefix_length) << std::endl;
-    
-    // Store received route
-    std::string key = route.destination + "/" + std::to_string(route.prefix_length);
-    routes_[key] = route;
-    
-    stats_.routes_received++;
-    
-    if (route_update_callback_) {
-        route_update_callback_(route, true);
+    virtual bool stop() override {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        
+        if (!running_) {
+            return true;
+        }
+        
+        running_ = false;
+        
+        if (daemon_thread_.joinable()) {
+            daemon_thread_.join();
+        }
+        
+        return true;
     }
+    
+    virtual bool is_running() const override {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        return running_;
+    }
+    
+    // Neighbor management
+    virtual bool add_neighbor(const std::string& address, const std::map<std::string, std::string>& config) override {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        NeighborInfo neighbor;
+        neighbor.address = address;
+        neighbor.protocol = "OSPF";
+        neighbor.state = "Init";
+        neighbor.last_hello = std::chrono::steady_clock::now();
+        neighbor.hold_time = dead_interval_;
+        
+        // Copy additional attributes
+        for (const auto& pair : config) {
+            neighbor.attributes[pair.first] = pair.second;
+        }
+        
+        neighbors_[address] = neighbor;
+        
+        // Notify callback
+        if (neighbor_callback_) {
+            neighbor_callback_(neighbor, true);
+        }
+        
+        return true;
+    }
+    
+    virtual bool remove_neighbor(const std::string& address) override {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        auto it = neighbors_.find(address);
+        if (it == neighbors_.end()) {
+            return false;
+        }
+        
+        NeighborInfo neighbor = it->second;
+        neighbors_.erase(it);
+        
+        // Notify callback
+        if (neighbor_callback_) {
+            neighbor_callback_(neighbor, false);
+        }
+        
+        return true;
+    }
+    
+    virtual std::vector<NeighborInfo> get_neighbors() const override {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        std::vector<NeighborInfo> result;
+        for (const auto& pair : neighbors_) {
+            result.push_back(pair.second);
+        }
+        
+        return result;
+    }
+    
+    virtual bool is_neighbor_established(const std::string& address) const override {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        auto it = neighbors_.find(address);
+        if (it == neighbors_.end()) {
+            return false;
+        }
+        
+        return it->second.is_established();
+    }
+    
+    // Route management
+    virtual bool advertise_route(const RouteInfo& route) override {
+        std::lock_guard<std::mutex> lock(routes_mutex_);
+        
+        std::string key = route.destination + "/" + std::to_string(route.prefix_length);
+        routes_[key] = route;
+        
+        // Update statistics
+        stats_.routes_advertised++;
+        stats_.last_update = std::chrono::steady_clock::now();
+        
+        // Notify callback
+        if (route_callback_) {
+            route_callback_(route, true);
+        }
+        
+        return true;
+    }
+    
+    virtual bool withdraw_route(const std::string& destination, uint8_t prefix_length) override {
+        std::lock_guard<std::mutex> lock(routes_mutex_);
+        
+        std::string key = destination + "/" + std::to_string(prefix_length);
+        auto it = routes_.find(key);
+        if (it == routes_.end()) {
+            return false;
+        }
+        
+        RouteInfo route = it->second;
+        routes_.erase(it);
+        
+        // Update statistics
+        stats_.routes_withdrawn++;
+        stats_.last_update = std::chrono::steady_clock::now();
+        
+        // Notify callback
+        if (route_callback_) {
+            route_callback_(route, false);
+        }
+        
+        return true;
+    }
+    
+    virtual std::vector<RouteInfo> get_routes() const override {
+        std::lock_guard<std::mutex> lock(routes_mutex_);
+        
+        std::vector<RouteInfo> result;
+        for (const auto& pair : routes_) {
+            result.push_back(pair.second);
+        }
+        
+        return result;
+    }
+    
+    // Configuration
+    virtual bool update_config(const std::map<std::string, std::string>& config) override {
+        std::lock_guard<std::mutex> lock(config_mutex_);
+        
+        for (const auto& pair : config) {
+            config_[pair.first] = pair.second;
+        }
+        
+        return true;
+    }
+    
+    virtual std::map<std::string, std::string> get_config() const override {
+        std::lock_guard<std::mutex> lock(config_mutex_);
+        return config_;
+    }
+    
+    // Statistics
+    virtual ProtocolStatistics get_statistics() const override {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        return stats_;
+    }
+    
+    // Event callbacks
+    virtual void set_route_update_callback(RouteUpdateCallback callback) override {
+        std::lock_guard<std::mutex> lock(callbacks_mutex_);
+        route_callback_ = callback;
+    }
+    
+    virtual void set_neighbor_update_callback(NeighborUpdateCallback callback) override {
+        std::lock_guard<std::mutex> lock(callbacks_mutex_);
+        neighbor_callback_ = callback;
+    }
+
+private:
+    mutable std::mutex state_mutex_;
+    mutable std::mutex config_mutex_;
+    mutable std::mutex neighbors_mutex_;
+    mutable std::mutex routes_mutex_;
+    mutable std::mutex stats_mutex_;
+    mutable std::mutex callbacks_mutex_;
+    
+    bool initialized_;
+    bool running_;
+    std::thread daemon_thread_;
+    
+    std::string router_id_;
+    std::string area_id_;
+    int hello_interval_;
+    int dead_interval_;
+    
+    std::map<std::string, std::string> config_;
+    std::map<std::string, NeighborInfo> neighbors_;
+    std::map<std::string, RouteInfo> routes_;
+    ProtocolStatistics stats_;
+    
+    RouteUpdateCallback route_callback_;
+    NeighborUpdateCallback neighbor_callback_;
+    
+    void daemon_loop() {
+        while (running_) {
+            // Send hello packets
+            send_hello_packets();
+            
+            // Check neighbor timeouts
+            check_neighbor_timeouts();
+            
+            // Process received packets
+            process_received_packets();
+            
+            // Sleep for hello interval
+            std::this_thread::sleep_for(std::chrono::seconds(hello_interval_));
+        }
+    }
+    
+    void send_hello_packets() {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        for (auto& pair : neighbors_) {
+            NeighborInfo& neighbor = pair.second;
+            
+            // Update statistics
+            stats_.messages_sent++;
+            
+            // Simulate hello packet processing
+            if (neighbor.state == "Init") {
+                neighbor.state = "2-Way";
+            } else if (neighbor.state == "2-Way") {
+                neighbor.state = "ExStart";
+            } else if (neighbor.state == "ExStart") {
+                neighbor.state = "Exchange";
+            } else if (neighbor.state == "Exchange") {
+                neighbor.state = "Loading";
+            } else if (neighbor.state == "Loading") {
+                neighbor.state = "Full";
+            }
+            
+            neighbor.last_hello = std::chrono::steady_clock::now();
+        }
+    }
+    
+    void check_neighbor_timeouts() {
+        std::lock_guard<std::mutex> lock(neighbors_mutex_);
+        
+        auto now = std::chrono::steady_clock::now();
+        
+        for (auto it = neighbors_.begin(); it != neighbors_.end();) {
+            NeighborInfo& neighbor = it->second;
+            
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                now - neighbor.last_hello).count();
+            
+            if (elapsed > dead_interval_) {
+                // Neighbor timeout
+                NeighborInfo timed_out_neighbor = neighbor;
+                it = neighbors_.erase(it);
+                
+                // Notify callback
+                if (neighbor_callback_) {
+                    neighbor_callback_(timed_out_neighbor, false);
+                }
+                
+                stats_.neighbor_down_count++;
+            } else {
+                ++it;
+            }
+        }
+    }
+    
+    void process_received_packets() {
+        // Simulate packet processing
+        stats_.messages_received++;
+    }
+};
+
+// Factory function to create OSPF protocol instance
+std::unique_ptr<ProtocolInterface> create_ospf_protocol() {
+    return std::make_unique<OSPFProtocol>();
 }
 
 } // namespace router_sim

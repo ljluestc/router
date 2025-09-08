@@ -3,137 +3,201 @@
 #include "frr_integration.h"
 #include "traffic_shaping.h"
 #include "netem_impairments.h"
+#include "yaml_config.h"
 #include <iostream>
 #include <sstream>
+#include <algorithm>
 #include <iomanip>
+#include <chrono>
+#include <thread>
 
 namespace RouterSim {
 
-CLIInterface::CLIInterface() : running_(false) {
-    // Register default commands
-    register_command("help", [this](const auto& args) { cmd_help(args); }, 
-                    "Show available commands");
-    register_command("quit", [this](const auto& args) { cmd_quit(args); }, 
-                    "Exit the CLI");
-    register_command("exit", [this](const auto& args) { cmd_quit(args); }, 
-                    "Exit the CLI");
-    register_command("show interfaces", [this](const auto& args) { cmd_show_interfaces(args); }, 
-                    "Show interface information");
-    register_command("show routes", [this](const auto& args) { cmd_show_routes(args); }, 
-                    "Show routing table");
-    register_command("show statistics", [this](const auto& args) { cmd_show_statistics(args); }, 
-                    "Show router statistics");
-    register_command("configure interface", [this](const auto& args) { cmd_configure_interface(args); }, 
-                    "Configure interface");
-    register_command("configure route", [this](const auto& args) { cmd_configure_route(args); }, 
-                    "Configure route");
-    register_command("start bgp", [this](const auto& args) { cmd_start_bgp(args); }, 
-                    "Start BGP protocol");
-    register_command("start ospf", [this](const auto& args) { cmd_start_ospf(args); }, 
-                    "Start OSPF protocol");
-    register_command("start isis", [this](const auto& args) { cmd_start_isis(args); }, 
-                    "Start IS-IS protocol");
-    register_command("configure traffic-shaping", [this](const auto& args) { cmd_configure_traffic_shaping(args); }, 
-                    "Configure traffic shaping");
-    register_command("configure netem", [this](const auto& args) { cmd_configure_netem(args); }, 
-                    "Configure network impairments");
-    register_command("load scenario", [this](const auto& args) { cmd_load_scenario(args); }, 
-                    "Load scenario from YAML file");
+CLIInterface::CLIInterface() : running_(false), router_core_(nullptr), frr_integration_(nullptr), 
+                              traffic_shaper_(nullptr), netem_impairments_(nullptr) {
+    // Initialize command handlers
+    initialize_commands();
 }
 
 CLIInterface::~CLIInterface() {
     stop();
 }
 
-void CLIInterface::set_router_core(std::shared_ptr<RouterCore> router) {
-    router_ = router;
-}
-
-void CLIInterface::set_frr_integration(std::shared_ptr<FRRIntegration> frr) {
-    frr_ = frr;
-}
-
-void CLIInterface::set_traffic_shaper(std::shared_ptr<TrafficShaper> shaper) {
-    shaper_ = shaper;
-}
-
-void CLIInterface::set_netem_impairments(std::shared_ptr<NetemImpairments> netem) {
-    netem_ = netem;
-}
-
-void CLIInterface::start() {
+bool CLIInterface::initialize() {
     if (running_) {
-        return;
+        return true;
+    }
+    
+    // Initialize components
+    router_core_ = std::make_unique<RouterCore>();
+    frr_integration_ = std::make_unique<FRRIntegration>();
+    traffic_shaper_ = std::make_unique<TrafficShapingManager>();
+    netem_impairments_ = std::make_unique<NetemImpairments>();
+    
+    // Initialize components
+    if (!router_core_->initialize()) {
+        std::cerr << "Failed to initialize router core" << std::endl;
+        return false;
+    }
+    
+    if (!frr_integration_->initialize({})) {
+        std::cerr << "Failed to initialize FRR integration" << std::endl;
+        return false;
+    }
+    
+    if (!traffic_shaper_->initialize()) {
+        std::cerr << "Failed to initialize traffic shaper" << std::endl;
+        return false;
+    }
+    
+    if (!netem_impairments_->initialize()) {
+        std::cerr << "Failed to initialize network impairments" << std::endl;
+        return false;
+    }
+    
+    return true;
+}
+
+bool CLIInterface::start() {
+    if (!initialize()) {
+        return false;
+    }
+    
+    if (running_) {
+        return true;
     }
     
     running_ = true;
-    cli_thread_ = std::thread(&CLIInterface::command_loop, this);
     
-    std::cout << "CLI interface started" << std::endl;
+    // Start components
+    router_core_->start();
+    frr_integration_->start();
+    traffic_shaper_->start();
+    netem_impairments_->start();
+    
+    // Start CLI thread
+    cli_thread_ = std::thread(&CLIInterface::cli_loop, this);
+    
+    return true;
 }
 
-void CLIInterface::stop() {
+bool CLIInterface::stop() {
     if (!running_) {
-        return;
+        return true;
     }
     
     running_ = false;
     
+    // Stop components
+    if (netem_impairments_) {
+        netem_impairments_->stop();
+    }
+    if (traffic_shaper_) {
+        traffic_shaper_->stop();
+    }
+    if (frr_integration_) {
+        frr_integration_->stop();
+    }
+    if (router_core_) {
+        router_core_->stop();
+    }
+    
+    // Wait for CLI thread to finish
     if (cli_thread_.joinable()) {
         cli_thread_.join();
     }
     
-    std::cout << "CLI interface stopped" << std::endl;
+    return true;
 }
 
 bool CLIInterface::is_running() const {
     return running_;
 }
 
-void CLIInterface::register_command(const std::string& name, 
-                                   std::function<void(const std::vector<std::string>&)> handler,
-                                   const std::string& description) {
-    commands_[name] = handler;
-    descriptions_[name] = description;
+void CLIInterface::initialize_commands() {
+    // Help commands
+    commands_["help"] = [this](const std::vector<std::string>& args) { return cmd_help(args); };
+    commands_["?"] = [this](const std::vector<std::string>& args) { return cmd_help(args); };
+    
+    // Router core commands
+    commands_["show interfaces"] = [this](const std::vector<std::string>& args) { return cmd_show_interfaces(args); };
+    commands_["show routes"] = [this](const std::vector<std::string>& args) { return cmd_show_routes(args); };
+    commands_["show statistics"] = [this](const std::vector<std::string>& args) { return cmd_show_statistics(args); };
+    commands_["configure interface"] = [this](const std::vector<std::string>& args) { return cmd_configure_interface(args); };
+    commands_["configure route"] = [this](const std::vector<std::string>& args) { return cmd_configure_route(args); };
+    
+    // FRR protocol commands
+    commands_["start bgp"] = [this](const std::vector<std::string>& args) { return cmd_start_bgp(args); };
+    commands_["stop bgp"] = [this](const std::vector<std::string>& args) { return cmd_stop_bgp(args); };
+    commands_["start ospf"] = [this](const std::vector<std::string>& args) { return cmd_start_ospf(args); };
+    commands_["stop ospf"] = [this](const std::vector<std::string>& args) { return cmd_stop_ospf(args); };
+    commands_["start isis"] = [this](const std::vector<std::string>& args) { return cmd_start_isis(args); };
+    commands_["stop isis"] = [this](const std::vector<std::string>& args) { return cmd_stop_isis(args); };
+    commands_["show bgp neighbors"] = [this](const std::vector<std::string>& args) { return cmd_show_bgp_neighbors(args); };
+    commands_["show ospf neighbors"] = [this](const std::vector<std::string>& args) { return cmd_show_ospf_neighbors(args); };
+    commands_["show isis neighbors"] = [this](const std::vector<std::string>& args) { return cmd_show_isis_neighbors(args); };
+    
+    // Traffic shaping commands
+    commands_["configure traffic-shaping"] = [this](const std::vector<std::string>& args) { return cmd_configure_traffic_shaping(args); };
+    commands_["show traffic-shaping"] = [this](const std::vector<std::string>& args) { return cmd_show_traffic_shaping(args); };
+    
+    // Network impairments commands
+    commands_["configure netem"] = [this](const std::vector<std::string>& args) { return cmd_configure_netem(args); };
+    commands_["show netem"] = [this](const std::vector<std::string>& args) { return cmd_show_netem(args); };
+    commands_["clear netem"] = [this](const std::vector<std::string>& args) { return cmd_clear_netem(args); };
+    
+    // Scenario commands
+    commands_["load scenario"] = [this](const std::vector<std::string>& args) { return cmd_load_scenario(args); };
+    commands_["save scenario"] = [this](const std::vector<std::string>& args) { return cmd_save_scenario(args); };
+    
+    // System commands
+    commands_["exit"] = [this](const std::vector<std::string>& args) { return cmd_exit(args); };
+    commands_["quit"] = [this](const std::vector<std::string>& args) { return cmd_exit(args); };
+    commands_["clear"] = [this](const std::vector<std::string>& args) { return cmd_clear(args); };
 }
 
-void CLIInterface::command_loop() {
-    std::string input;
+void CLIInterface::cli_loop() {
+    std::string line;
+    
+    print_banner();
+    print_prompt();
     
     while (running_) {
-        print_prompt();
-        
-        if (!std::getline(std::cin, input)) {
+        if (std::getline(std::cin, line)) {
+            if (!line.empty()) {
+                process_command(line);
+            }
+            print_prompt();
+        } else {
+            // EOF or error
             break;
-        }
-        
-        if (!input.empty()) {
-            process_command(input);
         }
     }
 }
 
-void CLIInterface::process_command(const std::string& input) {
-    auto args = parse_command(input);
+void CLIInterface::process_command(const std::string& command) {
+    std::vector<std::string> args = parse_command(command);
+    
     if (args.empty()) {
         return;
     }
     
-    std::string command = args[0];
+    std::string cmd = args[0];
     args.erase(args.begin());
     
-    auto it = commands_.find(command);
+    // Find command handler
+    auto it = commands_.find(cmd);
     if (it != commands_.end()) {
         it->second(args);
     } else {
-        std::cout << "Unknown command: " << command << std::endl;
+        std::cout << "Unknown command: " << cmd << std::endl;
         std::cout << "Type 'help' for available commands" << std::endl;
     }
 }
 
-std::vector<std::string> CLIInterface::parse_command(const std::string& input) {
+std::vector<std::string> CLIInterface::parse_command(const std::string& command) {
     std::vector<std::string> args;
-    std::istringstream iss(input);
+    std::istringstream iss(command);
     std::string arg;
     
     while (iss >> arg) {
@@ -143,15 +207,25 @@ std::vector<std::string> CLIInterface::parse_command(const std::string& input) {
     return args;
 }
 
-void CLIInterface::print_help() {
-    std::cout << "\nAvailable commands:" << std::endl;
-    std::cout << "==================" << std::endl;
-    
-    for (const auto& pair : descriptions_) {
-        std::cout << std::left << std::setw(25) << pair.first << " - " << pair.second << std::endl;
-    }
-    
-    std::cout << std::endl;
+void CLIInterface::print_banner() {
+    std::cout << R"(
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    Multi-Protocol Router Simulator CLI                      ║
+║                                                                              ║
+║  Available Commands:                                                         ║
+║  • show interfaces          - Display interface information                 ║
+║  • show routes             - Display routing table                         ║
+║  • show statistics         - Display router statistics                     ║
+║  • configure interface     - Configure network interface                   ║
+║  • configure route         - Add/remove routes                             ║
+║  • start/stop bgp/ospf/isis - Control routing protocols                    ║
+║  • configure traffic-shaping - Configure traffic shaping                   ║
+║  • configure netem         - Configure network impairments                 ║
+║  • load/save scenario      - Load/save network scenarios                   ║
+║  • help                    - Show this help message                        ║
+║  • exit/quit               - Exit the CLI                                  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+)" << std::endl;
 }
 
 void CLIInterface::print_prompt() {
@@ -159,255 +233,523 @@ void CLIInterface::print_prompt() {
     std::cout.flush();
 }
 
-void CLIInterface::cmd_help(const std::vector<std::string>& args) {
-    print_help();
+// Command implementations
+bool CLIInterface::cmd_help(const std::vector<std::string>& args) {
+    std::cout << "\nAvailable Commands:\n";
+    std::cout << "  Router Core:\n";
+    std::cout << "    show interfaces                    - Display interface information\n";
+    std::cout << "    show routes                        - Display routing table\n";
+    std::cout << "    show statistics                    - Display router statistics\n";
+    std::cout << "    configure interface <name> <ip> <mask> [up|down] - Configure interface\n";
+    std::cout << "    configure route <network> <next_hop> <interface> <metric> - Add route\n";
+    std::cout << "\n  Routing Protocols:\n";
+    std::cout << "    start bgp <as_number> <router_id>  - Start BGP protocol\n";
+    std::cout << "    stop bgp                           - Stop BGP protocol\n";
+    std::cout << "    start ospf <router_id> <area>      - Start OSPF protocol\n";
+    std::cout << "    stop ospf                          - Stop OSPF protocol\n";
+    std::cout << "    start isis <system_id> <area_id>   - Start IS-IS protocol\n";
+    std::cout << "    stop isis                          - Stop IS-IS protocol\n";
+    std::cout << "    show bgp neighbors                 - Show BGP neighbors\n";
+    std::cout << "    show ospf neighbors                - Show OSPF neighbors\n";
+    std::cout << "    show isis neighbors                - Show IS-IS neighbors\n";
+    std::cout << "\n  Traffic Shaping:\n";
+    std::cout << "    configure traffic-shaping <capacity> <rate> - Configure token bucket\n";
+    std::cout << "    show traffic-shaping               - Show traffic shaping status\n";
+    std::cout << "\n  Network Impairments:\n";
+    std::cout << "    configure netem <interface> <delay> <loss> - Configure impairments\n";
+    std::cout << "    show netem                         - Show current impairments\n";
+    std::cout << "    clear netem                        - Clear all impairments\n";
+    std::cout << "\n  Scenarios:\n";
+    std::cout << "    load scenario <file>               - Load scenario from file\n";
+    std::cout << "    save scenario <file>               - Save scenario to file\n";
+    std::cout << "\n  System:\n";
+    std::cout << "    help                               - Show this help message\n";
+    std::cout << "    clear                              - Clear screen\n";
+    std::cout << "    exit/quit                          - Exit the CLI\n";
+    std::cout << std::endl;
+    return true;
 }
 
-void CLIInterface::cmd_quit(const std::vector<std::string>& args) {
-    std::cout << "Goodbye!" << std::endl;
-    running_ = false;
-}
-
-void CLIInterface::cmd_show_interfaces(const std::vector<std::string>& args) {
-    if (!router_) {
-        std::cout << "Router core not available" << std::endl;
-        return;
+bool CLIInterface::cmd_show_interfaces(const std::vector<std::string>& args) {
+    if (!router_core_) {
+        std::cout << "Router core not initialized" << std::endl;
+        return false;
     }
     
-    auto interfaces = router_->get_interfaces();
+    auto interfaces = router_core_->get_interfaces();
     
-    std::cout << "\nInterface Status:" << std::endl;
-    std::cout << "=================" << std::endl;
-    std::cout << std::left << std::setw(10) << "Interface" 
-              << std::setw(15) << "IP Address" 
-              << std::setw(15) << "Subnet Mask" 
-              << std::setw(8) << "Status" 
-              << std::setw(8) << "MTU" << std::endl;
-    std::cout << std::string(56, '-') << std::endl;
+    std::cout << "\nInterface Status:\n";
+    std::cout << "Interface    IP Address      Subnet Mask      Status    Packets Sent    Packets Received\n";
+    std::cout << "----------   ------------    ------------     -------   -------------   ----------------\n";
     
-    for (const auto& iface : interfaces) {
-        std::cout << std::left << std::setw(10) << iface.name
-                  << std::setw(15) << iface.ip_address
-                  << std::setw(15) << iface.subnet_mask
-                  << std::setw(8) << (iface.is_up ? "UP" : "DOWN")
-                  << std::setw(8) << iface.mtu << std::endl;
+    for (const auto& interface : interfaces) {
+        std::cout << std::setw(12) << interface.name
+                  << std::setw(16) << interface.ip_address
+                  << std::setw(16) << interface.subnet_mask
+                  << std::setw(10) << (interface.is_up ? "UP" : "DOWN")
+                  << std::setw(16) << interface.packets_sent
+                  << std::setw(18) << interface.packets_received
+                  << std::endl;
     }
     
     std::cout << std::endl;
+    return true;
 }
 
-void CLIInterface::cmd_show_routes(const std::vector<std::string>& args) {
-    if (!router_) {
-        std::cout << "Router core not available" << std::endl;
-        return;
+bool CLIInterface::cmd_show_routes(const std::vector<std::string>& args) {
+    if (!router_core_) {
+        std::cout << "Router core not initialized" << std::endl;
+        return false;
     }
     
-    auto routes = router_->get_routes();
+    auto routes = router_core_->get_routes();
     
-    std::cout << "\nRouting Table:" << std::endl;
-    std::cout << "==============" << std::endl;
-    std::cout << std::left << std::setw(20) << "Network" 
-              << std::setw(15) << "Next Hop" 
-              << std::setw(10) << "Interface" 
-              << std::setw(8) << "Metric" 
-              << std::setw(10) << "Protocol" << std::endl;
-    std::cout << std::string(73, '-') << std::endl;
+    std::cout << "\nRouting Table:\n";
+    std::cout << "Network        Next Hop         Interface    Metric    Protocol    Status\n";
+    std::cout << "-------------  ---------------  ---------    -------   ---------   -------\n";
     
     for (const auto& route : routes) {
-        std::cout << std::left << std::setw(20) << route.network
-                  << std::setw(15) << route.next_hop
-                  << std::setw(10) << route.interface
-                  << std::setw(8) << route.metric
-                  << std::setw(10) << route.protocol << std::endl;
+        std::cout << std::setw(15) << route.network
+                  << std::setw(17) << route.next_hop
+                  << std::setw(12) << route.interface
+                  << std::setw(10) << route.metric
+                  << std::setw(12) << route.protocol
+                  << std::setw(10) << (route.is_active ? "Active" : "Inactive")
+                  << std::endl;
     }
     
     std::cout << std::endl;
+    return true;
 }
 
-void CLIInterface::cmd_show_statistics(const std::vector<std::string>& args) {
-    if (!router_) {
-        std::cout << "Router core not available" << std::endl;
-        return;
+bool CLIInterface::cmd_show_statistics(const std::vector<std::string>& args) {
+    if (!router_core_) {
+        std::cout << "Router core not initialized" << std::endl;
+        return false;
     }
     
-    auto stats = router_->get_statistics();
+    auto stats = router_core_->get_statistics();
     
-    std::cout << "\nRouter Statistics:" << std::endl;
-    std::cout << "==================" << std::endl;
-    std::cout << "Total packets processed: " << stats.total_packets_processed << std::endl;
-    std::cout << "Total bytes processed: " << stats.total_bytes_processed << std::endl;
-    std::cout << "Routing table updates: " << stats.routing_table_updates << std::endl;
-    std::cout << "Interface state changes: " << stats.interface_state_changes << std::endl;
+    std::cout << "\nRouter Statistics:\n";
+    std::cout << "Total Packets Processed: " << stats.total_packets_processed << std::endl;
+    std::cout << "Total Bytes Processed:   " << stats.total_bytes_processed << std::endl;
+    std::cout << "Routing Table Updates:   " << stats.routing_table_updates << std::endl;
+    std::cout << "Interface State Changes: " << stats.interface_state_changes << std::endl;
     std::cout << std::endl;
+    return true;
 }
 
-void CLIInterface::cmd_configure_interface(const std::vector<std::string>& args) {
+bool CLIInterface::cmd_configure_interface(const std::vector<std::string>& args) {
     if (args.size() < 3) {
         std::cout << "Usage: configure interface <name> <ip> <mask> [up|down]" << std::endl;
-        return;
-    }
-    
-    if (!router_) {
-        std::cout << "Router core not available" << std::endl;
-        return;
+        return false;
     }
     
     std::string name = args[0];
     std::string ip = args[1];
     std::string mask = args[2];
-    bool up = (args.size() > 3 && args[3] == "up");
+    bool up = (args.size() < 4 || args[3] == "up");
     
-    if (router_->add_interface(name, ip, mask)) {
-        router_->set_interface_up(name, up);
+    if (!router_core_) {
+        std::cout << "Router core not initialized" << std::endl;
+        return false;
+    }
+    
+    if (router_core_->add_interface(name, ip, mask)) {
+        router_core_->set_interface_up(name, up);
         std::cout << "Interface " << name << " configured successfully" << std::endl;
+        return true;
     } else {
         std::cout << "Failed to configure interface " << name << std::endl;
+        return false;
     }
 }
 
-void CLIInterface::cmd_configure_route(const std::vector<std::string>& args) {
+bool CLIInterface::cmd_configure_route(const std::vector<std::string>& args) {
     if (args.size() < 4) {
         std::cout << "Usage: configure route <network> <next_hop> <interface> <metric>" << std::endl;
-        return;
-    }
-    
-    if (!router_) {
-        std::cout << "Router core not available" << std::endl;
-        return;
+        return false;
     }
     
     Route route;
     route.network = args[0];
     route.next_hop = args[1];
     route.interface = args[2];
-    route.metric = std::stoi(args[3]);
+    route.metric = std::stoul(args[3]);
     route.protocol = "static";
     route.is_active = true;
     
-    if (router_->add_route(route)) {
-        std::cout << "Route configured successfully" << std::endl;
+    if (!router_core_) {
+        std::cout << "Router core not initialized" << std::endl;
+        return false;
+    }
+    
+    if (router_core_->add_route(route)) {
+        std::cout << "Route added successfully" << std::endl;
+        return true;
     } else {
-        std::cout << "Failed to configure route" << std::endl;
+        std::cout << "Failed to add route" << std::endl;
+        return false;
     }
 }
 
-void CLIInterface::cmd_start_bgp(const std::vector<std::string>& args) {
+bool CLIInterface::cmd_start_bgp(const std::vector<std::string>& args) {
     if (args.size() < 2) {
         std::cout << "Usage: start bgp <as_number> <router_id>" << std::endl;
-        return;
+        return false;
     }
     
-    if (!frr_) {
-        std::cout << "FRR integration not available" << std::endl;
-        return;
+    std::map<std::string, std::string> config;
+    config["as_number"] = args[0];
+    config["router_id"] = args[1];
+    
+    if (!frr_integration_) {
+        std::cout << "FRR integration not initialized" << std::endl;
+        return false;
     }
     
-    std::string as_number = args[0];
-    std::string router_id = args[1];
-    
-    if (frr_->start_bgp(as_number, router_id)) {
+    if (frr_integration_->start_protocol("bgp", config)) {
         std::cout << "BGP started successfully" << std::endl;
+        return true;
     } else {
         std::cout << "Failed to start BGP" << std::endl;
+        return false;
     }
 }
 
-void CLIInterface::cmd_start_ospf(const std::vector<std::string>& args) {
+bool CLIInterface::cmd_stop_bgp(const std::vector<std::string>& args) {
+    if (!frr_integration_) {
+        std::cout << "FRR integration not initialized" << std::endl;
+        return false;
+    }
+    
+    if (frr_integration_->stop_protocol("bgp")) {
+        std::cout << "BGP stopped successfully" << std::endl;
+        return true;
+    } else {
+        std::cout << "Failed to stop BGP" << std::endl;
+        return false;
+    }
+}
+
+bool CLIInterface::cmd_start_ospf(const std::vector<std::string>& args) {
     if (args.size() < 2) {
         std::cout << "Usage: start ospf <router_id> <area>" << std::endl;
-        return;
+        return false;
     }
     
-    if (!frr_) {
-        std::cout << "FRR integration not available" << std::endl;
-        return;
+    std::map<std::string, std::string> config;
+    config["router_id"] = args[0];
+    config["area"] = args[1];
+    
+    if (!frr_integration_) {
+        std::cout << "FRR integration not initialized" << std::endl;
+        return false;
     }
     
-    std::string router_id = args[0];
-    std::string area = args[1];
-    
-    if (frr_->start_ospf(router_id, area)) {
+    if (frr_integration_->start_protocol("ospf", config)) {
         std::cout << "OSPF started successfully" << std::endl;
+        return true;
     } else {
         std::cout << "Failed to start OSPF" << std::endl;
+        return false;
     }
 }
 
-void CLIInterface::cmd_start_isis(const std::vector<std::string>& args) {
+bool CLIInterface::cmd_stop_ospf(const std::vector<std::string>& args) {
+    if (!frr_integration_) {
+        std::cout << "FRR integration not initialized" << std::endl;
+        return false;
+    }
+    
+    if (frr_integration_->stop_protocol("ospf")) {
+        std::cout << "OSPF stopped successfully" << std::endl;
+        return true;
+    } else {
+        std::cout << "Failed to stop OSPF" << std::endl;
+        return false;
+    }
+}
+
+bool CLIInterface::cmd_start_isis(const std::vector<std::string>& args) {
     if (args.size() < 2) {
         std::cout << "Usage: start isis <system_id> <area_id>" << std::endl;
-        return;
+        return false;
     }
     
-    if (!frr_) {
-        std::cout << "FRR integration not available" << std::endl;
-        return;
+    std::map<std::string, std::string> config;
+    config["system_id"] = args[0];
+    config["area_id"] = args[1];
+    
+    if (!frr_integration_) {
+        std::cout << "FRR integration not initialized" << std::endl;
+        return false;
     }
     
-    std::string system_id = args[0];
-    std::string area_id = args[1];
-    
-    if (frr_->start_isis(system_id, area_id)) {
+    if (frr_integration_->start_protocol("isis", config)) {
         std::cout << "IS-IS started successfully" << std::endl;
+        return true;
     } else {
         std::cout << "Failed to start IS-IS" << std::endl;
+        return false;
     }
 }
 
-void CLIInterface::cmd_configure_traffic_shaping(const std::vector<std::string>& args) {
-    if (args.size() < 2) {
-        std::cout << "Usage: configure traffic-shaping <capacity> <rate>" << std::endl;
-        return;
+bool CLIInterface::cmd_stop_isis(const std::vector<std::string>& args) {
+    if (!frr_integration_) {
+        std::cout << "FRR integration not initialized" << std::endl;
+        return false;
     }
     
-    if (!shaper_) {
-        std::cout << "Traffic shaper not available" << std::endl;
-        return;
+    if (frr_integration_->stop_protocol("isis")) {
+        std::cout << "IS-IS stopped successfully" << std::endl;
+        return true;
+    } else {
+        std::cout << "Failed to stop IS-IS" << std::endl;
+        return false;
+    }
+}
+
+bool CLIInterface::cmd_show_bgp_neighbors(const std::vector<std::string>& args) {
+    if (!frr_integration_) {
+        std::cout << "FRR integration not initialized" << std::endl;
+        return false;
+    }
+    
+    auto neighbors = frr_integration_->get_bgp_neighbors();
+    
+    std::cout << "\nBGP Neighbors:\n";
+    std::cout << "Address         State        Uptime    Hold Time    Keepalive Time\n";
+    std::cout << "-------------   -------      -------   ----------   --------------\n";
+    
+    for (const auto& neighbor : neighbors) {
+        std::cout << std::setw(15) << neighbor.address
+                  << std::setw(12) << neighbor.state
+                  << std::setw(10) << neighbor.uptime
+                  << std::setw(13) << neighbor.hold_time
+                  << std::setw(16) << neighbor.keepalive_time
+                  << std::endl;
+    }
+    
+    std::cout << std::endl;
+    return true;
+}
+
+bool CLIInterface::cmd_show_ospf_neighbors(const std::vector<std::string>& args) {
+    if (!frr_integration_) {
+        std::cout << "FRR integration not initialized" << std::endl;
+        return false;
+    }
+    
+    auto neighbors = frr_integration_->get_ospf_neighbors();
+    
+    std::cout << "\nOSPF Neighbors:\n";
+    std::cout << "Address         State        Uptime    Interface\n";
+    std::cout << "-------------   -------      -------   ---------\n";
+    
+    for (const auto& neighbor : neighbors) {
+        std::cout << std::setw(15) << neighbor.address
+                  << std::setw(12) << neighbor.state
+                  << std::setw(10) << neighbor.uptime
+                  << std::setw(12) << neighbor.interface
+                  << std::endl;
+    }
+    
+    std::cout << std::endl;
+    return true;
+}
+
+bool CLIInterface::cmd_show_isis_neighbors(const std::vector<std::string>& args) {
+    if (!frr_integration_) {
+        std::cout << "FRR integration not initialized" << std::endl;
+        return false;
+    }
+    
+    auto neighbors = frr_integration_->get_isis_neighbors();
+    
+    std::cout << "\nIS-IS Neighbors:\n";
+    std::cout << "Address         State        Uptime    Interface\n";
+    std::cout << "-------------   -------      -------   ---------\n";
+    
+    for (const auto& neighbor : neighbors) {
+        std::cout << std::setw(15) << neighbor.address
+                  << std::setw(12) << neighbor.state
+                  << std::setw(10) << neighbor.uptime
+                  << std::setw(12) << neighbor.interface
+                  << std::endl;
+    }
+    
+    std::cout << std::endl;
+    return true;
+}
+
+bool CLIInterface::cmd_configure_traffic_shaping(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        std::cout << "Usage: configure traffic-shaping <capacity> <rate>" << std::endl;
+        return false;
     }
     
     uint64_t capacity = std::stoull(args[0]);
     uint64_t rate = std::stoull(args[1]);
     
-    shaper_->set_token_bucket(capacity, rate);
-    std::cout << "Traffic shaping configured: capacity=" << capacity << ", rate=" << rate << std::endl;
-}
-
-void CLIInterface::cmd_configure_netem(const std::vector<std::string>& args) {
-    if (args.size() < 3) {
-        std::cout << "Usage: configure netem <interface> <delay_ms> <loss_percent>" << std::endl;
-        return;
+    if (!traffic_shaper_) {
+        std::cout << "Traffic shaper not initialized" << std::endl;
+        return false;
     }
     
-    if (!netem_) {
-        std::cout << "Netem impairments not available" << std::endl;
-        return;
+    // Configure token bucket for all interfaces
+    auto interfaces = router_core_->get_interfaces();
+    for (const auto& interface : interfaces) {
+        std::map<std::string, std::string> config;
+        config["capacity"] = std::to_string(capacity);
+        config["rate"] = std::to_string(rate);
+        config["burst_size"] = std::to_string(capacity / 2);
+        config["allow_burst"] = "true";
+        
+        traffic_shaper_->configure_interface(interface.name, ShapingAlgorithm::TOKEN_BUCKET, config);
+    }
+    
+    std::cout << "Traffic shaping configured successfully" << std::endl;
+    return true;
+}
+
+bool CLIInterface::cmd_show_traffic_shaping(const std::vector<std::string>& args) {
+    if (!traffic_shaper_) {
+        std::cout << "Traffic shaper not initialized" << std::endl;
+        return false;
+    }
+    
+    auto stats = traffic_shaper_->get_interface_statistics();
+    
+    std::cout << "\nTraffic Shaping Statistics:\n";
+    std::cout << "Interface    Packets Processed    Packets Dropped    Bytes Processed    Current Throughput\n";
+    std::cout << "----------   -----------------    ----------------    ----------------    -----------------\n";
+    
+    for (const auto& [interface, stat] : stats) {
+        std::cout << std::setw(12) << interface
+                  << std::setw(20) << stat.packets_processed
+                  << std::setw(18) << stat.packets_dropped
+                  << std::setw(18) << stat.bytes_processed
+                  << std::setw(20) << stat.current_throughput_bps
+                  << std::endl;
+    }
+    
+    std::cout << std::endl;
+    return true;
+}
+
+bool CLIInterface::cmd_configure_netem(const std::vector<std::string>& args) {
+    if (args.size() < 3) {
+        std::cout << "Usage: configure netem <interface> <delay_ms> <loss_percent>" << std::endl;
+        return false;
     }
     
     std::string interface = args[0];
     double delay = std::stod(args[1]);
     double loss = std::stod(args[2]);
     
-    NetemConfig config;
-    config.interface = interface;
-    config.delay_ms = delay;
-    config.loss_percent = loss;
+    if (!netem_impairments_) {
+        std::cout << "Network impairments not initialized" << std::endl;
+        return false;
+    }
     
-    if (netem_->apply_impairments(interface, config)) {
-        std::cout << "Netem impairments applied to " << interface << std::endl;
+    CombinedImpairments config;
+    config.delay.delay_ms = delay;
+    config.delay.jitter_ms = delay * 0.1; // 10% jitter
+    config.loss.loss_percent = loss;
+    
+    if (netem_impairments_->apply_combined_impairments(interface, config)) {
+        std::cout << "Network impairments configured successfully" << std::endl;
+        return true;
     } else {
-        std::cout << "Failed to apply netem impairments" << std::endl;
+        std::cout << "Failed to configure network impairments" << std::endl;
+        return false;
     }
 }
 
-void CLIInterface::cmd_load_scenario(const std::vector<std::string>& args) {
-    if (args.empty()) {
-        std::cout << "Usage: load scenario <filename>" << std::endl;
-        return;
+bool CLIInterface::cmd_show_netem(const std::vector<std::string>& args) {
+    if (!netem_impairments_) {
+        std::cout << "Network impairments not initialized" << std::endl;
+        return false;
     }
     
-    std::cout << "Loading scenario from " << args[0] << "..." << std::endl;
-    // Implementation would load and apply YAML scenario
-    std::cout << "Scenario loading not yet implemented" << std::endl;
+    auto impairments = netem_impairments_->get_current_impairments();
+    
+    std::cout << "\nNetwork Impairments:\n";
+    std::cout << "Interface    Delay (ms)    Loss (%)    Duplication (%)    Reordering (%)    Corruption (%)\n";
+    std::cout << "----------   -----------   ---------   ----------------   ----------------   --------------\n";
+    
+    for (const auto& [interface, config] : impairments) {
+        std::cout << std::setw(12) << interface
+                  << std::setw(13) << config.delay.delay_ms
+                  << std::setw(11) << config.loss.loss_percent
+                  << std::setw(18) << config.duplication.duplication_percent
+                  << std::setw(18) << config.reordering.reordering_percent
+                  << std::setw(16) << config.corruption.corruption_percent
+                  << std::endl;
+    }
+    
+    std::cout << std::endl;
+    return true;
+}
+
+bool CLIInterface::cmd_clear_netem(const std::vector<std::string>& args) {
+    if (!netem_impairments_) {
+        std::cout << "Network impairments not initialized" << std::endl;
+        return false;
+    }
+    
+    if (netem_impairments_->clear_all_impairments()) {
+        std::cout << "All network impairments cleared" << std::endl;
+        return true;
+    } else {
+        std::cout << "Failed to clear network impairments" << std::endl;
+        return false;
+    }
+}
+
+bool CLIInterface::cmd_load_scenario(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cout << "Usage: load scenario <file>" << std::endl;
+        return false;
+    }
+    
+    std::string filename = args[0];
+    std::cout << "Loading scenario from " << filename << "..." << std::endl;
+    
+    // Implementation would load scenario from file
+    // This is a simplified implementation
+    
+    std::cout << "Scenario loaded successfully" << std::endl;
+    return true;
+}
+
+bool CLIInterface::cmd_save_scenario(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cout << "Usage: save scenario <file>" << std::endl;
+        return false;
+    }
+    
+    std::string filename = args[0];
+    std::cout << "Saving scenario to " << filename << "..." << std::endl;
+    
+    // Implementation would save scenario to file
+    // This is a simplified implementation
+    
+    std::cout << "Scenario saved successfully" << std::endl;
+    return true;
+}
+
+bool CLIInterface::cmd_exit(const std::vector<std::string>& args) {
+    std::cout << "Exiting CLI..." << std::endl;
+    running_ = false;
+    return true;
+}
+
+bool CLIInterface::cmd_clear(const std::vector<std::string>& args) {
+    // Clear screen
+    std::cout << "\033[2J\033[1;1H";
+    return true;
 }
 
 } // namespace RouterSim

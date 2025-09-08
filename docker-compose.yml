@@ -1,122 +1,122 @@
 version: '3.8'
 
 services:
-  router-sim:
+  # Go API Server
+  api-server:
     build: .
-    container_name: router-sim
-    hostname: router-sim
-    privileged: true  # Required for network operations
-    network_mode: host  # Use host networking for full network access
-    volumes:
-      - ./examples:/app/examples:ro
-      - ./config:/etc/router_sim:ro
-      - /var/log/router_sim:/var/log/router_sim
-      - /var/run/router_sim:/var/run/router_sim
-    environment:
-      - ROUTER_ID=1.1.1.1
-      - HOSTNAME=router-sim
-      - LOG_LEVEL=INFO
-    command: ["router_sim", "-c", "/etc/router_sim/config.yaml", "-i"]
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "router_sim", "--version"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
-  # Optional: Web interface for monitoring
-  router-web:
-    image: nginx:alpine
-    container_name: router-web
     ports:
-      - "8080:80"
+      - "8080:8080"
+    environment:
+      - CLOUDPODS_ENDPOINT=${CLOUDPODS_ENDPOINT:-https://api.cloudpods.org}
+      - CLOUDPODS_USERNAME=${CLOUDPODS_USERNAME:-admin}
+      - CLOUDPODS_PASSWORD=${CLOUDPODS_PASSWORD:-password}
+      - AVIATRIX_ENDPOINT=${AVIATRIX_ENDPOINT:-https://api.aviatrix.com}
+      - AVIATRIX_USERNAME=${AVIATRIX_USERNAME:-admin}
+      - AVIATRIX_PASSWORD=${AVIATRIX_PASSWORD:-password}
     volumes:
-      - ./docs:/usr/share/nginx/html:ro
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config:/app/config
+      - ./scenarios:/app/scenarios
     depends_on:
-      - router-sim
-    restart: unless-stopped
+      - clickhouse
+      - prometheus
+    networks:
+      - router-network
 
-  # Optional: Prometheus for metrics collection
+  # ClickHouse for analytics
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports:
+      - "9000:9000"
+      - "8123:8123"
+    environment:
+      - CLICKHOUSE_DB=router_analytics
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    networks:
+      - router-network
+
+  # Prometheus for metrics
   prometheus:
     image: prom/prometheus:latest
-    container_name: router-prometheus
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=200h'
       - '--web.enable-lifecycle'
-    restart: unless-stopped
+    networks:
+      - router-network
 
-  # Optional: Grafana for visualization
+  # Grafana for visualization
   grafana:
     image: grafana/grafana:latest
-    container_name: router-grafana
     ports:
       - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
-    restart: unless-stopped
+    networks:
+      - router-network
 
-  # Optional: ELK stack for logging
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
-    container_name: router-elasticsearch
+  # Web UI (development)
+  web-ui:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3001:3000"
     environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - REACT_APP_API_URL=http://localhost:8080
     volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
-    ports:
-      - "9200:9200"
-    restart: unless-stopped
-
-  logstash:
-    image: docker.elastic.co/logstash/logstash:8.8.0
-    container_name: router-logstash
-    volumes:
-      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
-    ports:
-      - "5044:5044"
+      - ./web:/app
+      - /app/node_modules
     depends_on:
-      - elasticsearch
-    restart: unless-stopped
+      - api-server
+    networks:
+      - router-network
 
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.8.0
-    container_name: router-kibana
-    ports:
-      - "5601:5601"
+  # Router Core (C++)
+  router-core:
+    build: .
+    command: ["./router_sim", "--config", "/app/config/router.yaml"]
+    volumes:
+      - ./config:/app/config
+      - ./scenarios:/app/scenarios
+    depends_on:
+      - api-server
+    networks:
+      - router-network
+    privileged: true  # Required for network operations
+
+  # Rust Analytics Engine
+  analytics-engine:
+    build:
+      context: ./rust
+      dockerfile: Dockerfile
     environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_DATABASE=router_analytics
     depends_on:
-      - elasticsearch
-    restart: unless-stopped
+      - clickhouse
+    networks:
+      - router-network
 
 volumes:
+  clickhouse_data:
   prometheus_data:
   grafana_data:
-  elasticsearch_data:
 
 networks:
-  default:
+  router-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16

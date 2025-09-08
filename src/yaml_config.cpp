@@ -1,420 +1,472 @@
 #include "yaml_config.h"
-#include <yaml-cpp/yaml.h>
 #include <iostream>
 #include <fstream>
+#include <yaml-cpp/yaml.h>
 
 namespace RouterSim {
 
-YAMLConfig::YAMLConfig() = default;
+YAMLConfig::YAMLConfig() : loaded_(false) {
+}
 
 YAMLConfig::~YAMLConfig() = default;
 
-bool YAMLConfig::load_scenario(const std::string& filename) {
+bool YAMLConfig::load_config(const std::string& filename) {
     try {
-        YAML::Node config = YAML::LoadFile(filename);
-        
-        // Parse scenario metadata
-        if (config["name"]) {
-            scenario_.name = config["name"].as<std::string>();
+        config_ = YAML::LoadFile(filename);
+        loaded_ = true;
+        return true;
+    } catch (const YAML::Exception& e) {
+        std::cerr << "Error loading YAML config: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool YAMLConfig::save_config(const std::string& filename) const {
+    try {
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            std::cerr << "Error opening file for writing: " << filename << std::endl;
+            return false;
         }
-        if (config["description"]) {
-            scenario_.description = config["description"].as<std::string>();
+        
+        file << config_;
+        file.close();
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Error saving YAML config: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool YAMLConfig::is_loaded() const {
+    return loaded_;
+}
+
+YAML::Node YAMLConfig::get_config() const {
+    return config_;
+}
+
+// Scenario parser implementation
+ScenarioParser::ScenarioParser() : loaded_(false) {
+}
+
+ScenarioParser::~ScenarioParser() = default;
+
+bool ScenarioParser::load_scenario(const std::string& filename) {
+    try {
+        scenario_ = YAML::LoadFile(filename);
+        loaded_ = true;
+        return true;
+    } catch (const YAML::Exception& e) {
+        std::cerr << "Error loading scenario: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool ScenarioParser::save_scenario(const std::string& filename) const {
+    try {
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            std::cerr << "Error opening file for writing: " << filename << std::endl;
+            return false;
+        }
+        
+        file << scenario_;
+        file.close();
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Error saving scenario: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool ScenarioParser::is_loaded() const {
+    return loaded_;
+}
+
+YAML::Node ScenarioParser::get_scenario() const {
+    return scenario_;
+}
+
+Scenario ScenarioParser::parse_scenario() const {
+    Scenario scenario;
+    
+    if (!loaded_) {
+        return scenario;
+    }
+    
+    try {
+        // Parse basic scenario information
+        if (scenario_["name"]) {
+            scenario.name = scenario_["name"].as<std::string>();
+        }
+        
+        if (scenario_["description"]) {
+            scenario.description = scenario_["description"].as<std::string>();
         }
         
         // Parse interfaces
-        if (config["interfaces"]) {
-            scenario_.interfaces.clear();
-            for (const auto& iface_node : config["interfaces"]) {
-                InterfaceConfig iface;
-                if (parse_interface(iface_node, iface)) {
-                    scenario_.interfaces.push_back(iface);
-                }
+        if (scenario_["interfaces"]) {
+            for (const auto& interface_node : scenario_["interfaces"]) {
+                Interface interface;
+                interface.name = interface_node["name"].as<std::string>();
+                interface.ip_address = interface_node["ip_address"].as<std::string>();
+                interface.subnet_mask = interface_node["subnet_mask"].as<std::string>();
+                interface.is_up = interface_node["is_up"].as<bool>();
+                interface.mtu = interface_node["mtu"] ? interface_node["mtu"].as<uint32_t>() : 1500;
+                interface.bytes_sent = 0;
+                interface.bytes_received = 0;
+                interface.packets_sent = 0;
+                interface.packets_received = 0;
+                
+                scenario.interfaces.push_back(interface);
             }
         }
         
         // Parse routes
-        if (config["routes"]) {
-            scenario_.routes.clear();
-            for (const auto& route_node : config["routes"]) {
-                RouteConfig route;
-                if (parse_route(route_node, route)) {
-                    scenario_.routes.push_back(route);
-                }
+        if (scenario_["routes"]) {
+            for (const auto& route_node : scenario_["routes"]) {
+                Route route;
+                route.network = route_node["network"].as<std::string>();
+                route.next_hop = route_node["next_hop"].as<std::string>();
+                route.interface = route_node["interface"].as<std::string>();
+                route.metric = route_node["metric"].as<uint32_t>();
+                route.protocol = route_node["protocol"].as<std::string>();
+                route.is_active = route_node["is_active"] ? route_node["is_active"].as<bool>() : true;
+                
+                scenario.routes.push_back(route);
             }
         }
         
         // Parse BGP configuration
-        if (config["bgp"]) {
-            parse_bgp(config["bgp"], scenario_.bgp);
+        if (scenario_["bgp"]) {
+            BGPConfig bgp_config;
+            bgp_config.as_number = scenario_["bgp"]["as_number"].as<std::string>();
+            bgp_config.router_id = scenario_["bgp"]["router_id"].as<std::string>();
+            
+            if (scenario_["bgp"]["neighbors"]) {
+                for (const auto& neighbor_node : scenario_["bgp"]["neighbors"]) {
+                    BGPNeighbor neighbor;
+                    neighbor.ip = neighbor_node["ip"].as<std::string>();
+                    neighbor.as = neighbor_node["as"].as<std::string>();
+                    neighbor.description = neighbor_node["description"] ? neighbor_node["description"].as<std::string>() : "";
+                    neighbor.hold_time = neighbor_node["hold_time"] ? neighbor_node["hold_time"].as<uint32_t>() : 180;
+                    neighbor.keepalive_time = neighbor_node["keepalive_time"] ? neighbor_node["keepalive_time"].as<uint32_t>() : 60;
+                    
+                    bgp_config.neighbors.push_back(neighbor);
+                }
+            }
+            
+            scenario.bgp_config = bgp_config;
         }
         
         // Parse OSPF configuration
-        if (config["ospf"]) {
-            parse_ospf(config["ospf"], scenario_.ospf);
+        if (scenario_["ospf"]) {
+            OSPFConfig ospf_config;
+            ospf_config.router_id = scenario_["ospf"]["router_id"].as<std::string>();
+            ospf_config.area = scenario_["ospf"]["area"].as<std::string>();
+            ospf_config.hello_interval = scenario_["ospf"]["hello_interval"] ? scenario_["ospf"]["hello_interval"].as<uint32_t>() : 10;
+            ospf_config.dead_interval = scenario_["ospf"]["dead_interval"] ? scenario_["ospf"]["dead_interval"].as<uint32_t>() : 40;
+            
+            if (scenario_["ospf"]["interfaces"]) {
+                for (const auto& interface_node : scenario_["ospf"]["interfaces"]) {
+                    OSPFInterface interface;
+                    interface.name = interface_node["name"].as<std::string>();
+                    interface.area = interface_node["area"].as<std::string>();
+                    interface.cost = interface_node["cost"] ? interface_node["cost"].as<uint32_t>() : 1;
+                    interface.priority = interface_node["priority"] ? interface_node["priority"].as<uint8_t>() : 1;
+                    
+                    ospf_config.interfaces.push_back(interface);
+                }
+            }
+            
+            scenario.ospf_config = ospf_config;
         }
         
         // Parse IS-IS configuration
-        if (config["isis"]) {
-            parse_isis(config["isis"], scenario_.isis);
+        if (scenario_["isis"]) {
+            ISISConfig isis_config;
+            isis_config.system_id = scenario_["isis"]["system_id"].as<std::string>();
+            isis_config.area_id = scenario_["isis"]["area_id"].as<std::string>();
+            isis_config.level = scenario_["isis"]["level"] ? scenario_["isis"]["level"].as<uint8_t>() : 2;
+            
+            if (scenario_["isis"]["interfaces"]) {
+                for (const auto& interface_node : scenario_["isis"]["interfaces"]) {
+                    ISISInterface interface;
+                    interface.name = interface_node["name"].as<std::string>();
+                    interface.level = interface_node["level"].as<uint8_t>();
+                    interface.cost = interface_node["cost"] ? interface_node["cost"].as<uint32_t>() : 10;
+                    
+                    isis_config.interfaces.push_back(interface);
+                }
+            }
+            
+            scenario.isis_config = isis_config;
         }
         
         // Parse traffic shaping configuration
-        if (config["traffic_shaping"]) {
-            parse_traffic_shaping(config["traffic_shaping"], scenario_.traffic_shaping);
+        if (scenario_["traffic_shaping"]) {
+            TrafficShapingConfig ts_config;
+            
+            if (scenario_["traffic_shaping"]["token_bucket"]) {
+                TokenBucketConfig tb_config;
+                tb_config.capacity = scenario_["traffic_shaping"]["token_bucket"]["capacity"].as<uint64_t>();
+                tb_config.rate = scenario_["traffic_shaping"]["token_bucket"]["rate"].as<uint64_t>();
+                tb_config.burst_size = scenario_["traffic_shaping"]["token_bucket"]["burst_size"] ? 
+                                     scenario_["traffic_shaping"]["token_bucket"]["burst_size"].as<uint64_t>() : tb_config.capacity / 2;
+                tb_config.allow_burst = scenario_["traffic_shaping"]["token_bucket"]["allow_burst"] ? 
+                                      scenario_["traffic_shaping"]["token_bucket"]["allow_burst"].as<bool>() : true;
+                
+                ts_config.token_bucket = tb_config;
+            }
+            
+            if (scenario_["traffic_shaping"]["wfq_classes"]) {
+                for (const auto& class_node : scenario_["traffic_shaping"]["wfq_classes"]) {
+                    WFQClass wfq_class;
+                    wfq_class.class_id = class_node["class_id"].as<uint8_t>();
+                    wfq_class.weight = class_node["weight"].as<uint32_t>();
+                    wfq_class.min_bandwidth = class_node["min_bandwidth"] ? class_node["min_bandwidth"].as<uint64_t>() : 0;
+                    wfq_class.max_bandwidth = class_node["max_bandwidth"] ? class_node["max_bandwidth"].as<uint64_t>() : 0;
+                    wfq_class.name = class_node["name"] ? class_node["name"].as<std::string>() : "";
+                    wfq_class.is_active = class_node["is_active"] ? class_node["is_active"].as<bool>() : true;
+                    
+                    ts_config.wfq_classes.push_back(wfq_class);
+                }
+            }
+            
+            scenario.traffic_shaping_config = ts_config;
         }
         
-        // Parse netem configurations
-        if (config["netem"]) {
-            scenario_.netem_configs.clear();
-            for (const auto& netem_node : config["netem"]) {
-                NetemConfig netem;
-                if (parse_netem(netem_node, netem)) {
-                    scenario_.netem_configs.push_back(netem);
+        // Parse network impairments configuration
+        if (scenario_["netem"]) {
+            for (const auto& netem_node : scenario_["netem"]) {
+                NetemConfig netem_config;
+                netem_config.interface = netem_node["interface"].as<std::string>();
+                netem_config.delay_ms = netem_node["delay_ms"] ? netem_node["delay_ms"].as<double>() : 0.0;
+                netem_config.jitter_ms = netem_node["jitter_ms"] ? netem_node["jitter_ms"].as<double>() : 0.0;
+                netem_config.loss_percent = netem_node["loss_percent"] ? netem_node["loss_percent"].as<double>() : 0.0;
+                netem_config.duplication_percent = netem_node["duplication_percent"] ? netem_node["duplication_percent"].as<double>() : 0.0;
+                netem_config.reordering_percent = netem_node["reordering_percent"] ? netem_node["reordering_percent"].as<double>() : 0.0;
+                netem_config.corruption_percent = netem_node["corruption_percent"] ? netem_node["corruption_percent"].as<double>() : 0.0;
+                netem_config.rate_bps = netem_node["rate_bps"] ? netem_node["rate_bps"].as<uint64_t>() : 0;
+                
+                scenario.netem_configs.push_back(netem_config);
+            }
+        }
+        
+        // Parse test cases
+        if (scenario_["test_cases"]) {
+            for (const auto& test_node : scenario_["test_cases"]) {
+                TestCase test_case;
+                test_case.name = test_node["name"].as<std::string>();
+                test_case.description = test_node["description"] ? test_node["description"].as<std::string>() : "";
+                test_case.expected_result = test_node["expected_result"].as<std::string>();
+                
+                if (test_node["commands"]) {
+                    for (const auto& cmd_node : test_node["commands"]) {
+                        test_case.commands.push_back(cmd_node.as<std::string>());
+                    }
+                }
+                
+                scenario.test_cases.push_back(test_case);
+            }
+        }
+        
+    } catch (const YAML::Exception& e) {
+        std::cerr << "Error parsing scenario: " << e.what() << std::endl;
+        return Scenario();
+    }
+    
+    return scenario;
+}
+
+// Scenario executor implementation
+ScenarioExecutor::ScenarioExecutor() : initialized_(false) {
+}
+
+ScenarioExecutor::~ScenarioExecutor() = default;
+
+bool ScenarioExecutor::initialize() {
+    if (initialized_) {
+        return true;
+    }
+    
+    // Initialize components
+    router_core_ = std::make_unique<RouterCore>();
+    frr_integration_ = std::make_unique<FRRIntegration>();
+    traffic_shaper_ = std::make_unique<TrafficShapingManager>();
+    netem_impairments_ = std::make_unique<NetemImpairments>();
+    
+    // Initialize components
+    if (!router_core_->initialize()) {
+        std::cerr << "Failed to initialize router core" << std::endl;
+        return false;
+    }
+    
+    if (!frr_integration_->initialize({})) {
+        std::cerr << "Failed to initialize FRR integration" << std::endl;
+        return false;
+    }
+    
+    if (!traffic_shaper_->initialize()) {
+        std::cerr << "Failed to initialize traffic shaper" << std::endl;
+        return false;
+    }
+    
+    if (!netem_impairments_->initialize()) {
+        std::cerr << "Failed to initialize network impairments" << std::endl;
+        return false;
+    }
+    
+    initialized_ = true;
+    return true;
+}
+
+bool ScenarioExecutor::execute_scenario(const Scenario& scenario) {
+    if (!initialized_) {
+        if (!initialize()) {
+            return false;
+        }
+    }
+    
+    std::cout << "Executing scenario: " << scenario.name << std::endl;
+    std::cout << "Description: " << scenario.description << std::endl;
+    
+    // Start components
+    router_core_->start();
+    frr_integration_->start();
+    traffic_shaper_->start();
+    netem_impairments_->start();
+    
+    // Configure interfaces
+    for (const auto& interface : scenario.interfaces) {
+        if (router_core_->add_interface(interface.name, interface.ip_address, interface.subnet_mask)) {
+            router_core_->set_interface_up(interface.name, interface.is_up);
+            std::cout << "Configured interface: " << interface.name << std::endl;
+        }
+    }
+    
+    // Configure routes
+    for (const auto& route : scenario.routes) {
+        if (router_core_->add_route(route)) {
+            std::cout << "Added route: " << route.network << " -> " << route.next_hop << std::endl;
+        }
+    }
+    
+    // Configure BGP
+    if (!scenario.bgp_config.as_number.empty()) {
+        std::map<std::string, std::string> bgp_config;
+        bgp_config["as_number"] = scenario.bgp_config.as_number;
+        bgp_config["router_id"] = scenario.bgp_config.router_id;
+        
+        if (frr_integration_->start_protocol("bgp", bgp_config)) {
+            std::cout << "Started BGP with AS " << scenario.bgp_config.as_number << std::endl;
+            
+            // Add BGP neighbors
+            for (const auto& neighbor : scenario.bgp_config.neighbors) {
+                std::map<std::string, std::string> neighbor_config;
+                neighbor_config["remote_as"] = neighbor.as;
+                neighbor_config["description"] = neighbor.description;
+                neighbor_config["hold_time"] = std::to_string(neighbor.hold_time);
+                neighbor_config["keepalive_time"] = std::to_string(neighbor.keepalive_time);
+                
+                if (frr_integration_->add_bgp_neighbor(neighbor.ip, neighbor_config)) {
+                    std::cout << "Added BGP neighbor: " << neighbor.ip << " (AS " << neighbor.as << ")" << std::endl;
                 }
             }
         }
-        
-        // Parse test commands
-        if (config["test_commands"]) {
-            scenario_.test_commands.clear();
-            for (const auto& cmd : config["test_commands"]) {
-                scenario_.test_commands.push_back(cmd.as<std::string>());
-            }
-        }
-        
-        return true;
-    } catch (const YAML::Exception& e) {
-        std::cerr << "YAML parsing error: " << e.what() << std::endl;
-        return false;
-    }
-}
-
-bool YAMLConfig::save_scenario(const std::string& filename, const ScenarioConfig& config) {
-    try {
-        YAML::Node root;
-        
-        root["name"] = config.name;
-        root["description"] = config.description;
-        
-        // Save interfaces
-        YAML::Node interfaces = YAML::Node(YAML::NodeType::Sequence);
-        for (const auto& iface : config.interfaces) {
-            interfaces.push_back(create_interface_node(iface));
-        }
-        root["interfaces"] = interfaces;
-        
-        // Save routes
-        YAML::Node routes = YAML::Node(YAML::NodeType::Sequence);
-        for (const auto& route : config.routes) {
-            routes.push_back(create_route_node(route));
-        }
-        root["routes"] = routes;
-        
-        // Save BGP configuration
-        root["bgp"] = create_bgp_node(config.bgp);
-        
-        // Save OSPF configuration
-        root["ospf"] = create_ospf_node(config.ospf);
-        
-        // Save IS-IS configuration
-        root["isis"] = create_isis_node(config.isis);
-        
-        // Save traffic shaping configuration
-        root["traffic_shaping"] = create_traffic_shaping_node(config.traffic_shaping);
-        
-        // Save netem configurations
-        YAML::Node netem_configs = YAML::Node(YAML::NodeType::Sequence);
-        for (const auto& netem : config.netem_configs) {
-            netem_configs.push_back(create_netem_node(netem));
-        }
-        root["netem"] = netem_configs;
-        
-        // Save test commands
-        root["test_commands"] = config.test_commands;
-        
-        std::ofstream file(filename);
-        file << root;
-        
-        return true;
-    } catch (const YAML::Exception& e) {
-        std::cerr << "YAML writing error: " << e.what() << std::endl;
-        return false;
-    }
-}
-
-ScenarioConfig YAMLConfig::get_scenario() const {
-    return scenario_;
-}
-
-void YAMLConfig::set_scenario(const ScenarioConfig& config) {
-    scenario_ = config;
-}
-
-bool YAMLConfig::validate_scenario(const ScenarioConfig& config) {
-    validation_errors_.clear();
-    
-    // Validate interfaces
-    for (const auto& iface : config.interfaces) {
-        if (iface.name.empty()) {
-            validation_errors_.push_back("Interface name cannot be empty");
-        }
-        if (iface.ip_address.empty()) {
-            validation_errors_.push_back("Interface IP address cannot be empty");
-        }
     }
     
-    // Validate routes
-    for (const auto& route : config.routes) {
-        if (route.network.empty()) {
-            validation_errors_.push_back("Route network cannot be empty");
-        }
-        if (route.next_hop.empty()) {
-            validation_errors_.push_back("Route next hop cannot be empty");
-        }
-    }
-    
-    // Validate BGP configuration
-    if (!config.bgp.as_number.empty() && config.bgp.router_id.empty()) {
-        validation_errors_.push_back("BGP router ID is required when AS number is specified");
-    }
-    
-    // Validate OSPF configuration
-    if (!config.ospf.router_id.empty() && config.ospf.area.empty()) {
-        validation_errors_.push_back("OSPF area is required when router ID is specified");
-    }
-    
-    // Validate IS-IS configuration
-    if (!config.isis.system_id.empty() && config.isis.area_id.empty()) {
-        validation_errors_.push_back("IS-IS area ID is required when system ID is specified");
-    }
-    
-    return validation_errors_.empty();
-}
-
-std::vector<std::string> YAMLConfig::get_validation_errors() const {
-    return validation_errors_;
-}
-
-bool YAMLConfig::parse_interface(const YAML::Node& node, InterfaceConfig& config) {
-    if (!node["name"] || !node["ip_address"] || !node["subnet_mask"]) {
-        return false;
-    }
-    
-    config.name = node["name"].as<std::string>();
-    config.ip_address = node["ip_address"].as<std::string>();
-    config.subnet_mask = node["subnet_mask"].as<std::string>();
-    config.is_up = node["is_up"] ? node["is_up"].as<bool>() : false;
-    config.mtu = node["mtu"] ? node["mtu"].as<uint32_t>() : 1500;
-    
-    return true;
-}
-
-bool YAMLConfig::parse_route(const YAML::Node& node, RouteConfig& config) {
-    if (!node["network"] || !node["next_hop"]) {
-        return false;
-    }
-    
-    config.network = node["network"].as<std::string>();
-    config.next_hop = node["next_hop"].as<std::string>();
-    config.interface = node["interface"] ? node["interface"].as<std::string>() : "";
-    config.metric = node["metric"] ? node["metric"].as<uint32_t>() : 1;
-    config.protocol = node["protocol"] ? node["protocol"].as<std::string>() : "static";
-    config.is_active = node["is_active"] ? node["is_active"].as<bool>() : true;
-    
-    return true;
-}
-
-bool YAMLConfig::parse_bgp(const YAML::Node& node, BGPConfig& config) {
-    if (node["as_number"]) {
-        config.as_number = node["as_number"].as<std::string>();
-    }
-    if (node["router_id"]) {
-        config.router_id = node["router_id"].as<std::string>();
-    }
-    if (node["neighbors"]) {
-        for (const auto& neighbor : node["neighbors"]) {
-            if (neighbor["ip"] && neighbor["as"]) {
-                config.neighbors.push_back({neighbor["ip"].as<std::string>(), 
-                                          neighbor["as"].as<std::string>()});
+    // Configure OSPF
+    if (!scenario.ospf_config.router_id.empty()) {
+        std::map<std::string, std::string> ospf_config;
+        ospf_config["router_id"] = scenario.ospf_config.router_id;
+        ospf_config["area"] = scenario.ospf_config.area;
+        ospf_config["hello_interval"] = std::to_string(scenario.ospf_config.hello_interval);
+        ospf_config["dead_interval"] = std::to_string(scenario.ospf_config.dead_interval);
+        
+        if (frr_integration_->start_protocol("ospf", ospf_config)) {
+            std::cout << "Started OSPF with router-id " << scenario.ospf_config.router_id << std::endl;
+            
+            // Configure OSPF interfaces
+            for (const auto& interface : scenario.ospf_config.interfaces) {
+                std::map<std::string, std::string> interface_config;
+                interface_config["area"] = interface.area;
+                interface_config["cost"] = std::to_string(interface.cost);
+                interface_config["priority"] = std::to_string(interface.priority);
+                
+                if (frr_integration_->add_ospf_interface(interface.name, interface_config)) {
+                    std::cout << "Added OSPF interface: " << interface.name << " (area " << interface.area << ")" << std::endl;
+                }
             }
         }
     }
-    return true;
-}
-
-bool YAMLConfig::parse_ospf(const YAML::Node& node, OSPFConfig& config) {
-    if (node["router_id"]) {
-        config.router_id = node["router_id"].as<std::string>();
-    }
-    if (node["area"]) {
-        config.area = node["area"].as<std::string>();
-    }
-    if (node["interfaces"]) {
-        for (const auto& iface : node["interfaces"]) {
-            config.interfaces.push_back(iface.as<std::string>());
-        }
-    }
-    return true;
-}
-
-bool YAMLConfig::parse_isis(const YAML::Node& node, ISISConfig& config) {
-    if (node["system_id"]) {
-        config.system_id = node["system_id"].as<std::string>();
-    }
-    if (node["area_id"]) {
-        config.area_id = node["area_id"].as<std::string>();
-    }
-    if (node["interfaces"]) {
-        for (const auto& iface : node["interfaces"]) {
-            if (iface["name"] && iface["level"]) {
-                config.interfaces.push_back({iface["name"].as<std::string>(), 
-                                           iface["level"].as<uint8_t>()});
+    
+    // Configure IS-IS
+    if (!scenario.isis_config.system_id.empty()) {
+        std::map<std::string, std::string> isis_config;
+        isis_config["system_id"] = scenario.isis_config.system_id;
+        isis_config["area_id"] = scenario.isis_config.area_id;
+        isis_config["level"] = std::to_string(scenario.isis_config.level);
+        
+        if (frr_integration_->start_protocol("isis", isis_config)) {
+            std::cout << "Started IS-IS with system-id " << scenario.isis_config.system_id << std::endl;
+            
+            // Configure IS-IS interfaces
+            for (const auto& interface : scenario.isis_config.interfaces) {
+                std::map<std::string, std::string> interface_config;
+                interface_config["level"] = std::to_string(interface.level);
+                interface_config["cost"] = std::to_string(interface.cost);
+                
+                if (frr_integration_->add_isis_interface(interface.name, interface_config)) {
+                    std::cout << "Added IS-IS interface: " << interface.name << " (level " << (int)interface.level << ")" << std::endl;
+                }
             }
         }
     }
+    
+    // Configure traffic shaping
+    if (!scenario.traffic_shaping_config.wfq_classes.empty()) {
+        if (traffic_shaper_->configure_interface("default", ShapingAlgorithm::WEIGHTED_FAIR_QUEUE, {})) {
+            std::cout << "Configured traffic shaping" << std::endl;
+        }
+    }
+    
+    // Configure network impairments
+    for (const auto& netem_config : scenario.netem_configs) {
+        CombinedImpairments impairments;
+        impairments.delay.delay_ms = netem_config.delay_ms;
+        impairments.delay.jitter_ms = netem_config.jitter_ms;
+        impairments.loss.loss_percent = netem_config.loss_percent;
+        impairments.duplication.duplication_percent = netem_config.duplication_percent;
+        impairments.reordering.reordering_percent = netem_config.reordering_percent;
+        impairments.corruption.corruption_percent = netem_config.corruption_percent;
+        impairments.rate.rate_bps = netem_config.rate_bps;
+        
+        if (netem_impairments_->apply_combined_impairments(netem_config.interface, impairments)) {
+            std::cout << "Applied network impairments to " << netem_config.interface << std::endl;
+        }
+    }
+    
+    // Execute test cases
+    for (const auto& test_case : scenario.test_cases) {
+        std::cout << "\nExecuting test case: " << test_case.name << std::endl;
+        std::cout << "Description: " << test_case.description << std::endl;
+        
+        for (const auto& command : test_case.commands) {
+            std::cout << "Executing command: " << command << std::endl;
+            // Execute command (simplified implementation)
+        }
+        
+        std::cout << "Expected result: " << test_case.expected_result << std::endl;
+    }
+    
+    std::cout << "\nScenario execution completed" << std::endl;
     return true;
 }
 
-bool YAMLConfig::parse_traffic_shaping(const YAML::Node& node, TrafficShapingConfig& config) {
-    if (node["token_bucket"]) {
-        auto tb = node["token_bucket"];
-        config.token_bucket_capacity = tb["capacity"] ? tb["capacity"].as<uint64_t>() : 1000000;
-        config.token_bucket_rate = tb["rate"] ? tb["rate"].as<uint64_t>() : 100000;
-    }
-    if (node["wfq_classes"]) {
-        for (const auto& wfq : node["wfq_classes"]) {
-            if (wfq["class_id"] && wfq["weight"]) {
-                config.wfq_classes[wfq["class_id"].as<uint32_t>()] = wfq["weight"].as<uint32_t>();
-            }
-        }
-    }
-    return true;
-}
-
-bool YAMLConfig::parse_netem(const YAML::Node& node, NetemConfig& config) {
-    if (!node["interface"]) {
-        return false;
-    }
-    
-    config.interface = node["interface"].as<std::string>();
-    config.delay_ms = node["delay_ms"] ? node["delay_ms"].as<double>() : 0.0;
-    config.jitter_ms = node["jitter_ms"] ? node["jitter_ms"].as<double>() : 0.0;
-    config.loss_percent = node["loss_percent"] ? node["loss_percent"].as<double>() : 0.0;
-    config.duplicate_percent = node["duplicate_percent"] ? node["duplicate_percent"].as<double>() : 0.0;
-    config.reorder_percent = node["reorder_percent"] ? node["reorder_percent"].as<double>() : 0.0;
-    config.rate_bps = node["rate_bps"] ? node["rate_bps"].as<uint64_t>() : 0;
-    
-    return true;
-}
-
-YAML::Node YAMLConfig::create_interface_node(const InterfaceConfig& config) {
-    YAML::Node node;
-    node["name"] = config.name;
-    node["ip_address"] = config.ip_address;
-    node["subnet_mask"] = config.subnet_mask;
-    node["is_up"] = config.is_up;
-    node["mtu"] = config.mtu;
-    return node;
-}
-
-YAML::Node YAMLConfig::create_route_node(const RouteConfig& config) {
-    YAML::Node node;
-    node["network"] = config.network;
-    node["next_hop"] = config.next_hop;
-    node["interface"] = config.interface;
-    node["metric"] = config.metric;
-    node["protocol"] = config.protocol;
-    node["is_active"] = config.is_active;
-    return node;
-}
-
-YAML::Node YAMLConfig::create_bgp_node(const BGPConfig& config) {
-    YAML::Node node;
-    if (!config.as_number.empty()) {
-        node["as_number"] = config.as_number;
-    }
-    if (!config.router_id.empty()) {
-        node["router_id"] = config.router_id;
-    }
-    if (!config.neighbors.empty()) {
-        YAML::Node neighbors = YAML::Node(YAML::NodeType::Sequence);
-        for (const auto& neighbor : config.neighbors) {
-            YAML::Node neighbor_node;
-            neighbor_node["ip"] = neighbor.first;
-            neighbor_node["as"] = neighbor.second;
-            neighbors.push_back(neighbor_node);
-        }
-        node["neighbors"] = neighbors;
-    }
-    return node;
-}
-
-YAML::Node YAMLConfig::create_ospf_node(const OSPFConfig& config) {
-    YAML::Node node;
-    if (!config.router_id.empty()) {
-        node["router_id"] = config.router_id;
-    }
-    if (!config.area.empty()) {
-        node["area"] = config.area;
-    }
-    if (!config.interfaces.empty()) {
-        node["interfaces"] = config.interfaces;
-    }
-    return node;
-}
-
-YAML::Node YAMLConfig::create_isis_node(const ISISConfig& config) {
-    YAML::Node node;
-    if (!config.system_id.empty()) {
-        node["system_id"] = config.system_id;
-    }
-    if (!config.area_id.empty()) {
-        node["area_id"] = config.area_id;
-    }
-    if (!config.interfaces.empty()) {
-        YAML::Node interfaces = YAML::Node(YAML::NodeType::Sequence);
-        for (const auto& iface : config.interfaces) {
-            YAML::Node iface_node;
-            iface_node["name"] = iface.first;
-            iface_node["level"] = iface.second;
-            interfaces.push_back(iface_node);
-        }
-        node["interfaces"] = interfaces;
-    }
-    return node;
-}
-
-YAML::Node YAMLConfig::create_traffic_shaping_node(const TrafficShapingConfig& config) {
-    YAML::Node node;
-    YAML::Node token_bucket;
-    token_bucket["capacity"] = config.token_bucket_capacity;
-    token_bucket["rate"] = config.token_bucket_rate;
-    node["token_bucket"] = token_bucket;
-    
-    if (!config.wfq_classes.empty()) {
-        YAML::Node wfq_classes = YAML::Node(YAML::NodeType::Sequence);
-        for (const auto& wfq : config.wfq_classes) {
-            YAML::Node wfq_node;
-            wfq_node["class_id"] = wfq.first;
-            wfq_node["weight"] = wfq.second;
-            wfq_classes.push_back(wfq_node);
-        }
-        node["wfq_classes"] = wfq_classes;
-    }
-    
-    return node;
-}
-
-YAML::Node YAMLConfig::create_netem_node(const NetemConfig& config) {
-    YAML::Node node;
-    node["interface"] = config.interface;
-    node["delay_ms"] = config.delay_ms;
-    node["jitter_ms"] = config.jitter_ms;
-    node["loss_percent"] = config.loss_percent;
-    node["duplicate_percent"] = config.duplicate_percent;
-    node["reorder_percent"] = config.reorder_percent;
-    node["rate_bps"] = config.rate_bps;
-    return node;
+bool ScenarioExecutor::is_initialized() const {
+    return initialized_;
 }
 
 } // namespace RouterSim

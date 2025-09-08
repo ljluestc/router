@@ -1,0 +1,423 @@
+name: "BGP Convergence Test"
+description: "Test BGP convergence with multiple routers and route advertisements"
+version: "1.0.0"
+
+metadata:
+  author: "Router Simulator"
+  created: "2024-01-01"
+  tags: ["bgp", "convergence", "routing"]
+
+routers:
+  - name: "router1"
+    router_id: "1.1.1.1"
+    interfaces:
+      - name: "eth0"
+        ip_address: "192.168.1.1"
+        subnet_mask: "255.255.255.0"
+        mtu: 1500
+        enabled: true
+      - name: "eth1"
+        ip_address: "10.0.1.1"
+        subnet_mask: "255.255.255.0"
+        mtu: 1500
+        enabled: true
+    protocols:
+      - type: "bgp"
+        name: "bgp1"
+        enabled: true
+        parameters:
+          local_as: "65001"
+          router_id: "1.1.1.1"
+          hold_time: "180"
+          keepalive_interval: "60"
+        neighbors:
+          - address: "192.168.1.2"
+            parameters:
+              remote_as: "65002"
+          - address: "10.0.1.2"
+            parameters:
+              remote_as: "65003"
+        routes:
+          - destination: "172.16.0.0"
+            prefix_length: 16
+            next_hop: "192.168.1.2"
+            interface: "eth0"
+            metric: 100
+            attributes:
+              local_pref: "100"
+              med: "0"
+              origin: "igp"
+    traffic_shaping:
+      - interface: "eth0"
+        algorithm: "token_bucket"
+        rate_bps: 1000000000  # 1 Gbps
+        burst_size: 1000000   # 1 MB
+        queue_size: 1000
+    impairments:
+      - interface: "eth0"
+        type: "delay"
+        value: 10.0  # 10ms delay
+        distribution: "uniform"
+        enabled: true
+
+  - name: "router2"
+    router_id: "2.2.2.2"
+    interfaces:
+      - name: "eth0"
+        ip_address: "192.168.1.2"
+        subnet_mask: "255.255.255.0"
+        mtu: 1500
+        enabled: true
+      - name: "eth1"
+        ip_address: "192.168.2.1"
+        subnet_mask: "255.255.255.0"
+        mtu: 1500
+        enabled: true
+    protocols:
+      - type: "bgp"
+        name: "bgp2"
+        enabled: true
+        parameters:
+          local_as: "65002"
+          router_id: "2.2.2.2"
+          hold_time: "180"
+          keepalive_interval: "60"
+        neighbors:
+          - address: "192.168.1.1"
+            parameters:
+              remote_as: "65001"
+          - address: "192.168.2.2"
+            parameters:
+              remote_as: "65004"
+        routes:
+          - destination: "172.17.0.0"
+            prefix_length: 16
+            next_hop: "192.168.2.2"
+            interface: "eth1"
+            metric: 200
+            attributes:
+              local_pref: "200"
+              med: "0"
+              origin: "igp"
+    traffic_shaping:
+      - interface: "eth0"
+        algorithm: "wfq"
+        rate_bps: 500000000  # 500 Mbps
+        burst_size: 500000   # 500 KB
+        queue_size: 500
+        parameters:
+          flows:
+            - flow_id: "bgp_control"
+              weight: 10
+              max_bandwidth: 10000000  # 10 Mbps
+            - flow_id: "data"
+              weight: 1
+              max_bandwidth: 490000000  # 490 Mbps
+
+  - name: "router3"
+    router_id: "3.3.3.3"
+    interfaces:
+      - name: "eth0"
+        ip_address: "10.0.1.2"
+        subnet_mask: "255.255.255.0"
+        mtu: 1500
+        enabled: true
+    protocols:
+      - type: "bgp"
+        name: "bgp3"
+        enabled: true
+        parameters:
+          local_as: "65003"
+          router_id: "3.3.3.3"
+          hold_time: "180"
+          keepalive_interval: "60"
+        neighbors:
+          - address: "10.0.1.1"
+            parameters:
+              remote_as: "65001"
+        routes:
+          - destination: "172.18.0.0"
+            prefix_length: 16
+            next_hop: "10.0.1.1"
+            interface: "eth0"
+            metric: 50
+            attributes:
+              local_pref: "50"
+              med: "0"
+              origin: "igp"
+
+tests:
+  - name: "bgp_convergence_test"
+    description: "Test BGP convergence between all routers"
+    type: "convergence"
+    prerequisites:
+      - "all_routers_started"
+      - "all_interfaces_up"
+    parameters:
+      convergence_timeout: 30000  # 30 seconds
+      route_propagation_delay: 5000  # 5 seconds
+    steps:
+      - action: "start_routers"
+        parameters:
+          routers: ["router1", "router2", "router3"]
+        timeout_ms: 10000
+        required: true
+        description: "Start all routers"
+      
+      - action: "bring_up_interfaces"
+        parameters:
+          interfaces: ["router1.eth0", "router1.eth1", "router2.eth0", "router2.eth1", "router3.eth0"]
+        timeout_ms: 5000
+        required: true
+        description: "Bring up all interfaces"
+      
+      - action: "establish_bgp_sessions"
+        parameters:
+          sessions:
+            - local_router: "router1"
+              local_interface: "eth0"
+              remote_router: "router2"
+              remote_interface: "eth0"
+            - local_router: "router1"
+              local_interface: "eth1"
+              remote_router: "router3"
+              remote_interface: "eth0"
+            - local_router: "router2"
+              local_interface: "eth1"
+              remote_router: "router3"
+              remote_interface: "eth0"
+        timeout_ms: 15000
+        required: true
+        description: "Establish BGP sessions between routers"
+      
+      - action: "advertise_routes"
+        parameters:
+          routes:
+            - router: "router1"
+              destination: "172.16.0.0/16"
+              next_hop: "192.168.1.2"
+            - router: "router2"
+              destination: "172.17.0.0/16"
+              next_hop: "192.168.2.2"
+            - router: "router3"
+              destination: "172.18.0.0/16"
+              next_hop: "10.0.1.1"
+        timeout_ms: 10000
+        required: true
+        description: "Advertise routes from each router"
+      
+      - action: "wait_for_convergence"
+        parameters:
+          timeout_ms: 30000
+        timeout_ms: 35000
+        required: true
+        description: "Wait for BGP convergence"
+    
+    assertions:
+      - type: "route_exists"
+        parameters:
+          router: "router1"
+          destination: "172.17.0.0/16"
+          next_hop: "192.168.1.2"
+        expected_value: "true"
+        tolerance: 0.0
+        required: true
+      
+      - type: "route_exists"
+        parameters:
+          router: "router1"
+          destination: "172.18.0.0/16"
+          next_hop: "10.0.1.2"
+        expected_value: "true"
+        tolerance: 0.0
+        required: true
+      
+      - type: "route_exists"
+        parameters:
+          router: "router2"
+          destination: "172.16.0.0/16"
+          next_hop: "192.168.1.1"
+        expected_value: "true"
+        tolerance: 0.0
+        required: true
+      
+      - type: "route_exists"
+        parameters:
+          router: "router2"
+          destination: "172.18.0.0/16"
+          next_hop: "192.168.1.1"
+        expected_value: "true"
+        tolerance: 0.0
+        required: true
+      
+      - type: "route_exists"
+        parameters:
+          router: "router3"
+          destination: "172.16.0.0/16"
+          next_hop: "10.0.1.1"
+        expected_value: "true"
+        tolerance: 0.0
+        required: true
+      
+      - type: "route_exists"
+        parameters:
+          router: "router3"
+          destination: "172.17.0.0/16"
+          next_hop: "10.0.1.1"
+        expected_value: "true"
+        tolerance: 0.0
+        required: true
+      
+      - type: "neighbor_up"
+        parameters:
+          router: "router1"
+          neighbor: "192.168.1.2"
+        expected_value: "true"
+        tolerance: 0.0
+        required: true
+      
+      - type: "neighbor_up"
+        parameters:
+          router: "router1"
+          neighbor: "10.0.1.2"
+        expected_value: "true"
+        tolerance: 0.0
+        required: true
+      
+      - type: "latency"
+        parameters:
+          source_router: "router1"
+          dest_router: "router2"
+          destination: "172.17.0.1"
+        expected_value: "50"  # 50ms
+        tolerance: 10.0  # 10ms tolerance
+        required: false
+      
+      - type: "throughput"
+        parameters:
+          source_router: "router1"
+          dest_router: "router2"
+          destination: "172.17.0.1"
+        expected_value: "1000000"  # 1 Mbps
+        tolerance: 100000.0  # 100 Kbps tolerance
+        required: false
+
+  - name: "traffic_shaping_test"
+    description: "Test traffic shaping functionality"
+    type: "performance"
+    prerequisites:
+      - "bgp_convergence_test"
+    parameters:
+      test_duration: 60000  # 60 seconds
+      packet_size: 1500
+      packet_rate: 1000  # packets per second
+    steps:
+      - action: "start_traffic_generation"
+        parameters:
+          source_router: "router1"
+          dest_router: "router2"
+          destination: "172.17.0.1"
+          packet_size: 1500
+          packet_rate: 1000
+          duration: 60000
+        timeout_ms: 65000
+        required: true
+        description: "Start traffic generation"
+      
+      - action: "monitor_traffic_shaping"
+        parameters:
+          router: "router2"
+          interface: "eth0"
+          duration: 60000
+        timeout_ms: 65000
+        required: true
+        description: "Monitor traffic shaping statistics"
+    
+    assertions:
+      - type: "packet_count"
+        parameters:
+          router: "router2"
+          interface: "eth0"
+        expected_value: "60000"  # 1000 pps * 60 seconds
+        tolerance: 1000.0  # 1 second tolerance
+        required: true
+      
+      - type: "throughput"
+        parameters:
+          router: "router2"
+          interface: "eth0"
+        expected_value: "500000000"  # 500 Mbps (WFQ rate)
+        tolerance: 50000000.0  # 50 Mbps tolerance
+        required: true
+
+  - name: "network_impairments_test"
+    description: "Test network impairments and recovery"
+    type: "stress"
+    prerequisites:
+      - "bgp_convergence_test"
+    parameters:
+      impairment_duration: 30000  # 30 seconds
+      recovery_timeout: 10000  # 10 seconds
+    steps:
+      - action: "apply_impairments"
+        parameters:
+          router: "router1"
+          interface: "eth0"
+          impairments:
+            - type: "delay"
+              value: 100.0  # 100ms delay
+              distribution: "uniform"
+            - type: "loss"
+              value: 5.0  # 5% packet loss
+              distribution: "uniform"
+        timeout_ms: 5000
+        required: true
+        description: "Apply network impairments"
+      
+      - action: "monitor_bgp_sessions"
+        parameters:
+          routers: ["router1", "router2"]
+          duration: 30000
+        timeout_ms: 35000
+        required: true
+        description: "Monitor BGP session stability"
+      
+      - action: "remove_impairments"
+        parameters:
+          router: "router1"
+          interface: "eth0"
+        timeout_ms: 5000
+        required: true
+        description: "Remove network impairments"
+      
+      - action: "wait_for_recovery"
+        parameters:
+          timeout_ms: 10000
+        timeout_ms: 15000
+        required: true
+        description: "Wait for network recovery"
+    
+    assertions:
+      - type: "neighbor_up"
+        parameters:
+          router: "router1"
+          neighbor: "192.168.1.2"
+        expected_value: "true"
+        tolerance: 0.0
+        required: true
+      
+      - type: "route_exists"
+        parameters:
+          router: "router1"
+          destination: "172.17.0.0/16"
+          next_hop: "192.168.1.2"
+        expected_value: "true"
+        tolerance: 0.0
+        required: true
+
+global_variables:
+  test_timeout: 300000  # 5 minutes
+  convergence_timeout: 30000  # 30 seconds
+  packet_loss_threshold: 1.0  # 1%
+  latency_threshold: 100.0  # 100ms
+  throughput_threshold: 0.8  # 80% of configured rate

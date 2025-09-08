@@ -1,127 +1,305 @@
 #include <gtest/gtest.h>
 #include "router_core.h"
-#include <thread>
-#include <chrono>
+#include "protocols/bgp.h"
+#include "protocols/ospf.h"
+#include "protocols/isis.h"
+#include "traffic_shaping/traffic_shaper.h"
 
-using namespace RouterSim;
+using namespace router_sim;
 
 class RouterCoreTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        router = std::make_unique<RouterCore>();
-        ASSERT_TRUE(router->initialize());
+        router_ = std::make_unique<RouterCore>();
     }
-    
+
     void TearDown() override {
-        if (router && router->is_running()) {
-            router->stop();
+        if (router_) {
+            router_->stop();
         }
     }
-    
-    std::unique_ptr<RouterCore> router;
+
+    std::unique_ptr<RouterCore> router_;
 };
 
-TEST_F(RouterCoreTest, Initialization) {
-    EXPECT_TRUE(router->initialize());
-    EXPECT_FALSE(router->is_running());
+TEST_F(RouterCoreTest, Initialize) {
+    EXPECT_TRUE(router_->initialize());
 }
 
 TEST_F(RouterCoreTest, StartStop) {
-    router->start();
-    EXPECT_TRUE(router->is_running());
-    
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    
-    router->stop();
-    EXPECT_FALSE(router->is_running());
+    ASSERT_TRUE(router_->initialize());
+    EXPECT_TRUE(router_->start());
+    EXPECT_TRUE(router_->is_running());
+    router_->stop();
+    EXPECT_FALSE(router_->is_running());
 }
 
-TEST_F(RouterCoreTest, InterfaceManagement) {
+TEST_F(RouterCoreTest, AddRemoveInterface) {
+    ASSERT_TRUE(router_->initialize());
+    ASSERT_TRUE(router_->start());
+
     // Add interface
-    EXPECT_TRUE(router->add_interface("eth0", "192.168.1.1", "255.255.255.0"));
+    EXPECT_TRUE(router_->add_interface("eth0", "192.168.1.1", "255.255.255.0"));
     
     // Check interface exists
-    auto interfaces = router->get_interfaces();
-    EXPECT_EQ(interfaces.size(), 2); // lo + eth0
-    
-    // Find our interface
-    bool found = false;
-    for (const auto& iface : interfaces) {
-        if (iface.name == "eth0") {
-            EXPECT_EQ(iface.ip_address, "192.168.1.1");
-            EXPECT_EQ(iface.subnet_mask, "255.255.255.0");
-            EXPECT_FALSE(iface.is_up);
-            found = true;
-            break;
-        }
-    }
-    EXPECT_TRUE(found);
-    
-    // Set interface up
-    EXPECT_TRUE(router->set_interface_up("eth0", true));
-    
+    auto interfaces = router_->get_interfaces();
+    EXPECT_EQ(interfaces.size(), 1);
+    EXPECT_EQ(interfaces[0].name, "eth0");
+    EXPECT_EQ(interfaces[0].ip_address, "192.168.1.1");
+
     // Remove interface
-    EXPECT_TRUE(router->remove_interface("eth0"));
+    EXPECT_TRUE(router_->remove_interface("eth0"));
     
-    interfaces = router->get_interfaces();
-    EXPECT_EQ(interfaces.size(), 1); // Only lo left
+    // Check interface is removed
+    interfaces = router_->get_interfaces();
+    EXPECT_EQ(interfaces.size(), 0);
 }
 
-TEST_F(RouterCoreTest, RouteManagement) {
-    Route route1;
-    route1.network = "192.168.1.0/24";
-    route1.next_hop = "192.168.1.1";
-    route1.interface = "eth0";
-    route1.metric = 1;
-    route1.protocol = "static";
-    route1.is_active = true;
-    
+TEST_F(RouterCoreTest, AddRemoveRoute) {
+    ASSERT_TRUE(router_->initialize());
+    ASSERT_TRUE(router_->start());
+
     // Add route
-    EXPECT_TRUE(router->add_route(route1));
+    Route route;
+    route.destination = "10.0.0.0";
+    route.prefix_length = 8;
+    route.next_hop = "192.168.1.1";
+    route.interface = "eth0";
+    route.metric = 1;
+    route.protocol = "static";
+    route.is_active = true;
+
+    EXPECT_TRUE(router_->add_route(route));
     
     // Check route exists
-    auto routes = router->get_routes();
+    auto routes = router_->get_routes();
     EXPECT_EQ(routes.size(), 1);
-    EXPECT_EQ(routes[0].network, "192.168.1.0/24");
-    
-    // Find route
-    Route* found_route = router->find_route("192.168.1.10");
-    EXPECT_NE(found_route, nullptr);
-    EXPECT_EQ(found_route->network, "192.168.1.0/24");
-    
+    EXPECT_EQ(routes[0].destination, "10.0.0.0");
+
     // Remove route
-    EXPECT_TRUE(router->remove_route("192.168.1.0/24"));
+    EXPECT_TRUE(router_->remove_route("10.0.0.0", 8));
     
-    routes = router->get_routes();
+    // Check route is removed
+    routes = router_->get_routes();
     EXPECT_EQ(routes.size(), 0);
 }
 
-TEST_F(RouterCoreTest, PacketProcessing) {
-    router->start();
+TEST_F(RouterCoreTest, EnableDisableProtocol) {
+    ASSERT_TRUE(router_->initialize());
+    ASSERT_TRUE(router_->start());
+
+    // Enable BGP
+    std::map<std::string, std::string> bgp_config;
+    bgp_config["local_as"] = "65001";
+    bgp_config["router_id"] = "1.1.1.1";
     
-    Packet packet;
-    packet.data = {0x45, 0x00, 0x00, 0x14, 0x00, 0x00, 0x40, 0x00};
-    packet.source_interface = "eth0";
-    packet.dest_interface = "eth1";
-    packet.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-    packet.size = packet.data.size();
+    EXPECT_TRUE(router_->enable_protocol(ProtocolType::BGP, bgp_config));
     
-    // Process packet
-    router->process_packet(packet);
+    // Check protocol is active
+    auto protocols = router_->get_active_protocols();
+    EXPECT_EQ(protocols.size(), 1);
+    EXPECT_EQ(protocols[0], ProtocolType::BGP);
+
+    // Disable BGP
+    EXPECT_TRUE(router_->disable_protocol(ProtocolType::BGP));
     
-    // Check statistics
-    auto stats = router->get_statistics();
-    EXPECT_EQ(stats.total_packets_processed, 1);
-    EXPECT_EQ(stats.total_bytes_processed, packet.size);
+    // Check protocol is disabled
+    protocols = router_->get_active_protocols();
+    EXPECT_EQ(protocols.size(), 0);
+}
+
+TEST_F(RouterCoreTest, InterfaceState) {
+    ASSERT_TRUE(router_->initialize());
+    ASSERT_TRUE(router_->start());
+
+    // Add interface
+    EXPECT_TRUE(router_->add_interface("eth0", "192.168.1.1", "255.255.255.0"));
     
-    router->stop();
+    // Check initial state
+    auto interfaces = router_->get_interfaces();
+    EXPECT_FALSE(interfaces[0].is_up);
+
+    // Bring interface up
+    EXPECT_TRUE(router_->set_interface_state("eth0", true));
+    
+    // Check interface is up
+    interfaces = router_->get_interfaces();
+    EXPECT_TRUE(interfaces[0].is_up);
+
+    // Bring interface down
+    EXPECT_TRUE(router_->set_interface_state("eth0", false));
+    
+    // Check interface is down
+    interfaces = router_->get_interfaces();
+    EXPECT_FALSE(interfaces[0].is_up);
 }
 
 TEST_F(RouterCoreTest, Statistics) {
-    auto stats = router->get_statistics();
-    EXPECT_EQ(stats.total_packets_processed, 0);
-    EXPECT_EQ(stats.total_bytes_processed, 0);
-    EXPECT_EQ(stats.routing_table_updates, 0);
-    EXPECT_EQ(stats.interface_state_changes, 0);
+    ASSERT_TRUE(router_->initialize());
+    ASSERT_TRUE(router_->start());
+
+    // Add some interfaces and routes
+    router_->add_interface("eth0", "192.168.1.1", "255.255.255.0");
+    router_->add_interface("eth1", "192.168.2.1", "255.255.255.0");
+    
+    Route route;
+    route.destination = "10.0.0.0";
+    route.prefix_length = 8;
+    route.next_hop = "192.168.1.1";
+    route.interface = "eth0";
+    route.metric = 1;
+    route.protocol = "static";
+    route.is_active = true;
+    router_->add_route(route);
+
+    // Get statistics
+    auto stats = router_->get_statistics();
+    EXPECT_EQ(stats.interface_stats.size(), 2);
+    EXPECT_TRUE(stats.interface_stats.find("eth0") != stats.interface_stats.end());
+    EXPECT_TRUE(stats.interface_stats.find("eth1") != stats.interface_stats.end());
+}
+
+class BGPProtocolTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        bgp_ = std::make_unique<BGPProtocol>();
+    }
+
+    void TearDown() override {
+        if (bgp_) {
+            bgp_->stop();
+        }
+    }
+
+    std::unique_ptr<BGPProtocol> bgp_;
+};
+
+TEST_F(BGPProtocolTest, Initialize) {
+    ProtocolConfig config;
+    config.parameters["local_as"] = "65001";
+    config.parameters["router_id"] = "1.1.1.1";
+    config.enabled = true;
+    config.update_interval_ms = 1000;
+
+    EXPECT_TRUE(bgp_->initialize(config));
+}
+
+TEST_F(BGPProtocolTest, AddRemoveNeighbor) {
+    ProtocolConfig config;
+    config.parameters["local_as"] = "65001";
+    config.parameters["router_id"] = "1.1.1.1";
+    config.enabled = true;
+    config.update_interval_ms = 1000;
+
+    ASSERT_TRUE(bgp_->initialize(config));
+    ASSERT_TRUE(bgp_->start());
+
+    // Add neighbor
+    EXPECT_TRUE(bgp_->add_neighbor("192.168.1.2", 65002));
+    
+    // Check neighbor exists
+    auto neighbors = bgp_->get_neighbors();
+    EXPECT_EQ(neighbors.size(), 1);
+    EXPECT_EQ(neighbors[0].address, "192.168.1.2");
+    EXPECT_EQ(neighbors[0].as_number, 65002);
+
+    // Remove neighbor
+    EXPECT_TRUE(bgp_->remove_neighbor("192.168.1.2"));
+    
+    // Check neighbor is removed
+    neighbors = bgp_->get_neighbors();
+    EXPECT_EQ(neighbors.size(), 0);
+}
+
+TEST_F(BGPProtocolTest, AdvertiseWithdrawRoute) {
+    ProtocolConfig config;
+    config.parameters["local_as"] = "65001";
+    config.parameters["router_id"] = "1.1.1.1";
+    config.enabled = true;
+    config.update_interval_ms = 1000;
+
+    ASSERT_TRUE(bgp_->initialize(config));
+    ASSERT_TRUE(bgp_->start());
+
+    // Advertise route
+    EXPECT_TRUE(bgp_->advertise_route("10.0.0.0", 8, 100));
+    
+    // Check route is advertised
+    auto routes = bgp_->get_advertised_routes();
+    EXPECT_EQ(routes.size(), 1);
+    EXPECT_EQ(routes[0], "10.0.0.0/8");
+
+    // Withdraw route
+    EXPECT_TRUE(bgp_->withdraw_route("10.0.0.0", 8));
+    
+    // Check route is withdrawn
+    routes = bgp_->get_advertised_routes();
+    EXPECT_EQ(routes.size(), 0);
+}
+
+class TrafficShaperTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        shaper_ = TrafficShaperFactory::create("token_bucket");
+    }
+
+    void TearDown() override {
+        if (shaper_) {
+            shaper_->stop();
+        }
+    }
+
+    std::unique_ptr<TrafficShaper> shaper_;
+};
+
+TEST_F(TrafficShaperTest, Initialize) {
+    TrafficShapingConfig config;
+    config.algorithm = "token_bucket";
+    config.rate_bps = 1000000; // 1 Mbps
+    config.burst_size = 10000; // 10 KB
+    config.queue_size = 100;
+
+    EXPECT_TRUE(shaper_->initialize(config));
+}
+
+TEST_F(TrafficShaperTest, ShapePacket) {
+    TrafficShapingConfig config;
+    config.algorithm = "token_bucket";
+    config.rate_bps = 1000000; // 1 Mbps
+    config.burst_size = 10000; // 10 KB
+    config.queue_size = 100;
+
+    ASSERT_TRUE(shaper_->initialize(config));
+    ASSERT_TRUE(shaper_->start());
+
+    // Create test packet
+    std::vector<uint8_t> packet(1000, 0xAA);
+    
+    // Shape packet
+    EXPECT_TRUE(shaper_->shape_packet("eth0", packet));
+    
+    // Check queue size
+    EXPECT_GT(shaper_->get_queue_size("eth0"), 0);
+}
+
+TEST_F(TrafficShaperTest, SetRate) {
+    TrafficShapingConfig config;
+    config.algorithm = "token_bucket";
+    config.rate_bps = 1000000; // 1 Mbps
+    config.burst_size = 10000; // 10 KB
+    config.queue_size = 100;
+
+    ASSERT_TRUE(shaper_->initialize(config));
+    ASSERT_TRUE(shaper_->start());
+
+    // Set new rate
+    EXPECT_TRUE(shaper_->set_rate("eth0", 2000000)); // 2 Mbps
+    
+    // Check rate is set
+    EXPECT_EQ(shaper_->get_current_rate("eth0"), 2000000);
+}
+
+int main(int argc, char** argv) {
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
 }

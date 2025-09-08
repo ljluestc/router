@@ -1,114 +1,133 @@
-# Multi-Protocol Router Simulator Dockerfile
-# Multi-stage build for optimized image size
+# Multi-stage Dockerfile for Router Simulator
+# Supports C++, Go, Rust, and Web components
 
-# Build stage
-FROM ubuntu:22.04 as builder
+# Base stage with common dependencies
+FROM ubuntu:22.04 AS base
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
-ENV CMAKE_BUILD_TYPE=Release
-ENV ENABLE_COVERAGE=OFF
-ENV ENABLE_TESTS=ON
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
-# Install build dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
-    libpcap-dev \
-    libyaml-cpp-dev \
-    frr \
-    iproute2 \
-    net-tools \
+    ninja-build \
     pkg-config \
     git \
+    curl \
+    wget \
+    ca-certificates \
+    libpcap-dev \
+    libssl-dev \
+    libyaml-cpp-dev \
+    libgtest-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# C++ Build stage
+FROM base AS cpp-builder
+
 WORKDIR /app
 
-# Copy source code
-COPY . .
+# Copy C++ source code
+COPY include/ /app/include/
+COPY src/ /app/src/
+COPY CMakeLists.txt /app/
+COPY tests/ /app/tests/
 
-# Create build directory and build
+# Build C++ components
 RUN mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=$CMAKE_BUILD_TYPE \
-          -DENABLE_COVERAGE=$ENABLE_COVERAGE \
-          -DENABLE_TESTS=$ENABLE_TESTS \
-          -DCMAKE_INSTALL_PREFIX=/usr/local \
-          .. && \
-    make -j$(nproc) && \
-    make install
+    cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release && \
+    ninja
 
-# Runtime stage
-FROM ubuntu:22.04
+# Go Build stage
+FROM golang:1.21-alpine AS go-builder
+
+WORKDIR /app
+
+# Copy Go source code
+COPY go/ /app/
+
+# Download dependencies and build
+RUN go mod download && \
+    go build -o bin/cloudnet ./cmd/cloudnet
+
+# Rust Build stage
+FROM rust:1.70-slim AS rust-builder
+
+WORKDIR /app
+
+# Copy Rust source code
+COPY rust/ /app/
+
+# Build Rust components
+RUN cargo build --release
+
+# Web Build stage
+FROM node:18-alpine AS web-builder
+
+WORKDIR /app
+
+# Copy web source code
+COPY web/ /app/
+
+# Install dependencies and build
+RUN npm ci && \
+    npm run build
+
+# Final stage
+FROM ubuntu:22.04 AS final
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PATH="/usr/local/bin:${PATH}"
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     libpcap0.8 \
+    libssl3 \
     libyaml-cpp0.8 \
-    frr \
-    iproute2 \
-    net-tools \
-    iptables \
-    tcpdump \
-    iputils-ping \
-    curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd -m -s /bin/bash router && \
-    usermod -aG sudo router
-
-# Copy built binaries from builder stage
-COPY --from=builder /usr/local/bin/router_sim /usr/local/bin/
-COPY --from=builder /usr/local/bin/router_sim_test /usr/local/bin/
-COPY --from=builder /usr/local/include/router_sim /usr/local/include/router_sim/
-COPY --from=builder /usr/local/lib/librouter_sim* /usr/local/lib/
-
-# Copy example configurations
-COPY examples/ /app/examples/
-COPY docs/ /app/docs/
-
-# Set up FRR configuration
-RUN mkdir -p /etc/frr && \
-    echo "hostname router-sim" > /etc/frr/zebra.conf && \
-    echo "password zebra" >> /etc/frr/zebra.conf && \
-    echo "enable password zebra" >> /etc/frr/zebra.conf && \
-    chown -R frr:frr /etc/frr
-
-# Create directories for runtime
-RUN mkdir -p /var/log/router_sim && \
-    mkdir -p /var/run/router_sim && \
-    mkdir -p /etc/router_sim && \
-    chown -R router:router /var/log/router_sim /var/run/router_sim /etc/router_sim
-
-# Copy default configuration
-COPY examples/basic_router.yaml /etc/router_sim/default.yaml
-
-# Switch to non-root user
-USER router
+# Create app user
+RUN useradd -m -s /bin/bash app
 
 # Set working directory
 WORKDIR /app
 
-# Expose ports (if needed for web interface)
-EXPOSE 8080
+# Copy built binaries from previous stages
+COPY --from=cpp-builder /app/build/routersim_tests /app/bin/
+COPY --from=cpp-builder /app/build/routersim_cli /app/bin/
+COPY --from=cpp-builder /app/build/routersim_demo /app/bin/
+
+COPY --from=go-builder /app/bin/cloudnet /app/bin/
+
+COPY --from=rust-builder /app/target/release/librouter_sim.so /app/lib/
+
+COPY --from=web-builder /app/dist /app/web/
+
+# Copy configuration and scripts
+COPY config.yaml /app/
+COPY scripts/ /app/scripts/
+COPY scenarios/ /app/scenarios/
+
+# Set permissions
+RUN chmod +x /app/bin/* && \
+    chmod +x /app/scripts/* && \
+    chown -R app:app /app
+
+# Switch to app user
+USER app
+
+# Expose ports
+EXPOSE 8080 9090
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD router_sim --version || exit 1
+    CMD curl -f http://localhost:8080/health || exit 1
 
 # Default command
-CMD ["router_sim", "-c", "/etc/router_sim/default.yaml", "-i"]
-
-# Labels
-LABEL maintainer="Router Sim Team <team@router-sim.dev>"
-LABEL description="Multi-Protocol Router Simulator with FRR integration"
-LABEL version="1.0.0"
-LABEL org.opencontainers.image.source="https://github.com/yourusername/router-sim"
-LABEL org.opencontainers.image.description="Advanced network simulation with FRR integration, traffic shaping, and comprehensive testing"
-LABEL org.opencontainers.image.licenses="MIT"
+CMD ["/app/bin/cloudnet", "server"]
