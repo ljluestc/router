@@ -1,133 +1,231 @@
 #pragma once
 
-#include "router_core.h"
-#include <memory>
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <functional>
 
 namespace RouterSim {
 
-// FRR protocol integration
+// FRR daemon types
+enum class FRRDaemon {
+    BGP,
+    OSPF,
+    ISIS,
+    ZEBRA,
+    STATIC
+};
+
+// FRR connection status
+enum class FRRStatus {
+    DISCONNECTED,
+    CONNECTING,
+    CONNECTED,
+    ERROR
+};
+
+// FRR configuration
+struct FRRConfig {
+    std::string hostname;
+    uint16_t port;
+    std::string password;
+    bool use_vtysh;
+    std::string config_file;
+    std::vector<std::string> daemons;
+    
+    FRRConfig() : port(2605), use_vtysh(true) {}
+};
+
+// FRR command result
+struct FRRCommandResult {
+    bool success;
+    std::string output;
+    std::string error;
+    int exit_code;
+    
+    FRRCommandResult() : success(false), exit_code(-1) {}
+};
+
+// FRR event types
+enum class FRREventType {
+    ROUTE_ADDED,
+    ROUTE_REMOVED,
+    ROUTE_UPDATED,
+    NEIGHBOR_UP,
+    NEIGHBOR_DOWN,
+    INTERFACE_UP,
+    INTERFACE_DOWN,
+    DAEMON_STARTED,
+    DAEMON_STOPPED,
+    ERROR
+};
+
+// FRR event data
+struct FRREvent {
+    FRREventType type;
+    std::string daemon;
+    std::string data;
+    std::chrono::steady_clock::time_point timestamp;
+    
+    FRREvent() : type(FRREventType::ERROR) {
+        timestamp = std::chrono::steady_clock::now();
+    }
+};
+
+// FRR event callback
+using FRREventCallback = std::function<void(const FRREvent&)>;
+
+// FRR integration class
 class FRRIntegration {
 public:
     FRRIntegration();
     ~FRRIntegration();
 
-    // Initialization
-    bool initialize();
-    void shutdown();
+    // Lifecycle
+    bool initialize(const FRRConfig& config);
+    void start();
+    void stop();
+    bool is_connected() const;
+    FRRStatus get_status() const;
 
-    // BGP integration
-    bool start_bgp(const std::string& as_number, const std::string& router_id);
-    bool stop_bgp();
-    bool add_bgp_neighbor(const std::string& neighbor_ip, 
-                         const std::string& remote_as,
-                         const std::string& local_as = "");
-    bool remove_bgp_neighbor(const std::string& neighbor_ip);
-    bool advertise_network(const std::string& network, 
-                          const std::string& mask,
-                          const std::string& next_hop = "");
-    bool withdraw_network(const std::string& network, 
-                         const std::string& mask);
-    std::vector<Route> get_bgp_routes() const;
-    std::vector<Neighbor> get_bgp_neighbors() const;
+    // Configuration
+    void set_config(const FRRConfig& config);
+    FRRConfig get_config() const;
 
-    // OSPF integration
-    bool start_ospf(const std::string& router_id, const std::string& area_id = "0.0.0.0");
-    bool stop_ospf();
-    bool add_ospf_interface(const std::string& interface, 
-                           const std::string& area_id = "0.0.0.0",
-                           int cost = 1);
-    bool remove_ospf_interface(const std::string& interface);
-    bool add_ospf_network(const std::string& network, 
-                         const std::string& mask,
-                         const std::string& area_id = "0.0.0.0");
-    std::vector<Route> get_ospf_routes() const;
-    std::vector<Neighbor> get_ospf_neighbors() const;
+    // Command execution
+    FRRCommandResult execute_command(const std::string& command);
+    FRRCommandResult execute_vtysh_command(const std::string& command);
+    FRRCommandResult execute_daemon_command(FRRDaemon daemon, const std::string& command);
 
-    // IS-IS integration
-    bool start_isis(const std::string& system_id, const std::string& area_id = "49.0001");
-    bool stop_isis();
-    bool add_isis_interface(const std::string& interface, 
-                           const std::string& level = "2");
-    bool remove_isis_interface(const std::string& interface);
-    bool add_isis_network(const std::string& network, 
-                         const std::string& mask);
-    std::vector<Route> get_isis_routes() const;
-    std::vector<Neighbor> get_isis_neighbors() const;
-
-    // Route management
-    bool install_route(const Route& route);
-    bool uninstall_route(const std::string& destination);
-    std::vector<Route> get_all_routes() const;
+    // Daemon management
+    bool start_daemon(FRRDaemon daemon);
+    bool stop_daemon(FRRDaemon daemon);
+    bool restart_daemon(FRRDaemon daemon);
+    bool is_daemon_running(FRRDaemon daemon) const;
 
     // Configuration management
-    bool load_config(const std::string& config_file);
-    bool save_config(const std::string& config_file);
-    std::string get_running_config() const;
+    bool load_config_file(const std::string& filename);
+    bool save_config_file(const std::string& filename);
+    bool apply_config();
+    bool reload_config();
 
-    // Status and monitoring
-    bool is_protocol_running(Protocol protocol) const;
-    std::map<std::string, std::string> get_protocol_status() const;
-    std::map<std::string, uint64_t> get_protocol_statistics() const;
+    // Event handling
+    void set_event_callback(FRREventCallback callback);
+    void remove_event_callback();
 
-    // Event callbacks
-    using RouteUpdateCallback = std::function<void(const Route&, bool)>;
-    using NeighborUpdateCallback = std::function<void(const Neighbor&, bool)>;
-    using ProtocolStatusCallback = std::function<void(Protocol, bool)>;
+    // Statistics
+    std::map<std::string, uint64_t> get_statistics() const;
+    void reset_statistics();
 
-    void set_route_update_callback(RouteUpdateCallback callback);
-    void set_neighbor_update_callback(NeighborUpdateCallback callback);
-    void set_protocol_status_callback(ProtocolStatusCallback callback);
+    // BGP specific methods
+    bool add_bgp_neighbor(const std::string& neighbor_ip, uint16_t as_number);
+    bool remove_bgp_neighbor(const std::string& neighbor_ip);
+    bool advertise_bgp_route(const std::string& prefix, const std::string& next_hop);
+    bool withdraw_bgp_route(const std::string& prefix);
+    std::vector<std::string> get_bgp_routes() const;
+    std::vector<std::string> get_bgp_neighbors() const;
+
+    // OSPF specific methods
+    bool add_ospf_interface(const std::string& interface, uint32_t area_id);
+    bool remove_ospf_interface(const std::string& interface);
+    bool set_ospf_router_id(const std::string& router_id);
+    std::vector<std::string> get_ospf_routes() const;
+    std::vector<std::string> get_ospf_interfaces() const;
+
+    // ISIS specific methods
+    bool set_isis_system_id(const std::string& system_id);
+    bool add_isis_interface(const std::string& interface, uint8_t level);
+    bool remove_isis_interface(const std::string& interface);
+    std::vector<std::string> get_isis_routes() const;
+    std::vector<std::string> get_isis_interfaces() const;
+
+    // Zebra specific methods
+    bool add_interface(const std::string& interface, const std::string& ip_address, const std::string& netmask);
+    bool remove_interface(const std::string& interface);
+    bool set_interface_up(const std::string& interface);
+    bool set_interface_down(const std::string& interface);
+    std::vector<std::string> get_interfaces() const;
 
 private:
-    // FRR daemon management
-    bool start_frr_daemon();
-    bool stop_frr_daemon();
-    bool is_frr_running() const;
+    void event_processing_loop();
+    void process_frr_output(const std::string& output);
+    FRREvent parse_frr_event(const std::string& line);
+    std::string build_vtysh_command(const std::string& command);
+    std::string build_daemon_command(FRRDaemon daemon, const std::string& command);
 
-    // Protocol-specific implementations
-    bool configure_bgp();
-    bool configure_ospf();
-    bool configure_isis();
-
-    // VTY shell integration
-    bool execute_vty_command(const std::string& command);
-    std::string get_vty_output(const std::string& command);
-
-    // Route parsing
-    std::vector<Route> parse_bgp_routes(const std::string& output) const;
-    std::vector<Route> parse_ospf_routes(const std::string& output) const;
-    std::vector<Route> parse_isis_routes(const std::string& output) const;
-    std::vector<Neighbor> parse_bgp_neighbors(const std::string& output) const;
-    std::vector<Neighbor> parse_ospf_neighbors(const std::string& output) const;
-    std::vector<Neighbor> parse_isis_neighbors(const std::string& output) const;
-
-    // State
-    std::atomic<bool> initialized_;
-    std::atomic<bool> frr_running_;
-    std::map<Protocol, bool> protocol_status_;
-    std::map<Protocol, std::string> protocol_configs_;
+    std::atomic<bool> running_;
+    std::atomic<FRRStatus> status_;
+    FRRConfig config_;
     
-    // Threading
-    std::thread monitor_thread_;
-    std::atomic<bool> monitor_running_;
-    mutable std::mutex state_mutex_;
+    std::thread event_thread_;
+    std::unique_ptr<class FRRClient> client_;
+    
+    mutable std::mutex config_mutex_;
+    mutable std::mutex statistics_mutex_;
+    
+    std::map<std::string, uint64_t> statistics_;
+    FRREventCallback event_callback_;
+    
+    // Daemon status tracking
+    std::map<FRRDaemon, bool> daemon_status_;
+    mutable std::mutex daemon_mutex_;
+};
 
-    // Callbacks
-    RouteUpdateCallback route_update_callback_;
-    NeighborUpdateCallback neighbor_update_callback_;
-    ProtocolStatusCallback protocol_status_callback_;
+// FRR client interface
+class FRRClient {
+public:
+    virtual ~FRRClient() = default;
+    virtual bool connect(const std::string& hostname, uint16_t port) = 0;
+    virtual void disconnect() = 0;
+    virtual bool is_connected() const = 0;
+    virtual FRRCommandResult execute_command(const std::string& command) = 0;
+    virtual void set_output_callback(std::function<void(const std::string&)> callback) = 0;
+};
 
-    // Internal monitoring
-    void monitor_loop();
-    void process_route_updates();
-    void process_neighbor_updates();
-    void process_protocol_status();
+// VTYSH client implementation
+class VTYSHClient : public FRRClient {
+public:
+    VTYSHClient();
+    ~VTYSHClient() override;
+
+    bool connect(const std::string& hostname, uint16_t port) override;
+    void disconnect() override;
+    bool is_connected() const override;
+    FRRCommandResult execute_command(const std::string& command) override;
+    void set_output_callback(std::function<void(const std::string&)> callback) override;
+
+private:
+    bool execute_vtysh(const std::string& command, std::string& output, std::string& error);
+    
+    std::atomic<bool> connected_;
+    std::function<void(const std::string&)> output_callback_;
+    mutable std::mutex client_mutex_;
+};
+
+// Socket client implementation
+class SocketClient : public FRRClient {
+public:
+    SocketClient();
+    ~SocketClient() override;
+
+    bool connect(const std::string& hostname, uint16_t port) override;
+    void disconnect() override;
+    bool is_connected() const override;
+    FRRCommandResult execute_command(const std::string& command) override;
+    void set_output_callback(std::function<void(const std::string&)> callback) override;
+
+private:
+    bool send_command(const std::string& command);
+    bool receive_response(std::string& response);
+    
+    int socket_fd_;
+    std::atomic<bool> connected_;
+    std::function<void(const std::string&)> output_callback_;
+    mutable std::mutex socket_mutex_;
 };
 
 } // namespace RouterSim
