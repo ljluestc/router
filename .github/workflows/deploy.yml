@@ -12,65 +12,75 @@ jobs:
     
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
-
+      uses: actions/checkout@v4
+      
     - name: Setup Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: '18'
         cache: 'npm'
-        cache-directory: './web/node_modules'
-
-    - name: Setup Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.21'
-
+        cache-dependency-path: web/package-lock.json
+        
+    - name: Install dependencies
+      run: |
+        cd web
+        npm ci
+        
+    - name: Build web application
+      run: |
+        cd web
+        npm run build
+        
     - name: Setup Rust
       uses: actions-rs/toolchain@v1
       with:
         toolchain: stable
         components: rustfmt, clippy
-
-    - name: Install dependencies
-      run: |
-        cd web
-        npm ci
-
-    - name: Build Go services
-      run: |
-        cd go
-        go mod tidy
-        go build -o ../build/api-server ./services/api
-
-    - name: Build Rust engine
+        
+    - name: Build Rust components
       run: |
         cd rust
         cargo build --release
-
-    - name: Build C++ core
+        
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+        
+    - name: Build Go microservices
       run: |
-        mkdir -p build
+        cd go
+        go mod tidy
+        go build -o bin/cloudpods-service ./cmd/cloudpods
+        go build -o bin/aviatrix-service ./cmd/aviatrix
+        go build -o bin/analytics-service ./cmd/analytics
+        
+    - name: Setup C++ build environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential libpcap-dev libnl-3-dev libyaml-cpp-dev
+        
+    - name: Build C++ router simulator
+      run: |
+        mkdir build
         cd build
         cmake ..
         make -j$(nproc)
-
-    - name: Build web application
-      run: |
-        cd web
-        npm run build
-
+        
     - name: Run tests
       run: |
-        cd web
-        npm run test:ui:headless
-
+        cd build
+        ctest --output-on-failure
+        
+    - name: Generate documentation
+      run: |
+        cd docs
+        python3 generate_docs.py
+        
     - name: Deploy to GitHub Pages
       uses: peaceiris/actions-gh-pages@v3
       if: github.ref == 'refs/heads/main'
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./web/dist
-        cname: cloudpods-aviatrix-demo.github.io
+        cname: router-sim.demo.com

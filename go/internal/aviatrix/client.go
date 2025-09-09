@@ -1,79 +1,47 @@
 package aviatrix
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
-
-	"router-sim/internal/config"
 )
 
 // Client represents an Aviatrix API client
 type Client struct {
-	config *config.AviatrixConfig
-	client *http.Client
+	controllerURL string
+	copilotURL    string
+	httpClient    *http.Client
+	auth          AuthConfig
+}
+
+// AuthConfig holds authentication configuration
+type AuthConfig struct {
+	ControllerUsername string `json:"controller_username"`
+	ControllerPassword string `json:"controller_password"`
+	CopilotUsername    string `json:"copilot_username"`
+	CopilotPassword    string `json:"copilot_password"`
+	APIKey             string `json:"api_key"`
+}
+
+// Config holds Aviatrix client configuration
+type Config struct {
+	ControllerURL string        `json:"controller_url"`
+	CopilotURL    string        `json:"copilot_url"`
+	Timeout       time.Duration `json:"timeout"`
+	Auth          AuthConfig    `json:"auth"`
 }
 
 // NewClient creates a new Aviatrix client
-func NewClient(config *config.AviatrixConfig) *Client {
+func NewClient(config Config) *Client {
 	return &Client{
-		config: config,
-		client: &http.Client{
+		controllerURL: config.ControllerURL,
+		copilotURL:    config.CopilotURL,
+		httpClient: &http.Client{
 			Timeout: config.Timeout,
 		},
+		auth: config.Auth,
 	}
 }
-
-// GetGateways retrieves Aviatrix gateways
-func (c *Client) GetGateways(ctx context.Context) ([]map[string]interface{}, error) {
-	// Mock implementation
-	gateways := []map[string]interface{}{
-		{
-			"name":   "gw-aws-us-west-1",
-			"cloud":  "AWS",
-			"region": "us-west-1",
-			"status": "up",
-			"type":   "transit",
-		},
-		{
-			"name":   "gw-aws-us-east-1",
-			"cloud":  "AWS",
-			"region": "us-east-1",
-			"status": "up",
-			"type":   "transit",
-		},
-	}
-	return gateways, nil
-}
-
-// GetTransitGateways retrieves Aviatrix transit gateways
-func (c *Client) GetTransitGateways(ctx context.Context) ([]map[string]interface{}, error) {
-	// Mock implementation
-	gateways := []map[string]interface{}{
-		{
-			"name":   "transit-gw-1",
-			"cloud":  "AWS",
-			"region": "us-west-1",
-			"status": "up",
-			"asn":    65001,
-		},
-	}
-	return gateways, nil
-}
-
-// GetSpokeGateways retrieves Aviatrix spoke gateways
-func (c *Client) GetSpokeGateways(ctx context.Context) ([]map[string]interface{}, error) {
-	// Mock implementation
-	gateways := []map[string]interface{}{
-		{
-			"name":   "spoke-gw-1",
-			"cloud":  "Azure",
-			"region": "westus",
-			"status": "up",
-			"vpc_id": "vpc-12345",
-		},
-	}
-	return gateways, nil
-}
-

@@ -1972,18 +1972,32 @@
                     const windsurfButtons = this.findWindsurfButtons();
                     buttons.push(...windsurfButtons);
                 } else {
-                    // Cursor IDE - check previous sibling elements for regular buttons
+                    // Cursor IDE - Enhanced search strategy
+                    // 1. Check previous sibling elements for regular buttons
                     let currentElement = inputBox.previousElementSibling;
                     let searchDepth = 0;
                     
-                    while (currentElement && searchDepth < 5) {
-                        // Look for any clickable elements containing "Accept" text
+                    while (currentElement && searchDepth < 15) { // Increased search depth
                         const acceptElements = this.findAcceptInElement(currentElement);
                         buttons.push(...acceptElements);
-                        
                         currentElement = currentElement.previousElementSibling;
                         searchDepth++;
                     }
+                    
+                    // 2. Search in conversations div for buttons in message bubbles
+                    const conversationsDiv = document.querySelector('div.conversations');
+                    if (conversationsDiv) {
+                        const conversationButtons = this.findButtonsInConversations(conversationsDiv);
+                        buttons.push(...conversationButtons);
+                    }
+                    
+                    // 3. Search in composer code blocks for Accept/Keep buttons
+                    const composerButtons = this.findButtonsInComposerBlocks();
+                    buttons.push(...composerButtons);
+                    
+                    // 4. Search for buttons in any visible code block containers
+                    const codeBlockButtons = this.findButtonsInCodeBlocks();
+                    buttons.push(...codeBlockButtons);
                 }
 
                 // Also search for Resume Conversation links in message bubbles if enabled
@@ -1996,6 +2010,89 @@
                 if (this.config.enableConnectionResume || this.config.enableTryAgain) {
                     const connectionButtons = this.findConnectionFailureButtons();
                     buttons.push(...connectionButtons);
+                }
+                
+                // Remove duplicates based on element reference
+                const uniqueButtons = [];
+                const seenElements = new Set();
+                
+                for (const button of buttons) {
+                    if (!seenElements.has(button)) {
+                        seenElements.add(button);
+                        uniqueButtons.push(button);
+                    }
+                }
+                
+                if (this.debugMode && uniqueButtons.length > 0) {
+                    this.log(`Found ${uniqueButtons.length} unique buttons: ${uniqueButtons.map(b => b.textContent.trim()).join(', ')}`);
+                }
+                
+                return uniqueButtons;
+            }
+            
+            // Find buttons in conversation area (for buttons that appear after Accept)
+            findButtonsInConversations(conversationArea) {
+                const buttons = [];
+                
+                // Look for buttons in the latest message bubbles
+                const messageBubbles = Array.from(conversationArea.querySelectorAll('[data-message-index]'))
+                    .sort((a, b) => {
+                        const indexA = parseInt(a.getAttribute('data-message-index'));
+                        const indexB = parseInt(b.getAttribute('data-message-index'));
+                        return indexB - indexA; // Latest first
+                    });
+                
+                // Check the latest 5 message bubbles for buttons
+                for (let i = 0; i < Math.min(5, messageBubbles.length); i++) {
+                    const bubble = messageBubbles[i];
+                    const bubbleButtons = this.findAcceptInElement(bubble);
+                    buttons.push(...bubbleButtons);
+                }
+                
+                return buttons;
+            }
+            
+            // Find buttons in composer code blocks
+            findButtonsInComposerBlocks() {
+                const buttons = [];
+                
+                // Look for composer code block containers
+                const composerSelectors = [
+                    '.composer-code-block-container',
+                    '.composer-tool-former-message',
+                    '.composer-diff-block'
+                ];
+                
+                for (const selector of composerSelectors) {
+                    const blocks = document.querySelectorAll(selector);
+                    for (const block of blocks) {
+                        const blockButtons = this.findAcceptInElement(block);
+                        buttons.push(...blockButtons);
+                    }
+                }
+                
+                return buttons;
+            }
+            
+            // Find buttons in code blocks
+            findButtonsInCodeBlocks() {
+                const buttons = [];
+                
+                // Look for code block containers
+                const codeBlockSelectors = [
+                    '[class*="code-block"]',
+                    '[class*="diff-block"]',
+                    '[class*="composer"]'
+                ];
+                
+                for (const selector of codeBlockSelectors) {
+                    const blocks = document.querySelectorAll(selector);
+                    for (const block of blocks) {
+                        if (this.isElementVisible(block)) {
+                            const blockButtons = this.findAcceptInElement(block);
+                            buttons.push(...blockButtons);
+                        }
+                    }
                 }
                 
                 return buttons;
@@ -2016,7 +2113,21 @@
                     '[class*="cursor-button"]',
                     '[class*="text-button"]',
                     '[class*="primary-button"]',
-                    '[class*="secondary-button"]'
+                    '[class*="secondary-button"]',
+                    // Additional selectors for Cursor IDE buttons
+                    'span[class*="button"]',
+                    'div[role="button"]',
+                    'span[role="button"]',
+                    '[class*="accept"]',
+                    '[class*="keep"]',
+                    '[class*="run"]',
+                    '[class*="apply"]',
+                    '[class*="execute"]',
+                    // Generic clickable elements
+                    '[tabindex]',
+                    '[onclick]',
+                    '[onmousedown]',
+                    '[onmouseup]'
                 ];
                 
                 for (const selector of clickableSelectors) {
@@ -2031,6 +2142,89 @@
                 // Also check the element itself
                 if (this.isAcceptButton(element)) {
                     buttons.push(element);
+                }
+                
+                return buttons;
+            }
+            
+            // Find buttons in conversations div (message bubbles)
+            findButtonsInConversations(conversationsDiv) {
+                const buttons = [];
+                
+                // Look for buttons in message bubbles, especially the latest ones
+                const messageBubbles = Array.from(conversationsDiv.querySelectorAll('[data-message-index]'))
+                    .sort((a, b) => {
+                        const indexA = parseInt(a.getAttribute('data-message-index'));
+                        const indexB = parseInt(b.getAttribute('data-message-index'));
+                        return indexB - indexA; // Latest first
+                    });
+                
+                // Check the latest 3 message bubbles for buttons
+                for (let i = 0; i < Math.min(3, messageBubbles.length); i++) {
+                    const bubble = messageBubbles[i];
+                    const bubbleButtons = this.findAcceptInElement(bubble);
+                    buttons.push(...bubbleButtons);
+                    
+                    if (this.debugMode && bubbleButtons.length > 0) {
+                        this.log(`Found ${bubbleButtons.length} buttons in message ${bubble.getAttribute('data-message-index')}`);
+                    }
+                }
+                
+                return buttons;
+            }
+            
+            // Find buttons in composer code blocks
+            findButtonsInComposerBlocks() {
+                const buttons = [];
+                
+                // Look for composer code block containers
+                const composerSelectors = [
+                    '.composer-code-block-container',
+                    '.composer-diff-block',
+                    '.composer-tool-former-message'
+                ];
+                
+                for (const selector of composerSelectors) {
+                    const blocks = document.querySelectorAll(selector);
+                    for (const block of blocks) {
+                        const blockButtons = this.findAcceptInElement(block);
+                        buttons.push(...blockButtons);
+                        
+                        if (this.debugMode && blockButtons.length > 0) {
+                            this.log(`Found ${blockButtons.length} buttons in composer block: ${selector}`);
+                        }
+                    }
+                }
+                
+                return buttons;
+            }
+            
+            // Find buttons in any visible code block containers
+            findButtonsInCodeBlocks() {
+                const buttons = [];
+                
+                // Look for any code block containers that might have buttons
+                const codeBlockSelectors = [
+                    '[class*="code-block"]',
+                    '[class*="diff-block"]',
+                    '[class*="composer"]',
+                    '.code-block-container',
+                    '.diff-container'
+                ];
+                
+                for (const selector of codeBlockSelectors) {
+                    const blocks = document.querySelectorAll(selector);
+                    for (const block of blocks) {
+                        // Only check visible blocks
+                        if (this.isElementVisible(block)) {
+                            const blockButtons = this.findAcceptInElement(block);
+                            buttons.push(...blockButtons);
+                            
+                            if (this.debugMode && blockButtons.length > 0) {
+                                this.log(`Found ${blockButtons.length} buttons in code block: ${selector}`);
+                            }
+                        }
+                    }
                 }
                 
                 return buttons;
@@ -2064,7 +2258,12 @@
                     { pattern: 'apply', enabled: this.config.enableApply },
                     { pattern: 'execute', enabled: this.config.enableExecute },
                     { pattern: 'resume', enabled: this.config.enableResume || this.config.enableConnectionResume },
-                    { pattern: 'try again', enabled: this.config.enableTryAgain }
+                    { pattern: 'try again', enabled: this.config.enableTryAgain },
+                    // Additional patterns for better matching
+                    { pattern: 'review next file', enabled: this.config.enableAccept }, // This often leads to Keep buttons
+                    { pattern: 'next file', enabled: this.config.enableAccept },
+                    { pattern: 'continue', enabled: this.config.enableAccept },
+                    { pattern: 'proceed', enabled: this.config.enableAccept }
                 ];
                 
                 // Check if text matches any enabled pattern
