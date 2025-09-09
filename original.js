@@ -2143,6 +2143,11 @@
                     'span[role="button"]',
                     '[class*="button"]',
                     '[class*="btn"]',
+                    // Enhanced selectors for Keep buttons
+                    '[title*="Keep"]',
+                    '[aria-label*="Keep"]',
+                    '[data-testid*="keep"]',
+                    '[data-cy*="keep"]',
                     // Text-based selectors (fallback)
                     '*[onclick]',
                     '*[style*="cursor: pointer"]'

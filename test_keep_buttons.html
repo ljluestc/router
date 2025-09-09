@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Keep Buttons</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #ccc;
+        }
+        .test-button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .test-button:hover {
+            background: #45a049;
+        }
+        .log {
+            background: #252525;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Test Keep Buttons Functionality</h1>
+    
+    <div>
+        <h3>Test Buttons:</h3>
+        <button class="test-button" onclick="logClick('Accept')">Accept</button>
+        <button class="test-button" onclick="logClick('Accept All')">Accept All</button>
+        <button class="test-button" onclick="logClick('Keep')">Keep</button>
+        <button class="test-button" onclick="logClick('Keep All')">Keep All</button>
+        <button class="test-button" onclick="logClick('Run')">Run</button>
+        <button class="test-button" onclick="logClick('Apply')">Apply</button>
+    </div>
+    
+    <div>
+        <h3>Auto-Accept Control:</h3>
+        <button onclick="startAccept()">Start Auto-Accept</button>
+        <button onclick="stopAccept()">Stop Auto-Accept</button>
+        <button onclick="showAnalytics()">Show Analytics</button>
+        <button onclick="toggleDebug()">Toggle Debug</button>
+    </div>
+    
+    <div class="log" id="log"></div>
+    
+    <script>
+        // Load the auto-accept script
+        const script = document.createElement('script');
+        script.src = 'replay.js';
+        document.head.appendChild(script);
+        
+        // Test logging function
+        function logClick(buttonText) {
+            const log = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            log.innerHTML += `[${time}] Clicked: ${buttonText}<br>`;
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        // Wait for script to load
+        script.onload = function() {
+            console.log('Auto-accept script loaded successfully');
+            logClick('Script loaded - Keep buttons should work!');
+        };
+    </script>
+</body>
+</html>

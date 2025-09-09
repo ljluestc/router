@@ -1,0 +1,24 @@
+name: "BGP Convergence Test"
+description: "Test BGP route convergence after link failure"
+duration: 300
+
+steps:
+  - action: start_bgp
+    parameters:
+      asn: 65001
+      neighbor: "192.168.1.2"
+  - action: advertise_route
+    parameters:
+      prefix: "203.0.1.0/24"
+      next_hop: "192.168.1.1"
+  - action: wait
+    parameters:
+      seconds: 30
+  - action: simulate_link_failure
+    parameters:
+      interface: "eth0"
+  - action: measure_convergence_time
+    parameters: {}
+  - action: verify_route_withdrawal
+    parameters:
+      prefix: "203.0.1.0/24"

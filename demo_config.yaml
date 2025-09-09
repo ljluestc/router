@@ -1,0 +1,59 @@
+router:
+  hostname: "demo-router"
+  interfaces:
+    - name: "eth0"
+      ip: "192.168.1.1/24"
+      enabled: true
+    - name: "eth1"
+      ip: "10.0.0.1/24"
+      enabled: true
+
+protocols:
+  bgp:
+    asn: 65001
+    enabled: true
+    neighbors:
+      - address: "192.168.1.2"
+        asn: 65002
+        description: "Demo BGP Neighbor"
+  ospf:
+    area: "0.0.0.0"
+    enabled: true
+    interfaces: ["eth0", "eth1"]
+  isis:
+    level: 2
+    enabled: true
+    system_id: "0000.0000.0001"
+
+traffic_shaping:
+  enabled: true
+  token_bucket:
+    capacity: 1000000
+    refill_rate: 100000
+    burst_size: 1500
+  wfq:
+    max_queues: 8
+    weights: [1, 1, 1, 1, 1, 1, 1, 1]
+
+network_impairments:
+  enabled: true
+  packet_loss_rate: 0.001
+  delay_ms: 10
+  jitter_ms: 2
+  bandwidth_limit_kbps: 1000
+
+analytics:
+  enabled: true
+  clickhouse:
+    host: "localhost"
+    port: 9000
+    database: "router_sim"
+    username: "default"
+    password: ""
+
+cli:
+  prompt: "demo-router> "
+  history_file: "/tmp/router_demo_history"
+  max_history_size: 100
+  enable_auto_completion: true
+  enable_colors: true

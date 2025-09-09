@@ -332,7 +332,9 @@
                     'apply': this.roiTracking.averageCompleteWorkflow,
                     'resume': this.roiTracking.averageCompleteWorkflow + 3000, // time saved by auto-resuming conversation
                     'connection-resume': this.roiTracking.averageCompleteWorkflow + 4000, // extra time for connection issues
-                    'try again': this.roiTracking.averageCompleteWorkflow + 3000 // time saved by auto-retrying
+                    'try again': this.roiTracking.averageCompleteWorkflow + 3000, // time saved by auto-retrying
+                    'keep all': this.roiTracking.averageCompleteWorkflow + 5000, // extra time to review all changes
+                    'keep': this.roiTracking.averageCompleteWorkflow
                 };
                 
                 const manualTime = workflowTimeSavings[buttonType.toLowerCase()] || this.roiTracking.averageCompleteWorkflow;
@@ -823,7 +825,9 @@
                     { id: 'aa-apply', text: 'Apply', checked: true },
                     { id: 'aa-resume', text: 'Resume Conversation', checked: true },
                     { id: 'aa-connection-resume', text: 'Connection Resume', checked: true },
-                    { id: 'aa-try-again', text: 'Try Again', checked: true }
+                    { id: 'aa-try-again', text: 'Try Again', checked: true },
+                    { id: 'aa-keep', text: 'Keep', checked: true },
+                    { id: 'aa-keep-all', text: 'Keep All', checked: true }
                 ];
                 
                 configOptions.forEach(option => {
@@ -880,24 +884,22 @@
                 this.controlPanel.appendChild(analyticsContent);
                 
                 this.controlPanel.style.cssText = `
-                    position: fixed !important;
-                    top: 100px !important;
-                    right: 20px !important;
-                    width: 280px !important;
-                    background: #1e1e1e !important;
-                    border: 1px solid #333 !important;
-                    border-radius: 6px !important;
-                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
-                    font-size: 12px !important;
-                    color: #ccc !important;
-                    z-index: 999999 !important;
-                    user-select: none !important;
-                    max-height: 500px !important;
-                    display: flex !important;
-                    flex-direction: column !important;
-                    visibility: visible !important;
-                    opacity: 1 !important;
+                    position: fixed;
+                    top: 100px;
+                    right: 20px;
+                    width: 280px;
+                    background: #1e1e1e;
+                    border: 1px solid #333;
+                    border-radius: 6px;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                    font-size: 12px;
+                    color: #ccc;
+                    z-index: 999999;
+                    user-select: none;
+                    max-height: 500px;
+                    display: flex;
+                    flex-direction: column;
                 `;
                 
                 this.addPanelStyles();
@@ -1846,7 +1848,9 @@
                             'aa-apply': 'enableApply',
                             'aa-resume': 'enableResume',
                             'aa-connection-resume': 'enableConnectionResume',
-                            'aa-try-again': 'enableTryAgain'
+                            'aa-try-again': 'enableTryAgain',
+                            'aa-keep': 'enableKeep',
+                            'aa-keep-all': 'enableKeepAll'
                         };
                         const configKey = configMap[checkbox.id];
                         if (configKey) {
@@ -1916,13 +1920,7 @@
             
             showControlPanel() {
                 if (!this.controlPanel) this.createControlPanel();
-                this.controlPanel.style.display = 'flex';
-                this.controlPanel.style.visibility = 'visible';
-                this.controlPanel.style.opacity = '1';
-                this.controlPanel.style.zIndex = '999999';
-                this.controlPanel.style.position = 'fixed';
-                this.controlPanel.style.top = '100px';
-                this.controlPanel.style.right = '20px';
+                this.controlPanel.style.display = 'block';
             }
             
             hideControlPanel() {
@@ -1956,13 +1954,19 @@
                               document.querySelector('[class*="bg-ide-editor-background"]') ||
                               document.querySelector('.flex.flex-row.gap-x-1');
                 } else {
-                    // Cursor IDE
-                    inputBox = document.querySelector('div.full-input-box');
+                    // Cursor IDE - enhanced selectors for all chat interfaces
+                    inputBox = document.querySelector('div.full-input-box') ||
+                              document.querySelector('[data-testid="composer-input"]') ||
+                              document.querySelector('.composer-input') ||
+                              document.querySelector('textarea[placeholder*="Ask"]') ||
+                              document.querySelector('textarea[placeholder*="Message"]') ||
+                              document.querySelector('.chat-input') ||
+                              document.querySelector('[class*="input"]');
                 }
                 
                 if (!inputBox) {
                     if (this.debugMode) {
-                        this.log(`${this.ideType} input container not found`);
+                        this.log(`${this.ideType} input container not found, using global search`);
                     }
                     
                     // Fallback: search entire document for buttons
@@ -1974,18 +1978,33 @@
                     const windsurfButtons = this.findWindsurfButtons();
                     buttons.push(...windsurfButtons);
                 } else {
-                    // Cursor IDE - check previous sibling elements for regular buttons
+                    // Cursor IDE - enhanced search strategy
+                    // 1. Check previous sibling elements for regular buttons
                     let currentElement = inputBox.previousElementSibling;
                     let searchDepth = 0;
                     
-                    while (currentElement && searchDepth < 5) {
-                        // Look for any clickable elements containing "Accept" text
+                    while (currentElement && searchDepth < 8) { // Increased depth
                         const acceptElements = this.findAcceptInElement(currentElement);
                         buttons.push(...acceptElements);
                         
                         currentElement = currentElement.previousElementSibling;
                         searchDepth++;
                     }
+                    
+                    // 2. Search in conversation area for buttons
+                    const conversationArea = document.querySelector('.conversations') || 
+                                          document.querySelector('[class*="conversation"]') ||
+                                          document.querySelector('.chat-messages') ||
+                                          document.querySelector('[class*="message"]');
+                    
+                    if (conversationArea) {
+                        const conversationButtons = this.findAcceptInElement(conversationArea);
+                        buttons.push(...conversationButtons);
+                    }
+                    
+                    // 3. Search for buttons in the entire document as fallback
+                    const globalButtons = this.findButtonsGlobally();
+                    buttons.push(...globalButtons);
                 }
 
                 // Also search for Resume Conversation links in message bubbles if enabled
@@ -2000,7 +2019,17 @@
                     buttons.push(...connectionButtons);
                 }
                 
-                return buttons;
+                // Remove duplicates
+                const uniqueButtons = [];
+                const seenButtons = new Set();
+                buttons.forEach(button => {
+                    if (!seenButtons.has(button)) {
+                        seenButtons.add(button);
+                        uniqueButtons.push(button);
+                    }
+                });
+                
+                return uniqueButtons;
             }
             
             // Find accept buttons within a specific element
@@ -2059,14 +2088,14 @@
                 const patterns = [
                     { pattern: 'accept all', enabled: this.config.enableAcceptAll },
                     { pattern: 'accept', enabled: this.config.enableAccept },
-                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
-                    { pattern: 'keep', enabled: this.config.enableKeep },
                     { pattern: 'run command', enabled: this.config.enableRunCommand },
                     { pattern: 'run', enabled: this.config.enableRun },
                     { pattern: 'apply', enabled: this.config.enableApply },
                     { pattern: 'execute', enabled: this.config.enableExecute },
                     { pattern: 'resume', enabled: this.config.enableResume || this.config.enableConnectionResume },
-                    { pattern: 'try again', enabled: this.config.enableTryAgain }
+                    { pattern: 'try again', enabled: this.config.enableTryAgain },
+                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
+                    { pattern: 'keep', enabled: this.config.enableKeep }
                 ];
                 
                 // Check if text matches any enabled pattern
@@ -2079,27 +2108,7 @@
                 const isVisible = this.isElementVisible(element);
                 const isClickable = this.isElementClickable(element);
                 
-                if (!isVisible || !isClickable) return false;
-                
-                // Enhanced validation for Cursor IDE specific cases
-                if (this.ideType === 'cursor') {
-                    // For Accept/Keep buttons, be more lenient with class detection
-                    if (text.includes('accept') || text.includes('keep')) {
-                        return true; // Accept/Keep buttons are valid even without specific classes
-                    }
-                    
-                    // Check for Cursor IDE specific classes or attributes
-                    const hasCursorClasses = element.className.includes('anysphere') ||
-                                           element.className.includes('cursor') ||
-                                           element.className.includes('button') ||
-                                           element.tagName.toLowerCase() === 'button' ||
-                                           element.getAttribute('role') === 'button' ||
-                                           element.style.cursor === 'pointer';
-                    
-                    return hasCursorClasses;
-                }
-                
-                return true;
+                return isVisible && isClickable;
             }
             
             // Check if element is visible
@@ -2335,45 +2344,11 @@
                         return;
                     }
                     
-                    // Priority logic: Handle review next file -> keep -> accept sequence
-                    let buttonToClick = buttons[0];
+                    // Click the first button found
+                    const button = buttons[0];
+                    const buttonText = button.textContent.trim().substring(0, 30);
                     
-                    // If we find a "review next file" button, prioritize it
-                    const reviewNextButton = buttons.find(btn => {
-                        const text = btn.textContent.toLowerCase().trim();
-                        return text.includes('review next file') || text.includes('review next') || text.includes('next file');
-                    });
-                    
-                    if (reviewNextButton) {
-                        buttonToClick = reviewNextButton;
-                        this.logToPanel('🔄 Found "Review Next File" button - clicking to proceed', 'info');
-                    } else {
-                        // If no review next file button, look for keep buttons
-                        const keepButton = buttons.find(btn => {
-                            const text = btn.textContent.toLowerCase().trim();
-                            return text.includes('keep');
-                        });
-                        
-                        if (keepButton) {
-                            buttonToClick = keepButton;
-                            this.logToPanel('📝 Found "Keep" button - clicking to accept changes', 'info');
-                        } else {
-                            // Look for accept buttons
-                            const acceptButton = buttons.find(btn => {
-                                const text = btn.textContent.toLowerCase().trim();
-                                return text.includes('accept') && !text.includes('accept all');
-                            });
-                            
-                            if (acceptButton) {
-                                buttonToClick = acceptButton;
-                                this.logToPanel('✅ Found "Accept" button - clicking to apply changes', 'info');
-                            }
-                        }
-                    }
-                    
-                    const buttonText = buttonToClick.textContent.trim().substring(0, 30);
-                    
-                    const success = this.clickElement(buttonToClick);
+                    const success = this.clickElement(button);
                     if (success) {
                         this.totalClicks++;
                         this.updatePanelStatus();
@@ -2943,7 +2918,9 @@
                     { pattern: 'run command', enabled: this.config.enableRunCommand },
                     { pattern: 'run', enabled: this.config.enableRun },
                     { pattern: 'apply', enabled: this.config.enableApply },
-                    { pattern: 'execute', enabled: this.config.enableExecute }
+                    { pattern: 'execute', enabled: this.config.enableExecute },
+                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
+                    { pattern: 'keep', enabled: this.config.enableKeep }
                 ];
                 
                 // Check if text matches any enabled pattern
@@ -2987,33 +2964,6 @@
                 
                 // Search in main document
                 this.searchButtonsInDocument(document, buttons);
-                
-                // Search for Keep/Accept buttons more aggressively
-                const keepAcceptSelectors = [
-                    // Look for any element containing "Keep" or "Accept" text
-                    '*:contains("Keep")',
-                    '*:contains("Accept")',
-                    '*:contains("keep")',
-                    '*:contains("accept")',
-                    // More specific selectors
-                    'span:contains("Keep")',
-                    'div:contains("Keep")',
-                    'button:contains("Keep")',
-                    'span:contains("Accept")',
-                    'div:contains("Accept")',
-                    'button:contains("Accept")'
-                ];
-                
-                // Use a more comprehensive approach to find text-based buttons
-                const allElements = document.querySelectorAll('*');
-                for (const element of allElements) {
-                    const text = element.textContent?.toLowerCase().trim();
-                    if (text && (text === 'keep' || text === 'accept' || text === 'keep all' || text === 'accept all')) {
-                        if (this.isAcceptButton(element)) {
-                            buttons.push(element);
-                        }
-                    }
-                }
                 
                 // Search in iframes
                 const iframes = document.querySelectorAll('iframe');
@@ -3137,56 +3087,11 @@
             console.log('Debug mode disabled');
         };
         
-        // Comprehensive button debugging
-        globalThis.debugButtons = () => {
-            console.log('=== BUTTON DEBUG SESSION ===');
-            const buttons = globalThis.simpleAccept.findAcceptButtons();
-            console.log(`Found ${buttons.length} buttons total`);
-            
-            buttons.forEach((btn, i) => {
-                console.log(`Button ${i+1}:`);
-                console.log(`  Text: "${btn.textContent.trim()}"`);
-                console.log(`  Tag: ${btn.tagName}`);
-                console.log(`  Classes: ${btn.className}`);
-                console.log(`  Visible: ${globalThis.simpleAccept.isElementVisible(btn)}`);
-                console.log(`  Clickable: ${globalThis.simpleAccept.isElementClickable(btn)}`);
-                console.log(`  Rect: ${JSON.stringify(btn.getBoundingClientRect())}`);
-            });
-            
-            // Also search for any element with Keep/Accept text
-            const allElements = document.querySelectorAll('*');
-            const textButtons = [];
-            allElements.forEach(el => {
-                const text = el.textContent?.toLowerCase().trim();
-                if (text && (text === 'keep' || text === 'accept' || text === 'keep all' || text === 'accept all')) {
-                    textButtons.push(el);
-                }
-            });
-            
-            console.log(`Found ${textButtons.length} elements with Keep/Accept text:`);
-            textButtons.forEach((el, i) => {
-                console.log(`  Text Element ${i+1}: "${el.textContent.trim()}" (${el.tagName})`);
-            });
-            
-            console.log('=== END BUTTON DEBUG ===');
-        };
-        
         // Force visible startup message
         const startupMsg = `[autoAcceptAndAnalytics] SCRIPT LOADED AND ACTIVE! (${globalThis.simpleAccept.ideType.toUpperCase()} IDE detected)`;
         console.log(startupMsg);
         console.info(startupMsg);
         console.warn(startupMsg);
-        
-        // Force show control panel
-        globalThis.showPanel = () => {
-            globalThis.simpleAccept.showControlPanel();
-            console.log('Control panel forced to show');
-        };
-        
-        // Auto-show panel after a short delay
-        setTimeout(() => {
-            globalThis.simpleAccept.showControlPanel();
-        }, 1000);
         
         // Also create visual notification
         try {
@@ -3201,11 +3106,10 @@
         
         console.log('Commands: startAccept(), stopAccept(), acceptStatus(), debugAccept()');
         console.log('Analytics: showAnalytics(), exportAnalytics(), clearAnalytics(), clearStorage(), validateData()');
-        console.log('Debug: toggleDebug(), enableDebug(), disableDebug(), debugButtons() - Control debug logging');
-        console.log('UI: showPanel() - Force show control panel');
+        console.log('Debug: toggleDebug(), enableDebug(), disableDebug() - Control debug logging');
         console.log('Calibration: calibrateWorkflow(manualSeconds, autoMs) - Adjust workflow timing');
         console.log('Config: enableOnly([types]), enableAll(), disableAll(), toggleButton(type)');
         console.log('Conversation: findDiffs(), getContext(), logActivity(), recentDiffs(maxAge)');
-        console.log('Types: "acceptAll", "accept", "keepAll", "keep", "run", "runCommand", "apply", "execute", "resume", "connectionResume", "tryAgain"');
+        console.log('Types: "acceptAll", "accept", "run", "runCommand", "apply", "execute", "resume", "connectionResume", "tryAgain", "keep", "keepAll"');
     }
 })(); 

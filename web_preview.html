@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Router Simulator Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #1a1a1a; color: white; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .card { background: #2a2a2a; padding: 20px; border-radius: 8px; border: 1px solid #333; }
+        .metric { font-size: 2em; font-weight: bold; color: #4caf50; }
+        .status { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; }
+        .status.up { background: #4caf50; color: white; }
+        .status.down { background: #f44336; color: white; }
+        .chart { height: 200px; background: #333; border-radius: 4px; display: flex; align-items: center; justify-content: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌐 Multi-Protocol Router Simulator</h1>
+            <p>Real-time Network Performance Dashboard</p>
+        </div>
+        
+        <div class="grid">
+            <div class="card">
+                <h3>Router Status</h3>
+                <div class="metric">Running</div>
+                <p>Uptime: 2h 15m</p>
+                <p>Packets Processed: 1.2M</p>
+                <p>Routes Advertised: 156</p>
+            </div>
+            
+            <div class="card">
+                <h3>Protocol Status</h3>
+                <p>BGP: <span class="status up">UP</span> (2 neighbors)</p>
+                <p>OSPF: <span class="status up">UP</span> (1 neighbor)</p>
+                <p>IS-IS: <span class="status down">DOWN</span> (0 neighbors)</p>
+            </div>
+            
+            <div class="card">
+                <h3>Traffic Metrics</h3>
+                <p>Throughput: <span class="metric">850.5</span> Mbps</p>
+                <p>Latency: <span class="metric">12.3</span> ms</p>
+                <p>Packet Loss: <span class="metric">0.1</span>%</p>
+            </div>
+            
+            <div class="card">
+                <h3>Cloud Integration</h3>
+                <p>Aviatrix: <span class="status up">Connected</span> (2 gateways)</p>
+                <p>CloudPods: <span class="status up">Connected</span> (1 network)</p>
+            </div>
+            
+            <div class="card">
+                <h3>Performance Chart</h3>
+                <div class="chart">📊 Real-time Performance Metrics</div>
+            </div>
+            
+            <div class="card">
+                <h3>Recent Activity</h3>
+                <p>10:30 - BGP neighbor up</p>
+                <p>10:25 - Route advertised</p>
+                <p>10:20 - Traffic shaping enabled</p>
+                <p>10:15 - CloudPods connected</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
