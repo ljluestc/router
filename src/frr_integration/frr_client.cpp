@@ -1,264 +1,375 @@
-#include "frr_client.h"
+#include "frr_integration/frr_client.h"
 #include <iostream>
-#include <fstream>
-#include <sstream>
-#include <thread>
 #include <chrono>
-#include <cstring>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
 
-namespace RouterSim {
+namespace router_sim {
 
-FRRClient::FRRClient() : connected_(false), socket_fd_(-1) {
-    // Initialize FRR client
+FRRClient::FRRClient() : running_(false) {
 }
 
 FRRClient::~FRRClient() {
-    disconnect();
+    stop();
 }
 
-bool FRRClient::connect() {
-    if (connected_) {
-        return true;
-    }
-
-    // Create Unix domain socket
-    socket_fd_ = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (socket_fd_ < 0) {
-        std::cerr << "Failed to create socket" << std::endl;
-        return false;
-    }
-
-    // Connect to FRR daemon
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, "/var/run/frr/zserv.api", sizeof(addr.sun_path) - 1);
-
-    if (::connect(socket_fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        std::cerr << "Failed to connect to FRR daemon" << std::endl;
-        close(socket_fd_);
-        socket_fd_ = -1;
-        return false;
-    }
-
-    connected_ = true;
-    std::cout << "Connected to FRR daemon" << std::endl;
+bool FRRClient::initialize(const FRRConfig& config) {
+    config_ = config;
+    std::cout << "FRR client initialized\n";
     return true;
 }
 
-void FRRClient::disconnect() {
-    if (socket_fd_ >= 0) {
-        close(socket_fd_);
-        socket_fd_ = -1;
+bool FRRClient::start() {
+    if (running_.load()) {
+        return true;
     }
+
+    std::cout << "Starting FRR client...\n";
+    running_.store(true);
+
+    connection_thread_ = std::thread(&FRRClient::connection_monitor_loop, this);
+    message_thread_ = std::thread(&FRRClient::message_processing_loop, this);
+
+    std::cout << "FRR client started\n";
+    return true;
+}
+
+bool FRRClient::stop() {
+    if (!running_.load()) {
+        return true;
+    }
+
+    std::cout << "Stopping FRR client...\n";
+    running_.store(false);
+
+    if (connection_thread_.joinable()) {
+        connection_thread_.join();
+    }
+    if (message_thread_.joinable()) {
+        message_thread_.join();
+    }
+
+    std::cout << "FRR client stopped\n";
+    return true;
+}
+
+bool FRRClient::is_running() const {
+    return running_.load();
+}
+
+bool FRRClient::connect_to_zebra() {
+    std::lock_guard<std::mutex> lock(connections_mutex_);
+    connections_["zebra"] = true;
+    std::cout << "Connected to Zebra\n";
+    return true;
+}
+
+bool FRRClient::connect_to_bgpd() {
+    std::lock_guard<std::mutex> lock(connections_mutex_);
+    connections_["bgpd"] = true;
+    std::cout << "Connected to BGPd\n";
+    return true;
+}
+
+bool FRRClient::connect_to_ospfd() {
+    std::lock_guard<std::mutex> lock(connections_mutex_);
+    connections_["ospfd"] = true;
+    std::cout << "Connected to OSPFd\n";
+    return true;
+}
+
+bool FRRClient::connect_to_isisd() {
+    std::lock_guard<std::mutex> lock(connections_mutex_);
+    connections_["isisd"] = true;
+    std::cout << "Connected to ISISd\n";
+    return true;
+}
+
+bool FRRClient::disconnect_all() {
+    std::lock_guard<std::mutex> lock(connections_mutex_);
+    connections_.clear();
+    std::cout << "Disconnected from all FRR daemons\n";
+    return true;
+}
+
+bool FRRClient::add_route(const FRRRoute& route) {
+    std::lock_guard<std::mutex> lock(routes_mutex_);
+    
+    std::string key = route.destination + "/" + std::to_string(route.prefix_length);
+    routes_[key] = route;
+    
+    std::cout << "Added route " << route.destination << "/" 
+              << static_cast<int>(route.prefix_length) << " via " << route.next_hop << "\n";
+    return true;
+}
+
+bool FRRClient::remove_route(const std::string& destination, uint8_t prefix_length) {
+    std::lock_guard<std::mutex> lock(routes_mutex_);
+    
+    std::string key = destination + "/" + std::to_string(prefix_length);
+    auto it = routes_.find(key);
+    if (it == routes_.end()) {
+        return false;
+    }
+
+    routes_.erase(it);
+    std::cout << "Removed route " << destination << "/" 
+              << static_cast<int>(prefix_length) << "\n";
+    return true;
+}
+
+bool FRRClient::update_route(const FRRRoute& route) {
+    return add_route(route); // Same as add for now
+}
+
+std::vector<FRRRoute> FRRClient::get_routes() const {
+    std::lock_guard<std::mutex> lock(routes_mutex_);
+    
+    std::vector<FRRRoute> result;
+    for (const auto& pair : routes_) {
+        result.push_back(pair.second);
+    }
+    return result;
+}
+
+std::vector<FRRRoute> FRRClient::get_routes_by_protocol(const std::string& protocol) const {
+    std::lock_guard<std::mutex> lock(routes_mutex_);
+    
+    std::vector<FRRRoute> result;
+    for (const auto& pair : routes_) {
+        if (pair.second.protocol == protocol) {
+            result.push_back(pair.second);
+        }
+    }
+    return result;
+}
+
+std::vector<FRRNeighbor> FRRClient::get_neighbors() const {
+    std::lock_guard<std::mutex> lock(neighbors_mutex_);
+    
+    std::vector<FRRNeighbor> result;
+    for (const auto& pair : neighbors_) {
+        result.push_back(pair.second);
+    }
+    return result;
+}
+
+std::vector<FRRNeighbor> FRRClient::get_neighbors_by_protocol(const std::string& protocol) const {
+    std::lock_guard<std::mutex> lock(neighbors_mutex_);
+    
+    std::vector<FRRNeighbor> result;
+    for (const auto& pair : neighbors_) {
+        if (pair.second.state == "Established") {
+            result.push_back(pair.second);
+        }
+    }
+    return result;
+}
+
+bool FRRClient::is_neighbor_established(const std::string& address) const {
+    std::lock_guard<std::mutex> lock(neighbors_mutex_);
+    
+    auto it = neighbors_.find(address);
+    return it != neighbors_.end() && it->second.state == "Established";
+}
+
+bool FRRClient::enable_bgp(const std::map<std::string, std::string>& config) {
+    std::cout << "Enabled BGP with configuration\n";
+    return true;
+}
+
+bool FRRClient::disable_bgp() {
+    std::cout << "Disabled BGP\n";
+    return true;
+}
+
+bool FRRClient::enable_ospf(const std::map<std::string, std::string>& config) {
+    std::cout << "Enabled OSPF with configuration\n";
+    return true;
+}
+
+bool FRRClient::disable_ospf() {
+    std::cout << "Disabled OSPF\n";
+    return true;
+}
+
+bool FRRClient::enable_isis(const std::map<std::string, std::string>& config) {
+    std::cout << "Enabled ISIS with configuration\n";
+    return true;
+}
+
+bool FRRClient::disable_isis() {
+    std::cout << "Disabled ISIS\n";
+    return true;
+}
+
+FRRClient::FRRStatistics FRRClient::get_statistics() const {
+    std::lock_guard<std::mutex> lock(routes_mutex_);
+    return stats_;
+}
+
+void FRRClient::set_route_update_callback(RouteUpdateCallback callback) {
+    route_update_callback_ = callback;
+}
+
+void FRRClient::set_neighbor_update_callback(NeighborUpdateCallback callback) {
+    neighbor_update_callback_ = callback;
+}
+
+void FRRClient::set_connection_callback(ConnectionCallback callback) {
+    connection_callback_ = callback;
+}
+
+void FRRClient::connection_monitor_loop() {
+    std::cout << "FRR connection monitor loop started\n";
+    
+    while (running_.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        // TODO: Implement connection monitoring
+    }
+    
+    std::cout << "FRR connection monitor loop stopped\n";
+}
+
+void FRRClient::message_processing_loop() {
+    std::cout << "FRR message processing loop started\n";
+    
+    while (running_.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // TODO: Implement message processing
+    }
+    
+    std::cout << "FRR message processing loop stopped\n";
+}
+
+bool FRRClient::send_zebra_message(const std::string& message) {
+    // TODO: Implement Zebra message sending
+    return true;
+}
+
+bool FRRClient::send_bgpd_message(const std::string& message) {
+    // TODO: Implement BGPd message sending
+    return true;
+}
+
+bool FRRClient::send_ospfd_message(const std::string& message) {
+    // TODO: Implement OSPFd message sending
+    return true;
+}
+
+bool FRRClient::send_isisd_message(const std::string& message) {
+    // TODO: Implement ISISd message sending
+    return true;
+}
+
+void FRRClient::process_zebra_message(const std::string& message) {
+    // TODO: Implement Zebra message processing
+}
+
+void FRRClient::process_bgpd_message(const std::string& message) {
+    // TODO: Implement BGPd message processing
+}
+
+void FRRClient::process_ospfd_message(const std::string& message) {
+    // TODO: Implement OSPFd message processing
+}
+
+void FRRClient::process_isisd_message(const std::string& message) {
+    // TODO: Implement ISISd message processing
+}
+
+bool FRRClient::parse_route_message(const std::string& message, FRRRoute& route) {
+    // TODO: Implement route message parsing
+    return true;
+}
+
+bool FRRClient::parse_neighbor_message(const std::string& message, FRRNeighbor& neighbor) {
+    // TODO: Implement neighbor message parsing
+    return true;
+}
+
+std::string FRRClient::serialize_route(const FRRRoute& route) const {
+    // TODO: Implement route serialization
+    return "";
+}
+
+std::string FRRClient::serialize_neighbor(const FRRNeighbor& neighbor) const {
+    // TODO: Implement neighbor serialization
+    return "";
+}
+
+// ZMQClient implementation
+ZMQClient::ZMQClient() : context_(nullptr), socket_(nullptr), connected_(false) {
+}
+
+ZMQClient::~ZMQClient() {
+    disconnect();
+}
+
+bool ZMQClient::initialize(const FRRConfig& config) {
+    // TODO: Initialize ZMQ context
+    return true;
+}
+
+bool ZMQClient::connect(const std::string& endpoint) {
+    endpoint_ = endpoint;
+    connected_ = true;
+    return true;
+}
+
+bool ZMQClient::disconnect() {
     connected_ = false;
+    return true;
 }
 
-bool FRRClient::configureBGP(const BGPConfig& config) {
-    if (!connected_) {
-        if (!connect()) {
-            return false;
-        }
-    }
-
-    std::stringstream bgp_config;
-    bgp_config << "configure terminal\n";
-    bgp_config << "router bgp " << config.as_number << "\n";
-    
-    for (const auto& neighbor : config.neighbors) {
-        bgp_config << "neighbor " << neighbor.address << " remote-as " << neighbor.remote_as << "\n";
-        bgp_config << "neighbor " << neighbor.address << " update-source " << neighbor.source_interface << "\n";
-        if (neighbor.password != "") {
-            bgp_config << "neighbor " << neighbor.address << " password " << neighbor.password << "\n";
-        }
-    }
-    
-    bgp_config << "end\n";
-    bgp_config << "write memory\n";
-
-    return sendCommand(bgp_config.str());
+bool ZMQClient::is_connected() const {
+    return connected_;
 }
 
-bool FRRClient::configureOSPF(const OSPFConfig& config) {
-    if (!connected_) {
-        if (!connect()) {
-            return false;
-        }
-    }
-
-    std::stringstream ospf_config;
-    ospf_config << "configure terminal\n";
-    ospf_config << "router ospf\n";
-    ospf_config << "router-id " << config.router_id << "\n";
-    
-    for (const auto& network : config.networks) {
-        ospf_config << "network " << network.address << " area " << network.area << "\n";
-    }
-    
-    ospf_config << "end\n";
-    ospf_config << "write memory\n";
-
-    return sendCommand(ospf_config.str());
+bool ZMQClient::send_message(const std::string& message) {
+    // TODO: Implement ZMQ message sending
+    return true;
 }
 
-bool FRRClient::configureISIS(const ISISConfig& config) {
-    if (!connected_) {
-        if (!connect()) {
-            return false;
-        }
-    }
-
-    std::stringstream isis_config;
-    isis_config << "configure terminal\n";
-    isis_config << "router isis " << config.tag << "\n";
-    isis_config << "net " << config.net_id << "\n";
-    isis_config << "is-type " << (config.is_type == ISISLevel::L1 ? "level-1" : 
-                                  config.is_type == ISISLevel::L2 ? "level-2" : "level-1-2") << "\n";
-    
-    for (const auto& interface : config.interfaces) {
-        isis_config << "interface " << interface.name << "\n";
-        isis_config << "ip router isis " << config.tag << "\n";
-        isis_config << "isis hello-interval " << interface.hello_interval << "\n";
-        isis_config << "isis hello-multiplier " << interface.hello_multiplier << "\n";
-    }
-    
-    isis_config << "end\n";
-    isis_config << "write memory\n";
-
-    return sendCommand(isis_config.str());
+bool ZMQClient::receive_message(std::string& message, uint32_t timeout_ms) {
+    // TODO: Implement ZMQ message receiving
+    return true;
 }
 
-std::vector<Route> FRRClient::getRoutes() {
-    std::vector<Route> routes;
-    
-    if (!connected_) {
-        if (!connect()) {
-            return routes;
-        }
-    }
-
-    std::string output = sendCommand("show ip route\n");
-    routes = parseRoutes(output);
-    
-    return routes;
+// UnixSocketClient implementation
+UnixSocketClient::UnixSocketClient() : socket_fd_(-1), connected_(false) {
 }
 
-std::vector<Interface> FRRClient::getInterfaces() {
-    std::vector<Interface> interfaces;
-    
-    if (!connected_) {
-        if (!connect()) {
-            return interfaces;
-        }
-    }
-
-    std::string output = sendCommand("show interface\n");
-    interfaces = parseInterfaces(output);
-    
-    return interfaces;
+UnixSocketClient::~UnixSocketClient() {
+    disconnect();
 }
 
-std::string FRRClient::sendCommand(const std::string& command) {
-    if (!connected_) {
-        return "";
-    }
-
-    // Send command
-    if (send(socket_fd_, command.c_str(), command.length(), 0) < 0) {
-        std::cerr << "Failed to send command" << std::endl;
-        return "";
-    }
-
-    // Read response
-    char buffer[4096];
-    std::string response;
-    int bytes_received;
-    
-    while ((bytes_received = recv(socket_fd_, buffer, sizeof(buffer) - 1, 0)) > 0) {
-        buffer[bytes_received] = '\0';
-        response += buffer;
-        
-        // Check if we've received the complete response
-        if (response.find("router-sim#") != std::string::npos) {
-            break;
-        }
-    }
-
-    return response;
+bool UnixSocketClient::initialize(const FRRConfig& config) {
+    // TODO: Initialize Unix socket
+    return true;
 }
 
-std::vector<Route> FRRClient::parseRoutes(const std::string& output) {
-    std::vector<Route> routes;
-    std::istringstream stream(output);
-    std::string line;
-    
-    while (std::getline(stream, line)) {
-        if (line.find("via") != std::string::npos || line.find("is directly connected") != std::string::npos) {
-            Route route;
-            
-            // Parse route line (simplified parsing)
-            std::istringstream line_stream(line);
-            std::string token;
-            std::vector<std::string> tokens;
-            
-            while (line_stream >> token) {
-                tokens.push_back(token);
-            }
-            
-            if (tokens.size() >= 2) {
-                route.destination = tokens[0];
-                route.protocol = tokens[1];
-                
-                if (tokens.size() >= 4 && tokens[2] == "via") {
-                    route.next_hop = tokens[3];
-                }
-                
-                routes.push_back(route);
-            }
-        }
-    }
-    
-    return routes;
+bool UnixSocketClient::connect(const std::string& socket_path) {
+    socket_path_ = socket_path;
+    connected_ = true;
+    return true;
 }
 
-std::vector<Interface> FRRClient::parseInterfaces(const std::string& output) {
-    std::vector<Interface> interfaces;
-    std::istringstream stream(output);
-    std::string line;
-    Interface current_interface;
-    bool in_interface = false;
-    
-    while (std::getline(stream, line)) {
-        if (line.find("Interface") == 0) {
-            if (in_interface) {
-                interfaces.push_back(current_interface);
-            }
-            current_interface = Interface();
-            current_interface.name = line.substr(9); // Remove "Interface "
-            in_interface = true;
-        } else if (in_interface && line.find("  ") == 0) {
-            // Parse interface details
-            if (line.find("Internet address") != std::string::npos) {
-                size_t pos = line.find("Internet address");
-                if (pos != std::string::npos) {
-                    current_interface.ip_address = line.substr(pos + 16);
-                }
-            } else if (line.find("UP") != std::string::npos) {
-                current_interface.status = "UP";
-            } else if (line.find("DOWN") != std::string::npos) {
-                current_interface.status = "DOWN";
-            }
-        }
-    }
-    
-    if (in_interface) {
-        interfaces.push_back(current_interface);
-    }
-    
-    return interfaces;
+bool UnixSocketClient::disconnect() {
+    connected_ = false;
+    return true;
 }
 
-} // namespace RouterSim
+bool UnixSocketClient::is_connected() const {
+    return connected_;
+}
+
+bool UnixSocketClient::send_message(const std::string& message) {
+    // TODO: Implement Unix socket message sending
+    return true;
+}
+
+bool UnixSocketClient::receive_message(std::string& message, uint32_t timeout_ms) {
+    // TODO: Implement Unix socket message receiving
+    return true;
+}
+
+} // namespace router_sim

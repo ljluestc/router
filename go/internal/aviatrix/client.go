@@ -2,7 +2,6 @@ package aviatrix
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,413 +9,146 @@ import (
 	"time"
 )
 
-// AviatrixClient represents a client for Aviatrix API
-type AviatrixClient struct {
-	ControllerIP string
-	Username     string
-	Password     string
-	Token        string
-	HTTPClient   *http.Client
+// Client represents the Aviatrix API client
+type Client struct {
+	baseURL    string
+	username   string
+	password   string
+	httpClient *http.Client
 }
 
-// NewAviatrixClient creates a new Aviatrix client
-func NewAviatrixClient(controllerIP, username, password string) *AviatrixClient {
-	return &AviatrixClient{
-		ControllerIP: controllerIP,
-		Username:     username,
-		Password:     password,
-		HTTPClient: &http.Client{
+// NewClient creates a new Aviatrix API client
+func NewClient(baseURL, username, password string) *Client {
+	return &Client{
+		baseURL:  baseURL,
+		username: username,
+		password: password,
+		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
 }
 
-// Authenticate authenticates with Aviatrix Controller
-func (c *AviatrixClient) Authenticate(ctx context.Context) error {
-	authReq := map[string]string{
-		"action":   "login",
-		"username": c.Username,
-		"password": c.Password,
+// makeRequest makes an HTTP request to the Aviatrix API
+func (c *Client) makeRequest(method, endpoint string, body interface{}) (*http.Response, error) {
+	var reqBody io.Reader
+	if body != nil {
+		jsonBody, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		reqBody = bytes.NewBuffer(jsonBody)
 	}
 
-	jsonData, err := json.Marshal(authReq)
+	req, err := http.NewRequest(method, c.baseURL+endpoint, reqBody)
 	if err != nil {
-		return fmt.Errorf("failed to marshal auth request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://"+c.ControllerIP+"/v1/api", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create auth request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(c.username, c.password)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send auth request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("authentication failed with status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
 
-	var authResp struct {
-		Return bool   `json:"return"`
-		Reason string `json:"reason"`
-		CID    string `json:"CID"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
-		return fmt.Errorf("failed to decode auth response: %w", err)
-	}
-
-	if !authResp.Return {
-		return fmt.Errorf("authentication failed: %s", authResp.Reason)
-	}
-
-	c.Token = authResp.CID
-	return nil
+	return resp, nil
 }
 
-// GetGateways retrieves all gateways
-func (c *AviatrixClient) GetGateways(ctx context.Context) ([]Gateway, error) {
-	req := map[string]string{
-		"action": "list_vpcs_summary",
-		"CID":    c.Token,
-	}
-
-	jsonData, err := json.Marshal(req)
+// CreateGateway creates a gateway using the API client
+func (c *Client) CreateGateway(req GatewayRequest) (*Gateway, error) {
+	resp, err := c.makeRequest("POST", "/api/v1/gateways", req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://"+c.ControllerIP+"/v1/api", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTPClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get gateways: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get gateways with status: %d", resp.StatusCode)
+	var gateway Gateway
+	if err := json.NewDecoder(resp.Body).Decode(&gateway); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	var gatewaysResp struct {
-		Return  bool      `json:"return"`
-		Reason  string    `json:"reason"`
-		Results []Gateway `json:"results"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&gatewaysResp); err != nil {
-		return nil, fmt.Errorf("failed to decode gateways response: %w", err)
-	}
-
-	if !gatewaysResp.Return {
-		return nil, fmt.Errorf("failed to get gateways: %s", gatewaysResp.Reason)
-	}
-
-	return gatewaysResp.Results, nil
+	return &gateway, nil
 }
 
-// GetTransitGateways retrieves transit gateways
-func (c *AviatrixClient) GetTransitGateways(ctx context.Context) ([]TransitGateway, error) {
-	req := map[string]string{
-		"action": "list_transit_gateways",
-		"CID":    c.Token,
-	}
-
-	jsonData, err := json.Marshal(req)
+// CreateTransitGateway creates a transit gateway using the API client
+func (c *Client) CreateTransitGateway(req TransitGatewayRequest) (*TransitGateway, error) {
+	resp, err := c.makeRequest("POST", "/api/v1/transit-gateways", req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://"+c.ControllerIP+"/v1/api", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTPClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get transit gateways: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get transit gateways with status: %d", resp.StatusCode)
+	var transitGW TransitGateway
+	if err := json.NewDecoder(resp.Body).Decode(&transitGW); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	var gatewaysResp struct {
-		Return  bool             `json:"return"`
-		Reason  string           `json:"reason"`
-		Results []TransitGateway `json:"results"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&gatewaysResp); err != nil {
-		return nil, fmt.Errorf("failed to decode transit gateways response: %w", err)
-	}
-
-	if !gatewaysResp.Return {
-		return nil, fmt.Errorf("failed to get transit gateways: %s", gatewaysResp.Reason)
-	}
-
-	return gatewaysResp.Results, nil
+	return &transitGW, nil
 }
 
-// GetSpokeGateways retrieves spoke gateways
-func (c *AviatrixClient) GetSpokeGateways(ctx context.Context) ([]SpokeGateway, error) {
-	req := map[string]string{
-		"action": "list_spoke_gateways",
-		"CID":    c.Token,
-	}
-
-	jsonData, err := json.Marshal(req)
+// CreateSpokeGateway creates a spoke gateway using the API client
+func (c *Client) CreateSpokeGateway(req SpokeGatewayRequest) (*SpokeGateway, error) {
+	resp, err := c.makeRequest("POST", "/api/v1/spoke-gateways", req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://"+c.ControllerIP+"/v1/api", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTPClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get spoke gateways: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get spoke gateways with status: %d", resp.StatusCode)
+	var spokeGW SpokeGateway
+	if err := json.NewDecoder(resp.Body).Decode(&spokeGW); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	var gatewaysResp struct {
-		Return  bool           `json:"return"`
-		Reason  string         `json:"reason"`
-		Results []SpokeGateway `json:"results"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&gatewaysResp); err != nil {
-		return nil, fmt.Errorf("failed to decode spoke gateways response: %w", err)
-	}
-
-	if !gatewaysResp.Return {
-		return nil, fmt.Errorf("failed to get spoke gateways: %s", gatewaysResp.Reason)
-	}
-
-	return gatewaysResp.Results, nil
+	return &spokeGW, nil
 }
 
-// CreateTransitGateway creates a new transit gateway
-func (c *AviatrixClient) CreateTransitGateway(ctx context.Context, req CreateTransitGatewayRequest) (*TransitGateway, error) {
-	reqMap := map[string]interface{}{
-		"action":           "create_transit_gateway",
-		"CID":              c.Token,
-		"cloud_type":       req.CloudType,
-		"account_name":     req.AccountName,
-		"gw_name":          req.GatewayName,
-		"vpc_id":           req.VPCID,
-		"vpc_reg":          req.VPCRegion,
-		"gw_size":          req.GatewaySize,
-		"subnet":           req.Subnet,
-		"enable_encrypt":   req.EnableEncryption,
-		"enable_nat":       req.EnableNAT,
-		"enable_hybrid":    req.EnableHybrid,
-		"enable_firenet":   req.EnableFireNet,
-		"enable_vpc_dns":   req.EnableVPCDNS,
-		"enable_advertise": req.EnableAdvertise,
-	}
-
-	jsonData, err := json.Marshal(reqMap)
+// CreateTransitConnection creates a transit connection using the API client
+func (c *Client) CreateTransitConnection(req TransitConnectionRequest) (*TransitConnection, error) {
+	resp, err := c.makeRequest("POST", "/api/v1/transit-connections", req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://"+c.ControllerIP+"/v1/api", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTPClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create transit gateway: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to create transit gateway with status: %d", resp.StatusCode)
+	var connection TransitConnection
+	if err := json.NewDecoder(resp.Body).Decode(&connection); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	var createResp struct {
-		Return bool   `json:"return"`
-		Reason string `json:"reason"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
-		return nil, fmt.Errorf("failed to decode create response: %w", err)
-	}
-
-	if !createResp.Return {
-		return nil, fmt.Errorf("failed to create transit gateway: %s", createResp.Reason)
-	}
-
-	// Return the created gateway (simplified)
-	return &TransitGateway{
-		GatewayName: req.GatewayName,
-		CloudType:   req.CloudType,
-		VPCID:       req.VPCID,
-		Status:      "creating",
-	}, nil
+	return &connection, nil
 }
 
-// DeleteTransitGateway deletes a transit gateway
-func (c *AviatrixClient) DeleteTransitGateway(ctx context.Context, gatewayName string) error {
-	req := map[string]string{
-		"action":  "delete_transit_gateway",
-		"CID":     c.Token,
-		"gw_name": gatewayName,
-	}
-
-	jsonData, err := json.Marshal(req)
+// ListTransitConnections lists transit connections using the API client
+func (c *Client) ListTransitConnections() ([]TransitConnection, error) {
+	resp, err := c.makeRequest("GET", "/api/v1/transit-connections", nil)
 	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://"+c.ControllerIP+"/v1/api", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTPClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to delete transit gateway: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to delete transit gateway with status: %d", resp.StatusCode)
+	var result struct {
+		Connections []TransitConnection `json:"connections"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	var deleteResp struct {
-		Return bool   `json:"return"`
-		Reason string `json:"reason"`
-	}
+	return result.Connections, nil
+}
 
-	if err := json.NewDecoder(resp.Body).Decode(&deleteResp); err != nil {
-		return fmt.Errorf("failed to decode delete response: %w", err)
+// DeleteTransitConnection deletes a transit connection using the API client
+func (c *Client) DeleteTransitConnection(connectionID string) error {
+	resp, err := c.makeRequest("DELETE", fmt.Sprintf("/api/v1/transit-connections/%s", connectionID), nil)
+	if err != nil {
+		return err
 	}
+	defer resp.Body.Close()
 
-	if !deleteResp.Return {
-		return fmt.Errorf("failed to delete transit gateway: %s", deleteResp.Reason)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("failed to delete transit connection: status %d", resp.StatusCode)
 	}
 
 	return nil
-}
-
-// GetGatewayStatus retrieves gateway status
-func (c *AviatrixClient) GetGatewayStatus(ctx context.Context, gatewayName string) (*GatewayStatus, error) {
-	req := map[string]string{
-		"action":  "get_gateway_status",
-		"CID":     c.Token,
-		"gw_name": gatewayName,
-	}
-
-	jsonData, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://"+c.ControllerIP+"/v1/api", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTPClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get gateway status: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get gateway status with status: %d", resp.StatusCode)
-	}
-
-	var statusResp struct {
-		Return  bool          `json:"return"`
-		Reason  string        `json:"reason"`
-		Results GatewayStatus `json:"results"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&statusResp); err != nil {
-		return nil, fmt.Errorf("failed to decode status response: %w", err)
-	}
-
-	if !statusResp.Return {
-		return nil, fmt.Errorf("failed to get gateway status: %s", statusResp.Reason)
-	}
-
-	return &statusResp.Results, nil
-}
-
-// GetGatewayMetrics retrieves gateway metrics
-func (c *AviatrixClient) GetGatewayMetrics(ctx context.Context, gatewayName string) (*GatewayMetrics, error) {
-	req := map[string]string{
-		"action":  "get_gateway_metrics",
-		"CID":     c.Token,
-		"gw_name": gatewayName,
-	}
-
-	jsonData, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://"+c.ControllerIP+"/v1/api", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTPClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get gateway metrics: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get gateway metrics with status: %d", resp.StatusCode)
-	}
-
-	var metricsResp struct {
-		Return  bool           `json:"return"`
-		Reason  string         `json:"reason"`
-		Results GatewayMetrics `json:"results"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&metricsResp); err != nil {
-		return nil, fmt.Errorf("failed to decode metrics response: %w", err)
-	}
-
-	if !metricsResp.Return {
-		return nil, fmt.Errorf("failed to get gateway metrics: %s", metricsResp.Reason)
-	}
-
-	return &metricsResp.Results, nil
 }

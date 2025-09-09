@@ -1,172 +1,90 @@
 #pragma once
 
 #include <string>
-#include <map>
-#include <memory>
 #include <vector>
+#include <mutex>
+#include <atomic>
 
 namespace RouterSim {
 
-// Network impairment configuration
+// Network Impairment Configuration
 struct ImpairmentConfig {
-    // Delay parameters
-    uint32_t delay_ms;
-    uint32_t delay_jitter_ms;
-    uint32_t delay_correlation; // 0-100%
-    
-    // Loss parameters
-    uint32_t loss_percent;
-    uint32_t loss_correlation; // 0-100%
-    
-    // Duplicate parameters
-    uint32_t duplicate_percent;
-    
-    // Reordering parameters
-    uint32_t reorder_percent;
-    uint32_t reorder_correlation; // 0-100%
-    
-    // Corruption parameters
-    uint32_t corrupt_percent;
-    
-    // Bandwidth limiting
-    uint32_t bandwidth_kbps;
-    
-    // Constructor with default values
-    ImpairmentConfig() 
-        : delay_ms(0), delay_jitter_ms(0), delay_correlation(0),
-          loss_percent(0), loss_correlation(0),
-          duplicate_percent(0),
-          reorder_percent(0), reorder_correlation(0),
-          corrupt_percent(0), bandwidth_kbps(0) {}
+    uint32_t delay_ms = 0;           // Base delay in milliseconds
+    uint32_t jitter_ms = 0;          // Jitter in milliseconds
+    double loss_percentage = 0.0;    // Packet loss percentage (0-100)
+    double duplication_percentage = 0.0; // Packet duplication percentage (0-100)
+    double reorder_percentage = 0.0; // Packet reordering percentage (0-100)
+    uint32_t reorder_gap = 0;        // Reordering gap
+    double corruption_percentage = 0.0; // Packet corruption percentage (0-100)
+    uint64_t bandwidth_bps = 0;      // Bandwidth limit in bits per second
 };
 
-// Individual network impairment
-class NetworkImpairment {
+// Network Impairments Class
+class NetworkImpairments {
 public:
-    NetworkImpairment();
-    ~NetworkImpairment();
-
-    // Control
-    bool enable(const std::string& interface, const ImpairmentConfig& config);
-    void disable();
-    bool isEnabled() const;
-
-    // Configuration
-    const ImpairmentConfig& getConfig() const;
-    std::string getInterface() const;
-
-private:
-    bool enabled_;
-    std::string interface_;
-    ImpairmentConfig config_;
+    NetworkImpairments();
+    ~NetworkImpairments();
     
-    // Internal methods
-    bool applyTCRules();
-    void removeTCRules();
-    bool executeCommand(const std::string& command);
-};
-
-// Impairment manager for multiple impairments
-class ImpairmentManager {
-public:
-    ImpairmentManager();
-    ~ImpairmentManager();
-
-    // Impairment management
-    bool addImpairment(const std::string& name, const std::string& interface, const ImpairmentConfig& config);
-    bool removeImpairment(const std::string& name);
-    bool updateImpairment(const std::string& name, const ImpairmentConfig& config);
+    // Core functionality
+    bool initialize();
+    void cleanup();
     
-    // Control
-    bool enableImpairment(const std::string& name);
-    bool disableImpairment(const std::string& name);
+    // Individual impairment methods
+    bool applyDelay(const std::string& interface, uint32_t delay_ms, uint32_t jitter_ms = 0);
+    bool applyLoss(const std::string& interface, double loss_percentage);
+    bool applyBandwidth(const std::string& interface, uint64_t bandwidth_bps);
+    bool applyDuplication(const std::string& interface, double duplication_percentage);
+    bool applyReordering(const std::string& interface, double reorder_percentage, uint32_t gap = 0);
+    bool applyCorruption(const std::string& interface, double corruption_percentage);
+    
+    // Complex impairment (combines multiple effects)
+    bool applyComplexImpairment(const std::string& interface, const ImpairmentConfig& config);
+    
+    // Management
+    bool clearImpairments(const std::string& interface);
+    bool clearAllImpairments();
     
     // Information
-    std::vector<std::string> getImpairmentNames() const;
-    bool isImpairmentEnabled(const std::string& name) const;
-    ImpairmentConfig getImpairmentConfig(const std::string& name) const;
-    std::map<std::string, ImpairmentConfig> getAllImpairments() const;
-
-    // Configuration management
-    bool loadConfiguration(const std::string& config_file);
-    bool saveConfiguration(const std::string& config_file);
-
-    // Scenario-based testing
-    bool loadScenario(const std::string& scenario_file);
-    bool runScenario(const std::string& scenario_name);
-    std::vector<std::string> getAvailableScenarios() const;
-
-private:
-    std::map<std::string, std::unique_ptr<NetworkImpairment>> impairments_;
-};
-
-// Predefined impairment scenarios
-class ImpairmentScenarios {
-public:
-    // Common network conditions
-    static ImpairmentConfig getHighLatencyScenario();
-    static ImpairmentConfig getPacketLossScenario();
-    static ImpairmentConfig getBandwidthLimitedScenario();
-    static ImpairmentConfig getUnstableConnectionScenario();
-    static ImpairmentConfig getCorruptedDataScenario();
+    std::vector<std::string> getNetworkInterfaces() const;
+    std::string getInterfaceStatus(const std::string& interface) const;
     
-    // Real-world scenarios
-    static ImpairmentConfig getSatelliteLinkScenario();
-    static ImpairmentConfig getCellularNetworkScenario();
-    static ImpairmentConfig getWiFiScenario();
-    static ImpairmentConfig getDSLScenario();
-    static ImpairmentConfig getFiberScenario();
-    
-    // Stress testing scenarios
-    static ImpairmentConfig getExtremeLatencyScenario();
-    static ImpairmentConfig getHighLossScenario();
-    static ImpairmentConfig getSevereReorderingScenario();
-    static ImpairmentConfig getBandwidthStarvedScenario();
-};
-
-// Impairment monitoring and statistics
-struct ImpairmentStats {
-    uint64_t packets_processed;
-    uint64_t packets_delayed;
-    uint64_t packets_dropped;
-    uint64_t packets_duplicated;
-    uint64_t packets_reordered;
-    uint64_t packets_corrupted;
-    double average_delay_ms;
-    double current_loss_rate;
-    double current_duplicate_rate;
-    double current_reorder_rate;
-    double current_corrupt_rate;
-    
-    ImpairmentStats() 
-        : packets_processed(0), packets_delayed(0), packets_dropped(0),
-          packets_duplicated(0), packets_reordered(0), packets_corrupted(0),
-          average_delay_ms(0.0), current_loss_rate(0.0), current_duplicate_rate(0.0),
-          current_reorder_rate(0.0), current_corrupt_rate(0.0) {}
-};
-
-class ImpairmentMonitor {
-public:
-    ImpairmentMonitor();
-    ~ImpairmentMonitor();
-
     // Statistics
-    ImpairmentStats getStats(const std::string& impairment_name) const;
-    std::map<std::string, ImpairmentStats> getAllStats() const;
-    void resetStats(const std::string& impairment_name);
-    void resetAllStats();
-
-    // Monitoring
-    void startMonitoring();
-    void stopMonitoring();
-    bool isMonitoring() const;
+    struct InterfaceStatistics {
+        std::string interface_name;
+        std::string status;
+    };
+    
+    struct Statistics {
+        bool enabled;
+        uint64_t total_packets_processed;
+        uint64_t total_bytes_processed;
+        uint64_t packets_dropped;
+        uint64_t bytes_dropped;
+        std::vector<InterfaceStatistics> interface_stats;
+    };
+    
+    Statistics getStatistics() const;
+    void reset();
+    
+    // Utility methods
+    bool isEnabled() const { return enabled_; }
 
 private:
-    bool monitoring_;
-    std::map<std::string, ImpairmentStats> stats_;
-    
     // Internal methods
-    void updateStats(const std::string& impairment_name, const ImpairmentConfig& config);
+    bool checkTCAvailability() const;
+    bool checkNetemModule() const;
+    std::string executeCommand(const std::string& command) const;
+    
+    // State
+    std::atomic<bool> enabled_;
+    
+    // Statistics
+    uint64_t total_packets_processed_;
+    uint64_t total_bytes_processed_;
+    uint64_t packets_dropped_;
+    uint64_t bytes_dropped_;
+    
+    mutable std::mutex mutex_;
 };
 
 } // namespace RouterSim
