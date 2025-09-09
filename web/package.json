@@ -1,0 +1,25 @@
+{
+  "name": "router-sim-web",
+  "version": "1.0.0",
+  "description": "Router Simulator Web Interface",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "serve": "python3 -m http.server 8080"
+  },
+  "dependencies": {
+    "vue": "^3.3.0",
+    "vue-router": "^4.2.0",
+    "axios": "^1.5.0",
+    "echarts": "^5.4.0",
+    "element-plus": "^2.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.3.0",
+    "vite": "^4.4.0",
+    "typescript": "^5.1.0",
+    "@types/node": "^20.0.0"
+  }
+}

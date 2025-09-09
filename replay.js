@@ -17,6 +17,7 @@
                 this.currentTab = 'main'; // 'main', 'analytics', or 'roi'
                 this.loggedMessages = new Set(); // Track logged messages to prevent duplicates
                 this.debugMode = false; // Control debug logging
+                this.lastRunClick = null; // Track when run button was last clicked
                 
                 // IDE Detection
                 this.ideType = this.detectIDE();
@@ -52,15 +53,16 @@
                 this.config = {
                     enableAcceptAll: true,
                     enableAccept: true,
+                    enableReviewNextFile: true,    // New: Review next file button
+                    enableKeepAll: true,           // New: Keep all button
+                    enableKeep: true,              // New: Keep button
                     enableRun: true,
                     enableRunCommand: true,
                     enableApply: true,
                     enableExecute: true,
                     enableResume: true,
                     enableConnectionResume: true,  // New: Resume button in connection failure dropdown
-                    enableTryAgain: true,          // New: Try again button in connection failure dropdown
-                    enableKeepAll: true,           // New: Keep all button
-                    enableKeep: true               // New: Keep button
+                    enableTryAgain: true           // New: Try again button in connection failure dropdown
                 };
                 
                 // Load persisted data
@@ -327,14 +329,15 @@
                 const workflowTimeSavings = {
                     'accept all': this.roiTracking.averageCompleteWorkflow + 5000, // extra time to review all changes
                     'accept': this.roiTracking.averageCompleteWorkflow,
+                    'review next file': this.roiTracking.averageCompleteWorkflow + 2000, // time to navigate and review
+                    'keep all': this.roiTracking.averageCompleteWorkflow + 5000, // extra time to review all changes
+                    'keep': this.roiTracking.averageCompleteWorkflow,
                     'run': this.roiTracking.averageCompleteWorkflow + 2000, // extra caution for running commands
                     'execute': this.roiTracking.averageCompleteWorkflow + 2000,
                     'apply': this.roiTracking.averageCompleteWorkflow,
                     'resume': this.roiTracking.averageCompleteWorkflow + 3000, // time saved by auto-resuming conversation
                     'connection-resume': this.roiTracking.averageCompleteWorkflow + 4000, // extra time for connection issues
-                    'try again': this.roiTracking.averageCompleteWorkflow + 3000, // time saved by auto-retrying
-                    'keep all': this.roiTracking.averageCompleteWorkflow + 5000, // extra time to review all changes
-                    'keep': this.roiTracking.averageCompleteWorkflow
+                    'try again': this.roiTracking.averageCompleteWorkflow + 3000 // time saved by auto-retrying
                 };
                 
                 const manualTime = workflowTimeSavings[buttonType.toLowerCase()] || this.roiTracking.averageCompleteWorkflow;
@@ -709,6 +712,9 @@
                 // Map variations to standard types
                 if (type.includes('accept all')) return 'accept-all';
                 if (type.includes('accept')) return 'accept';
+                if (type.includes('review next file')) return 'review-next-file';
+                if (type.includes('keep all')) return 'keep-all';
+                if (type.includes('keep')) return 'keep';
                 if (type.includes('run command')) return 'run-command';
                 if (type.includes('run')) return 'run';
                 if (type.includes('apply')) return 'apply';
@@ -716,8 +722,6 @@
                 if (type.includes('resume') && type.includes('conversation')) return 'resume-conversation';
                 if (type.includes('resume')) return 'connection-resume'; // Connection failure resume
                 if (type.includes('try again')) return 'try-again';
-                if (type.includes('keep all')) return 'keep-all';
-                if (type.includes('keep')) return 'keep';
                 
                 return type;
             }
@@ -821,13 +825,14 @@
                 const configOptions = [
                     { id: 'aa-accept-all', text: 'Accept All', checked: true },
                     { id: 'aa-accept', text: 'Accept', checked: true },
+                    { id: 'aa-review-next-file', text: 'Review Next File', checked: true },
+                    { id: 'aa-keep-all', text: 'Keep All', checked: true },
+                    { id: 'aa-keep', text: 'Keep', checked: true },
                     { id: 'aa-run', text: 'Run', checked: true },
                     { id: 'aa-apply', text: 'Apply', checked: true },
                     { id: 'aa-resume', text: 'Resume Conversation', checked: true },
                     { id: 'aa-connection-resume', text: 'Connection Resume', checked: true },
-                    { id: 'aa-try-again', text: 'Try Again', checked: true },
-                    { id: 'aa-keep', text: 'Keep', checked: true },
-                    { id: 'aa-keep-all', text: 'Keep All', checked: true }
+                    { id: 'aa-try-again', text: 'Try Again', checked: true }
                 ];
                 
                 configOptions.forEach(option => {
@@ -1844,13 +1849,14 @@
                         const configMap = {
                             'aa-accept-all': 'enableAcceptAll',
                             'aa-accept': 'enableAccept',
+                            'aa-review-next-file': 'enableReviewNextFile',
+                            'aa-keep-all': 'enableKeepAll',
+                            'aa-keep': 'enableKeep',
                             'aa-run': 'enableRun',
                             'aa-apply': 'enableApply',
                             'aa-resume': 'enableResume',
                             'aa-connection-resume': 'enableConnectionResume',
-                            'aa-try-again': 'enableTryAgain',
-                            'aa-keep': 'enableKeep',
-                            'aa-keep-all': 'enableKeepAll'
+                            'aa-try-again': 'enableTryAgain'
                         };
                         const configKey = configMap[checkbox.id];
                         if (configKey) {
@@ -1954,19 +1960,13 @@
                               document.querySelector('[class*="bg-ide-editor-background"]') ||
                               document.querySelector('.flex.flex-row.gap-x-1');
                 } else {
-                    // Cursor IDE - enhanced selectors for all chat interfaces
-                    inputBox = document.querySelector('div.full-input-box') ||
-                              document.querySelector('[data-testid="composer-input"]') ||
-                              document.querySelector('.composer-input') ||
-                              document.querySelector('textarea[placeholder*="Ask"]') ||
-                              document.querySelector('textarea[placeholder*="Message"]') ||
-                              document.querySelector('.chat-input') ||
-                              document.querySelector('[class*="input"]');
+                    // Cursor IDE
+                    inputBox = document.querySelector('div.full-input-box');
                 }
                 
                 if (!inputBox) {
                     if (this.debugMode) {
-                        this.log(`${this.ideType} input container not found, using global search`);
+                        this.log(`${this.ideType} input container not found`);
                     }
                     
                     // Fallback: search entire document for buttons
@@ -1978,12 +1978,13 @@
                     const windsurfButtons = this.findWindsurfButtons();
                     buttons.push(...windsurfButtons);
                 } else {
-                    // Cursor IDE - enhanced search strategy
+                    // Cursor IDE - Enhanced search strategy
                     // 1. Check previous sibling elements for regular buttons
                     let currentElement = inputBox.previousElementSibling;
                     let searchDepth = 0;
                     
-                    while (currentElement && searchDepth < 8) { // Increased depth
+                    while (currentElement && searchDepth < 10) { // Increased search depth
+                        // Look for any clickable elements containing button text
                         const acceptElements = this.findAcceptInElement(currentElement);
                         buttons.push(...acceptElements);
                         
@@ -1991,20 +1992,24 @@
                         searchDepth++;
                     }
                     
-                    // 2. Search in conversation area for buttons
-                    const conversationArea = document.querySelector('.conversations') || 
+                    // 2. Search in conversation area for buttons that might appear after Accept
+                    const conversationArea = document.querySelector('div.conversations') || 
                                           document.querySelector('[class*="conversation"]') ||
-                                          document.querySelector('.chat-messages') ||
-                                          document.querySelector('[class*="message"]');
+                                          document.querySelector('[class*="chat"]');
                     
                     if (conversationArea) {
-                        const conversationButtons = this.findAcceptInElement(conversationArea);
+                        const conversationButtons = this.findButtonsInConversation(conversationArea);
                         buttons.push(...conversationButtons);
                     }
                     
-                    // 3. Search for buttons in the entire document as fallback
-                    const globalButtons = this.findButtonsGlobally();
-                    buttons.push(...globalButtons);
+                    // 3. Search in any visible modal or overlay that might contain buttons
+                    const modals = document.querySelectorAll('[class*="modal"], [class*="overlay"], [class*="popup"], [class*="dialog"]');
+                    for (const modal of modals) {
+                        if (this.isElementVisible(modal)) {
+                            const modalButtons = this.findAcceptInElement(modal);
+                            buttons.push(...modalButtons);
+                        }
+                    }
                 }
 
                 // Also search for Resume Conversation links in message bubbles if enabled
@@ -2019,17 +2024,116 @@
                     buttons.push(...connectionButtons);
                 }
                 
-                // Remove duplicates
-                const uniqueButtons = [];
-                const seenButtons = new Set();
-                buttons.forEach(button => {
-                    if (!seenButtons.has(button)) {
-                        seenButtons.add(button);
-                        uniqueButtons.push(button);
+                // If no buttons found in primary search, do a more aggressive global search
+                if (buttons.length === 0) {
+                    if (this.debugMode) {
+                        this.log('No buttons found in primary search, trying global search');
                     }
-                });
+                    const globalButtons = this.findButtonsGlobally();
+                    buttons.push(...globalButtons);
+                }
+                
+                // Remove duplicates and filter out invalid buttons
+                const uniqueButtons = this.removeDuplicateButtons(buttons);
+                
+                if (this.debugMode && uniqueButtons.length > 0) {
+                    this.log(`Found ${uniqueButtons.length} buttons: ${uniqueButtons.map(b => b.textContent.trim().substring(0, 20)).join(', ')}`);
+                }
                 
                 return uniqueButtons;
+            }
+            
+            // Find buttons in conversation area (for buttons that appear after running commands)
+            findButtonsInConversation(conversationArea) {
+                const buttons = [];
+                
+                // Look for buttons in the latest message bubbles
+                const messageBubbles = Array.from(conversationArea.querySelectorAll('[data-message-index]'))
+                    .sort((a, b) => {
+                        const indexA = parseInt(a.getAttribute('data-message-index'));
+                        const indexB = parseInt(b.getAttribute('data-message-index'));
+                        return indexB - indexA; // Latest first
+                    });
+                
+                // Check the latest 5 message bubbles for buttons (increased from 3)
+                for (let i = 0; i < Math.min(5, messageBubbles.length); i++) {
+                    const bubble = messageBubbles[i];
+                    const bubbleButtons = this.findAcceptInElement(bubble);
+                    buttons.push(...bubbleButtons);
+                }
+                
+                // Also search for buttons in code block containers within conversation
+                const codeBlocks = conversationArea.querySelectorAll('.composer-code-block-container, .composer-tool-former-message, .composer-diff-block');
+                for (const block of codeBlocks) {
+                    const blockButtons = this.findAcceptInElement(block);
+                    buttons.push(...blockButtons);
+                }
+                
+                // Search for buttons in any visible overlays or modals within conversation
+                const overlays = conversationArea.querySelectorAll('[class*="overlay"], [class*="modal"], [class*="popup"], [class*="dropdown"]');
+                for (const overlay of overlays) {
+                    if (this.isElementVisible(overlay)) {
+                        const overlayButtons = this.findAcceptInElement(overlay);
+                        buttons.push(...overlayButtons);
+                    }
+                }
+                
+                // Additional search for buttons that might be in the main document but related to conversation
+                const mainDocButtons = this.findButtonsInMainDocument();
+                buttons.push(...mainDocButtons);
+                
+                return buttons;
+            }
+            
+            // Find buttons in main document that might be related to conversation
+            findButtonsInMainDocument() {
+                const buttons = [];
+                
+                // Search for buttons in the entire document with more specific selectors
+                const allClickableElements = document.querySelectorAll('*');
+                
+                for (const element of allClickableElements) {
+                    // Skip if not visible or clickable
+                    if (!this.isElementVisible(element) || !this.isElementClickable(element)) {
+                        continue;
+                    }
+                    
+                    // Check if element contains button text
+                    const text = element.textContent ? element.textContent.toLowerCase().trim() : '';
+                    if (text && (
+                        text.includes('accept') || 
+                        text.includes('keep') || 
+                        text.includes('run') || 
+                        text.includes('apply') || 
+                        text.includes('execute') ||
+                        text.includes('review')
+                    )) {
+                        // Additional checks to ensure it's a real button
+                        const hasButtonClasses = element.className.includes('button') || 
+                                               element.className.includes('anysphere') ||
+                                               element.className.includes('cursor-pointer') ||
+                                               element.className.includes('bg-ide-button') ||
+                                               element.className.includes('text-ide-button');
+                        
+                        if (hasButtonClasses || element.tagName === 'BUTTON' || element.onclick) {
+                            buttons.push(element);
+                        }
+                    }
+                }
+                
+                return buttons;
+            }
+            
+            // Remove duplicate buttons based on element reference
+            removeDuplicateButtons(buttons) {
+                const seen = new Set();
+                return buttons.filter(button => {
+                    if (seen.has(button)) {
+                        return false;
+                    }
+                    seen.add(button);
+                    return true;
+                });
             }
             
             // Find accept buttons within a specific element
@@ -2047,7 +2151,35 @@
                     '[class*="cursor-button"]',
                     '[class*="text-button"]',
                     '[class*="primary-button"]',
-                    '[class*="secondary-button"]'
+                    '[class*="secondary-button"]',
+                    // Additional selectors for Cursor IDE
+                    'span[class*="button"]',
+                    'span[style*="cursor: pointer"]',
+                    'a[class*="button"]',
+                    'div[role="button"]',
+                    'span[role="button"]',
+                    // Selectors for file review buttons
+                    '[class*="review"]',
+                    '[class*="file"]',
+                    '[class*="accept"]',
+                    '[class*="keep"]',
+                    '[class*="run"]',
+                    '[class*="apply"]',
+                    '[class*="execute"]',
+                    // Enhanced selectors for better detection
+                    '[class*="composer"]',
+                    '[class*="code-block"]',
+                    '[class*="diff"]',
+                    '[class*="tool"]',
+                    // Generic clickable elements
+                    '[onclick]',
+                    '[style*="cursor:pointer"]',
+                    '[style*="cursor: pointer"]',
+                    // Windsurf-specific selectors
+                    '[class*="bg-ide-button"]',
+                    '[class*="text-ide-button"]',
+                    '[class*="hover:bg-ide-button"]',
+                    '[class*="hover:text-ide-button"]'
                 ];
                 
                 for (const selector of clickableSelectors) {
@@ -2088,14 +2220,15 @@
                 const patterns = [
                     { pattern: 'accept all', enabled: this.config.enableAcceptAll },
                     { pattern: 'accept', enabled: this.config.enableAccept },
+                    { pattern: 'review next file', enabled: this.config.enableReviewNextFile },
+                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
+                    { pattern: 'keep', enabled: this.config.enableKeep },
                     { pattern: 'run command', enabled: this.config.enableRunCommand },
                     { pattern: 'run', enabled: this.config.enableRun },
                     { pattern: 'apply', enabled: this.config.enableApply },
                     { pattern: 'execute', enabled: this.config.enableExecute },
                     { pattern: 'resume', enabled: this.config.enableResume || this.config.enableConnectionResume },
-                    { pattern: 'try again', enabled: this.config.enableTryAgain },
-                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
-                    { pattern: 'keep', enabled: this.config.enableKeep }
+                    { pattern: 'try again', enabled: this.config.enableTryAgain }
                 ];
                 
                 // Check if text matches any enabled pattern
@@ -2340,23 +2473,93 @@
                     const buttons = this.findAcceptButtons();
                     
                     if (buttons.length === 0) {
+                        // If we recently clicked run and no buttons found, wait a bit more
+                        if (this.lastRunClick && (Date.now() - this.lastRunClick) < 5000) {
+                            if (this.debugMode) {
+                                this.log('No buttons found after run click, waiting for UI to update');
+                            }
+                            return;
+                        }
                         // Don't spam the log for "no buttons found"
                         return;
                     }
                     
-                    // Click the first button found
-                    const button = buttons[0];
-                    const buttonText = button.textContent.trim().substring(0, 30);
+                    // Enhanced button clicking logic with priority and sequence handling
+                    const clickedButton = this.clickButtonsInSequence(buttons);
                     
-                    const success = this.clickElement(button);
-                    if (success) {
+                    if (clickedButton) {
                         this.totalClicks++;
                         this.updatePanelStatus();
+                        
+                        // Log the action
+                        const buttonText = clickedButton.textContent.trim().substring(0, 30);
+                        this.logToPanel(`✓ Clicked: ${buttonText}`, 'info');
                     }
                     
                 } catch (error) {
                     this.log(`Error executing: ${error.message}`);
                 }
+            }
+            
+            // Enhanced button clicking with priority and sequence handling
+            clickButtonsInSequence(buttons) {
+                // Sort buttons by priority: Run -> Keep -> Accept -> Review next file -> Apply -> Execute
+                // This matches the actual workflow: Run command -> Keep changes -> Accept changes
+                const priorityOrder = [
+                    'run command',
+                    'run',
+                    'keep all',
+                    'keep',
+                    'accept all',
+                    'accept', 
+                    'review next file',
+                    'apply',
+                    'execute',
+                    'resume',
+                    'try again'
+                ];
+                
+                // Sort buttons by priority
+                const sortedButtons = buttons.sort((a, b) => {
+                    const textA = a.textContent.toLowerCase().trim();
+                    const textB = b.textContent.toLowerCase().trim();
+                    
+                    const priorityA = priorityOrder.findIndex(pattern => textA.includes(pattern));
+                    const priorityB = priorityOrder.findIndex(pattern => textB.includes(pattern));
+                    
+                    // If both have priority, sort by priority order
+                    if (priorityA !== -1 && priorityB !== -1) {
+                        return priorityA - priorityB;
+                    }
+                    
+                    // If only one has priority, prioritize it
+                    if (priorityA !== -1) return -1;
+                    if (priorityB !== -1) return 1;
+                    
+                    // If neither has priority, maintain original order
+                    return 0;
+                });
+                
+                // Try to click buttons in priority order
+                for (const button of sortedButtons) {
+                    if (this.isElementVisible(button) && this.isElementClickable(button)) {
+                        const buttonText = button.textContent.toLowerCase().trim();
+                        const success = this.clickElement(button);
+                        if (success) {
+                            // If we clicked a "run" button, add a small delay to allow UI to update
+                            if (buttonText.includes('run')) {
+                                if (this.debugMode) {
+                                    this.log('Run button clicked, waiting for Keep/Accept buttons to appear');
+                                }
+                                // Set a flag to check for more buttons in the next cycle
+                                this.lastRunClick = Date.now();
+                            }
+                            return button;
+                        }
+                    }
+                }
+                
+                return null;
             }
             
             start() {
@@ -2915,12 +3118,13 @@
                 const windsurfPatterns = [
                     { pattern: 'accept all', enabled: this.config.enableAcceptAll },
                     { pattern: 'accept', enabled: this.config.enableAccept },
+                    { pattern: 'review next file', enabled: this.config.enableReviewNextFile },
+                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
+                    { pattern: 'keep', enabled: this.config.enableKeep },
                     { pattern: 'run command', enabled: this.config.enableRunCommand },
                     { pattern: 'run', enabled: this.config.enableRun },
                     { pattern: 'apply', enabled: this.config.enableApply },
-                    { pattern: 'execute', enabled: this.config.enableExecute },
-                    { pattern: 'keep all', enabled: this.config.enableKeepAll },
-                    { pattern: 'keep', enabled: this.config.enableKeep }
+                    { pattern: 'execute', enabled: this.config.enableExecute }
                 ];
                 
                 // Check if text matches any enabled pattern
@@ -3104,12 +3308,53 @@
             // Ignore
         }
         
+        // Add force refresh function
+        globalThis.refreshControlPanel = () => {
+            if (globalThis.simpleAccept.controlPanel) {
+                globalThis.simpleAccept.controlPanel.remove();
+                globalThis.simpleAccept.controlPanel = null;
+            }
+            globalThis.simpleAccept.createControlPanel();
+            console.log('Control panel refreshed');
+        };
+        
+        // Add force show function
+        globalThis.showControlPanel = () => {
+            globalThis.simpleAccept.showControlPanel();
+            console.log('Control panel shown');
+        };
+        
         console.log('Commands: startAccept(), stopAccept(), acceptStatus(), debugAccept()');
         console.log('Analytics: showAnalytics(), exportAnalytics(), clearAnalytics(), clearStorage(), validateData()');
         console.log('Debug: toggleDebug(), enableDebug(), disableDebug() - Control debug logging');
         console.log('Calibration: calibrateWorkflow(manualSeconds, autoMs) - Adjust workflow timing');
         console.log('Config: enableOnly([types]), enableAll(), disableAll(), toggleButton(type)');
         console.log('Conversation: findDiffs(), getContext(), logActivity(), recentDiffs(maxAge)');
-        console.log('Types: "acceptAll", "accept", "run", "runCommand", "apply", "execute", "resume", "connectionResume", "tryAgain", "keep", "keepAll"');
+        console.log('UI: refreshControlPanel(), showControlPanel() - Control panel management');
+        console.log('Types: "acceptAll", "accept", "reviewNextFile", "keepAll", "keep", "run", "runCommand", "apply", "execute", "resume", "connectionResume", "tryAgain"');
+        
+        // Add comprehensive button search function
+        globalThis.searchAllButtons = () => {
+            console.log('=== COMPREHENSIVE BUTTON SEARCH ===');
+            const allButtons = globalThis.simpleAccept.findButtonsGlobally();
+            console.log(`Found ${allButtons.length} total buttons:`);
+            allButtons.forEach((btn, i) => {
+                console.log(`${i+1}. "${btn.textContent.trim()}" - ${btn.tagName} - ${btn.className}`);
+            });
+            return allButtons;
+        };
+        
+        // Add button click test function
+        globalThis.testButtonClick = (buttonIndex) => {
+            const buttons = globalThis.simpleAccept.findButtonsGlobally();
+            if (buttonIndex >= 0 && buttonIndex < buttons.length) {
+                const button = buttons[buttonIndex];
+                console.log(`Testing click on button: "${button.textContent.trim()}"`);
+                return globalThis.simpleAccept.clickElement(button);
+            } else {
+                console.log(`Invalid button index. Available buttons: 0-${buttons.length-1}`);
+                return false;
+            }
+        };
     }
 })(); 

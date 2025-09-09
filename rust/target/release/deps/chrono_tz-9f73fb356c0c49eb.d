@@ -1,0 +1,15 @@
+/home/calelin/router/rust/target/release/deps/chrono_tz-9f73fb356c0c49eb.d: /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/lib.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/binary_search.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/directory.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/timezone_impl.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/timezones.rs /home/calelin/router/rust/target/release/build/chrono-tz-e527b575a69c93e7/out/directory.rs /home/calelin/router/rust/target/release/build/chrono-tz-e527b575a69c93e7/out/timezones.rs
+
+/home/calelin/router/rust/target/release/deps/libchrono_tz-9f73fb356c0c49eb.rlib: /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/lib.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/binary_search.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/directory.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/timezone_impl.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/timezones.rs /home/calelin/router/rust/target/release/build/chrono-tz-e527b575a69c93e7/out/directory.rs /home/calelin/router/rust/target/release/build/chrono-tz-e527b575a69c93e7/out/timezones.rs
+
+/home/calelin/router/rust/target/release/deps/libchrono_tz-9f73fb356c0c49eb.rmeta: /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/lib.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/binary_search.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/directory.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/timezone_impl.rs /home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/timezones.rs /home/calelin/router/rust/target/release/build/chrono-tz-e527b575a69c93e7/out/directory.rs /home/calelin/router/rust/target/release/build/chrono-tz-e527b575a69c93e7/out/timezones.rs
+
+/home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/lib.rs:
+/home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/binary_search.rs:
+/home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/directory.rs:
+/home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/timezone_impl.rs:
+/home/calelin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-tz-0.8.6/src/timezones.rs:
+/home/calelin/router/rust/target/release/build/chrono-tz-e527b575a69c93e7/out/directory.rs:
+/home/calelin/router/rust/target/release/build/chrono-tz-e527b575a69c93e7/out/timezones.rs:
+
+# env-dep:OUT_DIR=/home/calelin/router/rust/target/release/build/chrono-tz-e527b575a69c93e7/out

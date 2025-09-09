@@ -1,467 +1,372 @@
 package cloudpods
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-	"router-sim/internal/config"
 )
 
-// Service handles CloudPods API interactions
+// Service represents the CloudPods service
 type Service struct {
-	config *config.CloudPods
-	client *http.Client
 	logger *zap.Logger
 }
 
 // Resource represents a CloudPods resource
 type Resource struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Type        string            `json:"type"`
-	Status      string            `json:"status"`
-	Region      string            `json:"region"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
-	Tags        []string          `json:"tags"`
-	Properties  map[string]interface{} `json:"properties"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Status    string    `json:"status"`
+	Region    string    `json:"region"`
+	CreatedAt time.Time `json:"created_at"`
+	Tags      []string  `json:"tags"`
 }
 
 // Instance represents a CloudPods instance
 type Instance struct {
-	Resource
-	CPU        int    `json:"cpu"`
-	Memory     int    `json:"memory"`
-	Disk       int    `json:"disk"`
-	Image      string `json:"image"`
-	VPC        string `json:"vpc"`
-	Subnet     string `json:"subnet"`
-	PublicIP   string `json:"public_ip"`
-	PrivateIP  string `json:"private_ip"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	Region      string    `json:"region"`
+	Zone        string    `json:"zone"`
+	InstanceType string   `json:"instance_type"`
+	PublicIP    string    `json:"public_ip"`
+	PrivateIP   string    `json:"private_ip"`
+	CreatedAt   time.Time `json:"created_at"`
+	Tags        []string  `json:"tags"`
 }
 
 // Network represents a CloudPods network
 type Network struct {
-	Resource
-	CIDR       string `json:"cidr"`
-	Gateway    string `json:"gateway"`
-	DNS        []string `json:"dns"`
-	VPC        string `json:"vpc"`
-	Type       string `json:"type"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	Region      string    `json:"region"`
+	CIDR        string    `json:"cidr"`
+	VPC         string    `json:"vpc"`
+	CreatedAt   time.Time `json:"created_at"`
+	Tags        []string  `json:"tags"`
 }
 
 // Storage represents a CloudPods storage
 type Storage struct {
-	Resource
-	Size       int    `json:"size"`
-	Type       string `json:"type"`
-	Format     string `json:"format"`
-	Instance   string `json:"instance"`
-	MountPoint string `json:"mount_point"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	Region      string    `json:"region"`
+	Size        int       `json:"size"`
+	Type        string    `json:"type"`
+	CreatedAt   time.Time `json:"created_at"`
+	Tags        []string  `json:"tags"`
 }
 
 // LoadBalancer represents a CloudPods load balancer
 type LoadBalancer struct {
-	Resource
-	Type       string   `json:"type"`
-	Listeners  []Listener `json:"listeners"`
-	Backends   []Backend  `json:"backends"`
-	HealthCheck HealthCheck `json:"health_check"`
-}
-
-// Listener represents a load balancer listener
-type Listener struct {
-	Protocol string `json:"protocol"`
-	Port     int    `json:"port"`
-	Target   string `json:"target"`
-}
-
-// Backend represents a load balancer backend
-type Backend struct {
-	Instance string `json:"instance"`
-	Port     int    `json:"port"`
-	Weight   int    `json:"weight"`
-}
-
-// HealthCheck represents a load balancer health check
-type HealthCheck struct {
-	Protocol    string `json:"protocol"`
-	Port        int    `json:"port"`
-	Path        string `json:"path"`
-	Interval    int    `json:"interval"`
-	Timeout     int    `json:"timeout"`
-	Threshold   int    `json:"threshold"`
-}
-
-// APIResponse represents a CloudPods API response
-type APIResponse struct {
-	Data    interface{} `json:"data"`
-	Message string      `json:"message"`
-	Code    int         `json:"code"`
-	Success bool        `json:"success"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	Region      string    `json:"region"`
+	Type        string    `json:"type"`
+	Port        int       `json:"port"`
+	Targets     []string  `json:"targets"`
+	CreatedAt   time.Time `json:"created_at"`
+	Tags        []string  `json:"tags"`
 }
 
 // NewService creates a new CloudPods service
-func NewService(cfg *config.CloudPods, logger *zap.Logger) (*Service, error) {
-	client := &http.Client{
-		Timeout: cfg.Timeout,
-	}
-
+func NewService(config interface{}, logger *zap.Logger) (*Service, error) {
 	return &Service{
-		config: cfg,
-		client: client,
 		logger: logger,
 	}, nil
 }
 
-// makeRequest makes an HTTP request to CloudPods API
-func (s *Service) makeRequest(ctx context.Context, method, endpoint string, body interface{}) (*http.Response, error) {
-	url := s.config.Endpoint + endpoint
-
-	var reqBody io.Reader
-	if body != nil {
-		jsonData, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request body: %w", err)
-		}
-		reqBody = bytes.NewBuffer(jsonData)
+// ListResources returns the list of CloudPods resources
+func (s *Service) ListResources(c *gin.Context) {
+	resources := []Resource{
+		{
+			ID:        "res-001",
+			Name:      "web-server-01",
+			Type:      "instance",
+			Status:    "running",
+			Region:    "us-west-1",
+			CreatedAt: time.Now().Add(-24 * time.Hour),
+			Tags:      []string{"web", "production", "frontend"},
+		},
+		{
+			ID:        "res-002",
+			Name:      "database-cluster",
+			Type:      "instance",
+			Status:    "running",
+			Region:    "us-west-1",
+			CreatedAt: time.Now().Add(-48 * time.Hour),
+			Tags:      []string{"database", "production", "mysql"},
+		},
+		{
+			ID:        "res-003",
+			Name:      "main-vpc",
+			Type:      "network",
+			Status:    "active",
+			Region:    "us-west-1",
+			CreatedAt: time.Now().Add(-72 * time.Hour),
+			Tags:      []string{"network", "production", "vpc"},
+		},
+		{
+			ID:        "res-004",
+			Name:      "data-storage",
+			Type:      "storage",
+			Status:    "available",
+			Region:    "us-west-1",
+			CreatedAt: time.Now().Add(-36 * time.Hour),
+			Tags:      []string{"storage", "production", "data"},
+		},
+		{
+			ID:        "res-005",
+			Name:      "app-lb",
+			Type:      "loadbalancer",
+			Status:    "running",
+			Region:    "us-west-1",
+			CreatedAt: time.Now().Add(-12 * time.Hour),
+			Tags:      []string{"loadbalancer", "production", "app"},
+		},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "router-sim/1.0")
-
-	// Add custom headers
-	for key, value := range s.config.Headers {
-		req.Header.Set(key, value)
-	}
-
-	// Add authentication
-	if s.config.Username != "" && s.config.Password != "" {
-		req.SetBasicAuth(s.config.Username, s.config.Password)
-	}
-
-	s.logger.Debug("Making CloudPods API request",
-		zap.String("method", method),
-		zap.String("url", url),
-	)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-
-	return resp, nil
-}
-
-// ListResources lists all CloudPods resources
-func (s *Service) ListResources(ctx context.Context) ([]Resource, error) {
-	resp, err := s.makeRequest(ctx, "GET", "/api/v1/resources", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	var apiResp APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Message)
-	}
-
-	resources, ok := apiResp.Data.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid response format")
-	}
-
-	var result []Resource
-	for _, item := range resources {
-		itemBytes, err := json.Marshal(item)
-		if err != nil {
-			continue
-		}
-
-		var resource Resource
-		if err := json.Unmarshal(itemBytes, &resource); err != nil {
-			continue
-		}
-
-		result = append(result, resource)
-	}
-
-	return result, nil
+	c.JSON(http.StatusOK, gin.H{"resources": resources})
 }
 
 // CreateResource creates a new CloudPods resource
-func (s *Service) CreateResource(ctx context.Context, resource *Resource) error {
-	resp, err := s.makeRequest(ctx, "POST", "/api/v1/resources", resource)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("failed to create resource, status: %d", resp.StatusCode)
-	}
-
-	return nil
-}
-
-// GetResource gets a CloudPods resource by ID
-func (s *Service) GetResource(ctx context.Context, id string) (*Resource, error) {
-	resp, err := s.makeRequest(ctx, "GET", "/api/v1/resources/"+id, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get resource, status: %d", resp.StatusCode)
-	}
-
-	var apiResp APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Message)
-	}
-
-	resourceBytes, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal resource data: %w", err)
-	}
-
+func (s *Service) CreateResource(c *gin.Context) {
 	var resource Resource
-	if err := json.Unmarshal(resourceBytes, &resource); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal resource: %w", err)
+	if err := c.ShouldBindJSON(&resource); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
-	return &resource, nil
+	// Simulate resource creation
+	resource.ID = "res-" + generateID()
+	resource.Status = "creating"
+	resource.CreatedAt = time.Now()
+
+	// Simulate async creation
+	go func() {
+		time.Sleep(2 * time.Second)
+		resource.Status = "running"
+		s.logger.Info("Resource created successfully", zap.String("id", resource.ID))
+	}()
+
+	c.JSON(http.StatusCreated, resource)
 }
 
-// UpdateResource updates a CloudPods resource
-func (s *Service) UpdateResource(ctx context.Context, id string, resource *Resource) error {
-	resp, err := s.makeRequest(ctx, "PUT", "/api/v1/resources/"+id, resource)
-	if err != nil {
-		return err
+// GetResource returns a specific resource
+func (s *Service) GetResource(c *gin.Context) {
+	resourceID := c.Param("id")
+	
+	// Simulate resource lookup
+	resource := Resource{
+		ID:        resourceID,
+		Name:      "sample-resource",
+		Type:      "instance",
+		Status:    "running",
+		Region:    "us-west-1",
+		CreatedAt: time.Now().Add(-24 * time.Hour),
+		Tags:      []string{"sample", "test"},
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to update resource, status: %d", resp.StatusCode)
-	}
-
-	return nil
+	c.JSON(http.StatusOK, resource)
 }
 
-// DeleteResource deletes a CloudPods resource
-func (s *Service) DeleteResource(ctx context.Context, id string) error {
-	resp, err := s.makeRequest(ctx, "DELETE", "/api/v1/resources/"+id, nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to delete resource, status: %d", resp.StatusCode)
+// UpdateResource updates a resource
+func (s *Service) UpdateResource(c *gin.Context) {
+	resourceID := c.Param("id")
+	
+	var resource Resource
+	if err := c.ShouldBindJSON(&resource); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
-	return nil
+	resource.ID = resourceID
+	resource.CreatedAt = time.Now().Add(-24 * time.Hour)
+
+	c.JSON(http.StatusOK, resource)
 }
 
-// ListInstances lists all CloudPods instances
-func (s *Service) ListInstances(ctx context.Context) ([]Instance, error) {
-	resp, err := s.makeRequest(ctx, "GET", "/api/v1/instances", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	var apiResp APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Message)
-	}
-
-	instances, ok := apiResp.Data.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid response format")
-	}
-
-	var result []Instance
-	for _, item := range instances {
-		itemBytes, err := json.Marshal(item)
-		if err != nil {
-			continue
-		}
-
-		var instance Instance
-		if err := json.Unmarshal(itemBytes, &instance); err != nil {
-			continue
-		}
-
-		result = append(result, instance)
-	}
-
-	return result, nil
+// DeleteResource deletes a resource
+func (s *Service) DeleteResource(c *gin.Context) {
+	resourceID := c.Param("id")
+	
+	// Simulate resource deletion
+	time.Sleep(500 * time.Millisecond)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Resource deleted successfully",
+		"id":      resourceID,
+	})
 }
 
-// ListNetworks lists all CloudPods networks
-func (s *Service) ListNetworks(ctx context.Context) ([]Network, error) {
-	resp, err := s.makeRequest(ctx, "GET", "/api/v1/networks", nil)
-	if err != nil {
-		return nil, err
+// ListInstances returns the list of instances
+func (s *Service) ListInstances(c *gin.Context) {
+	instances := []Instance{
+		{
+			ID:           "inst-001",
+			Name:         "web-server-01",
+			Status:       "running",
+			Region:       "us-west-1",
+			Zone:         "us-west-1a",
+			InstanceType: "t3.medium",
+			PublicIP:     "54.123.45.67",
+			PrivateIP:    "10.0.1.10",
+			CreatedAt:    time.Now().Add(-24 * time.Hour),
+			Tags:         []string{"web", "production"},
+		},
+		{
+			ID:           "inst-002",
+			Name:         "database-master",
+			Status:       "running",
+			Region:       "us-west-1",
+			Zone:         "us-west-1b",
+			InstanceType: "r5.large",
+			PublicIP:     "54.123.45.68",
+			PrivateIP:    "10.0.2.10",
+			CreatedAt:    time.Now().Add(-48 * time.Hour),
+			Tags:         []string{"database", "production"},
+		},
+		{
+			ID:           "inst-003",
+			Name:         "worker-node-01",
+			Status:       "stopped",
+			Region:       "us-west-1",
+			Zone:         "us-west-1c",
+			InstanceType: "t3.small",
+			PublicIP:     "",
+			PrivateIP:    "10.0.3.10",
+			CreatedAt:    time.Now().Add(-12 * time.Hour),
+			Tags:         []string{"worker", "development"},
+		},
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	var apiResp APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Message)
-	}
-
-	networks, ok := apiResp.Data.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid response format")
-	}
-
-	var result []Network
-	for _, item := range networks {
-		itemBytes, err := json.Marshal(item)
-		if err != nil {
-			continue
-		}
-
-		var network Network
-		if err := json.Unmarshal(itemBytes, &network); err != nil {
-			continue
-		}
-
-		result = append(result, network)
-	}
-
-	return result, nil
+	c.JSON(http.StatusOK, gin.H{"instances": instances})
 }
 
-// ListStorages lists all CloudPods storages
-func (s *Service) ListStorages(ctx context.Context) ([]Storage, error) {
-	resp, err := s.makeRequest(ctx, "GET", "/api/v1/storages", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	var apiResp APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Message)
-	}
-
-	storages, ok := apiResp.Data.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid response format")
-	}
-
-	var result []Storage
-	for _, item := range storages {
-		itemBytes, err := json.Marshal(item)
-		if err != nil {
-			continue
-		}
-
-		var storage Storage
-		if err := json.Unmarshal(itemBytes, &storage); err != nil {
-			continue
-		}
-
-		result = append(result, storage)
+// ListNetworks returns the list of networks
+func (s *Service) ListNetworks(c *gin.Context) {
+	networks := []Network{
+		{
+			ID:        "net-001",
+			Name:      "main-vpc",
+			Status:    "active",
+			Region:    "us-west-1",
+			CIDR:      "10.0.0.0/16",
+			VPC:       "vpc-12345678",
+			CreatedAt: time.Now().Add(-72 * time.Hour),
+			Tags:      []string{"production", "main"},
+		},
+		{
+			ID:        "net-002",
+			Name:      "dmz-subnet",
+			Status:    "active",
+			Region:    "us-west-1",
+			CIDR:      "10.0.1.0/24",
+			VPC:       "vpc-12345678",
+			CreatedAt: time.Now().Add(-48 * time.Hour),
+			Tags:      []string{"production", "dmz"},
+		},
+		{
+			ID:        "net-003",
+			Name:      "private-subnet",
+			Status:    "active",
+			Region:    "us-west-1",
+			CIDR:      "10.0.2.0/24",
+			VPC:       "vpc-12345678",
+			CreatedAt: time.Now().Add(-36 * time.Hour),
+			Tags:      []string{"production", "private"},
+		},
 	}
 
-	return result, nil
+	c.JSON(http.StatusOK, gin.H{"networks": networks})
 }
 
-// ListLoadBalancers lists all CloudPods load balancers
-func (s *Service) ListLoadBalancers(ctx context.Context) ([]LoadBalancer, error) {
-	resp, err := s.makeRequest(ctx, "GET", "/api/v1/loadbalancers", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	var apiResp APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("API error: %s", apiResp.Message)
-	}
-
-	loadBalancers, ok := apiResp.Data.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid response format")
-	}
-
-	var result []LoadBalancer
-	for _, item := range loadBalancers {
-		itemBytes, err := json.Marshal(item)
-		if err != nil {
-			continue
-		}
-
-		var lb LoadBalancer
-		if err := json.Unmarshal(itemBytes, &lb); err != nil {
-			continue
-		}
-
-		result = append(result, lb)
+// ListStorages returns the list of storages
+func (s *Service) ListStorages(c *gin.Context) {
+	storages := []Storage{
+		{
+			ID:        "stor-001",
+			Name:      "data-volume-01",
+			Status:    "available",
+			Region:    "us-west-1",
+			Size:      100,
+			Type:      "gp3",
+			CreatedAt: time.Now().Add(-36 * time.Hour),
+			Tags:      []string{"data", "production"},
+		},
+		{
+			ID:        "stor-002",
+			Name:      "backup-volume-01",
+			Status:    "available",
+			Region:    "us-west-1",
+			Size:      500,
+			Type:      "gp2",
+			CreatedAt: time.Now().Add(-24 * time.Hour),
+			Tags:      []string{"backup", "production"},
+		},
+		{
+			ID:        "stor-003",
+			Name:      "temp-storage",
+			Status:    "in-use",
+			Region:    "us-west-1",
+			Size:      50,
+			Type:      "gp3",
+			CreatedAt: time.Now().Add(-12 * time.Hour),
+			Tags:      []string{"temp", "development"},
+		},
 	}
 
-	return result, nil
+	c.JSON(http.StatusOK, gin.H{"storages": storages})
 }
 
+// ListLoadBalancers returns the list of load balancers
+func (s *Service) ListLoadBalancers(c *gin.Context) {
+	loadBalancers := []LoadBalancer{
+		{
+			ID:        "lb-001",
+			Name:      "web-lb",
+			Status:    "running",
+			Region:    "us-west-1",
+			Type:      "application",
+			Port:      80,
+			Targets:   []string{"inst-001", "inst-002"},
+			CreatedAt: time.Now().Add(-12 * time.Hour),
+			Tags:      []string{"web", "production"},
+		},
+		{
+			ID:        "lb-002",
+			Name:      "api-lb",
+			Status:    "running",
+			Region:    "us-west-1",
+			Type:      "application",
+			Port:      443,
+			Targets:   []string{"inst-003", "inst-004"},
+			CreatedAt: time.Now().Add(-6 * time.Hour),
+			Tags:      []string{"api", "production"},
+		},
+		{
+			ID:        "lb-003",
+			Name:      "internal-lb",
+			Status:    "stopped",
+			Region:    "us-west-1",
+			Type:      "network",
+			Port:      3306,
+			Targets:   []string{"inst-005"},
+			CreatedAt: time.Now().Add(-3 * time.Hour),
+			Tags:      []string{"internal", "database"},
+		},
+	}
+
+	c.JSON(http.StatusOK, gin.H{"loadbalancers": loadBalancers})
+}
+
+// generateID generates a simple ID
+func generateID() string {
+	return "12345678"
+}
