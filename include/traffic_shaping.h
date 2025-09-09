@@ -1,348 +1,194 @@
 #pragma once
 
-#include <string>
-#include <vector>
-#include <map>
 #include <memory>
-#include <chrono>
+#include <vector>
 #include <mutex>
-#include <queue>
+#include <chrono>
 #include <atomic>
+#include <limits>
 
 namespace RouterSim {
 
-// Traffic shaping algorithms
-enum class ShapingAlgorithm {
-    TOKEN_BUCKET,
-    LEAKY_BUCKET,
-    WEIGHTED_FAIR_QUEUING,
-    PRIORITY_QUEUING,
-    CLASS_BASED_WEIGHTED_FAIR_QUEUING
-};
-
-// QoS classes
-enum class QoSClass {
-    BEST_EFFORT = 0,
-    BACKGROUND = 1,
-    BULK = 2,
-    VIDEO = 3,
-    VOICE = 4,
-    NETWORK_CONTROL = 5,
-    INTERNETWORK_CONTROL = 6,
-    CRITICAL = 7
-};
-
-// Packet information
+// Packet representation
 struct Packet {
-    std::vector<uint8_t> data;
-    std::string interface;
-    QoSClass qos_class;
-    uint32_t priority;
-    uint64_t timestamp;
+    uint64_t id;
     uint32_t size;
+    uint32_t priority;
+    std::string source_ip;
+    std::string dest_ip;
+    uint16_t source_port;
+    uint16_t dest_port;
+    uint8_t protocol;
+    std::chrono::steady_clock::time_point timestamp;
     
-    Packet() : qos_class(QoSClass::BEST_EFFORT), priority(0), timestamp(0), size(0) {}
-    
-    Packet(const std::vector<uint8_t>& packet_data, const std::string& iface, QoSClass qos = QoSClass::BEST_EFFORT)
-        : data(packet_data), interface(iface), qos_class(qos), priority(static_cast<uint32_t>(qos)), 
-          timestamp(std::chrono::duration_cast<std::chrono::microseconds>(
-              std::chrono::steady_clock::now().time_since_epoch()).count()), size(packet_data.size()) {}
-};
-
-// Traffic shaping statistics
-struct ShapingStats {
-    uint64_t packets_processed;
-    uint64_t packets_dropped;
-    uint64_t packets_delayed;
-    uint64_t bytes_processed;
-    uint64_t bytes_dropped;
-    uint64_t bytes_delayed;
-    std::chrono::steady_clock::time_point start_time;
-    
-    ShapingStats() : packets_processed(0), packets_dropped(0), packets_delayed(0),
-                     bytes_processed(0), bytes_dropped(0), bytes_delayed(0) {
-        start_time = std::chrono::steady_clock::now();
+    Packet() : id(0), size(0), priority(0), source_port(0), dest_port(0), protocol(0) {
+        timestamp = std::chrono::steady_clock::now();
     }
 };
 
-// Traffic shaping configuration
-struct ShapingConfig {
-    ShapingAlgorithm algorithm;
-    uint64_t rate_bps;           // Rate in bits per second
-    uint64_t burst_size;         // Burst size in bytes
-    uint32_t queue_size;         // Maximum queue size
-    std::map<QoSClass, uint32_t> class_weights;
-    std::map<QoSClass, uint32_t> class_priorities;
-    bool enable_red;             // Random Early Detection
-    uint32_t red_min_threshold;
-    uint32_t red_max_threshold;
-    double red_probability;
-    
-    ShapingConfig() : algorithm(ShapingAlgorithm::TOKEN_BUCKET), rate_bps(1000000), 
-                      burst_size(10000), queue_size(1000), enable_red(false),
-                      red_min_threshold(100), red_max_threshold(200), red_probability(0.1) {
-        // Default class weights
-        class_weights[QoSClass::CRITICAL] = 8;
-        class_weights[QoSClass::NETWORK_CONTROL] = 7;
-        class_weights[QoSClass::INTERNETWORK_CONTROL] = 6;
-        class_weights[QoSClass::VOICE] = 5;
-        class_weights[QoSClass::VIDEO] = 4;
-        class_weights[QoSClass::BULK] = 2;
-        class_weights[QoSClass::BACKGROUND] = 1;
-        class_weights[QoSClass::BEST_EFFORT] = 1;
-        
-        // Default class priorities
-        class_priorities[QoSClass::CRITICAL] = 7;
-        class_priorities[QoSClass::NETWORK_CONTROL] = 6;
-        class_priorities[QoSClass::INTERNETWORK_CONTROL] = 5;
-        class_priorities[QoSClass::VOICE] = 4;
-        class_priorities[QoSClass::VIDEO] = 3;
-        class_priorities[QoSClass::BULK] = 2;
-        class_priorities[QoSClass::BACKGROUND] = 1;
-        class_priorities[QoSClass::BEST_EFFORT] = 0;
-    }
-};
-
-// Base traffic shaper interface
-class ITrafficShaper {
+// Token Bucket Implementation
+class TokenBucket {
 public:
-    virtual ~ITrafficShaper() = default;
+    TokenBucket(uint64_t capacity, uint64_t refill_rate, uint64_t burst_size);
+    ~TokenBucket();
     
-    // Lifecycle
-    virtual bool initialize(const ShapingConfig& config) = 0;
-    virtual void start() = 0;
-    virtual void stop() = 0;
-    virtual bool is_running() const = 0;
+    // Core functionality
+    bool consume(uint64_t tokens);
+    bool consumePacket(const Packet& packet);
+    void refillTokens();
     
     // Configuration
-    virtual void set_config(const ShapingConfig& config) = 0;
-    virtual ShapingConfig get_config() const = 0;
+    void setCapacity(uint64_t capacity);
+    void setRefillRate(uint64_t refill_rate);
+    void setBurstSize(uint64_t burst_size);
     
-    // Packet processing
-    virtual bool process_packet(const Packet& packet) = 0;
-    virtual bool process_packet(const std::vector<uint8_t>& data, const std::string& interface, QoSClass qos_class = QoSClass::BEST_EFFORT) = 0;
-    
-    // Queue management
-    virtual size_t get_queue_size() const = 0;
-    virtual size_t get_queue_size(QoSClass qos_class) const = 0;
-    virtual void clear_queue() = 0;
-    virtual void clear_queue(QoSClass qos_class) = 0;
+    // Information
+    uint64_t getAvailableTokens() const;
+    void reset();
     
     // Statistics
-    virtual ShapingStats get_statistics() const = 0;
-    virtual ShapingStats get_statistics(QoSClass qos_class) const = 0;
-    virtual void reset_statistics() = 0;
+    struct Statistics {
+        uint64_t capacity;
+        uint64_t refill_rate;
+        uint64_t burst_size;
+        uint64_t available_tokens;
+        uint64_t total_packets_processed;
+        uint64_t total_bytes_processed;
+        uint64_t packets_dropped;
+        uint64_t bytes_dropped;
+        double utilization_percentage;
+    };
     
-    // Rate control
-    virtual void set_rate(uint64_t rate_bps) = 0;
-    virtual uint64_t get_rate() const = 0;
-    virtual void set_burst_size(uint64_t burst_size) = 0;
-    virtual uint64_t get_burst_size() const = 0;
-};
-
-// Token Bucket implementation
-class TokenBucket : public ITrafficShaper {
-public:
-    TokenBucket();
-    ~TokenBucket() override;
-
-    bool initialize(const ShapingConfig& config) override;
-    void start() override;
-    void stop() override;
-    bool is_running() const override;
-
-    void set_config(const ShapingConfig& config) override;
-    ShapingConfig get_config() const override;
-
-    bool process_packet(const Packet& packet) override;
-    bool process_packet(const std::vector<uint8_t>& data, const std::string& interface, QoSClass qos_class = QoSClass::BEST_EFFORT) override;
-
-    size_t get_queue_size() const override;
-    size_t get_queue_size(QoSClass qos_class) const override;
-    void clear_queue() override;
-    void clear_queue(QoSClass qos_class) override;
-
-    ShapingStats get_statistics() const override;
-    ShapingStats get_statistics(QoSClass qos_class) const override;
-    void reset_statistics() override;
-
-    void set_rate(uint64_t rate_bps) override;
-    uint64_t get_rate() const override;
-    void set_burst_size(uint64_t burst_size) override;
-    uint64_t get_burst_size() const override;
+    Statistics getStatistics() const;
 
 private:
-    void token_refill_loop();
-    bool consume_tokens(uint32_t packet_size);
-    void add_tokens();
+    uint64_t capacity_;
+    uint64_t refill_rate_;
+    uint64_t burst_size_;
+    uint64_t tokens_;
+    std::chrono::steady_clock::time_point last_refill_time_;
     
-    std::atomic<bool> running_;
-    ShapingConfig config_;
+    // Statistics
+    uint64_t total_packets_processed_;
+    uint64_t total_bytes_processed_;
+    uint64_t packets_dropped_;
+    uint64_t bytes_dropped_;
     
-    std::atomic<uint64_t> tokens_;
-    std::atomic<uint64_t> last_refill_time_;
-    
-    std::queue<Packet> packet_queue_;
-    mutable std::mutex queue_mutex_;
-    
-    std::thread refill_thread_;
-    
-    ShapingStats stats_;
-    mutable std::mutex stats_mutex_;
+    mutable std::mutex mutex_;
 };
 
-// Weighted Fair Queuing implementation
-class WeightedFairQueuing : public ITrafficShaper {
+// Weighted Fair Queueing Implementation
+class WFQ {
 public:
-    WeightedFairQueuing();
-    ~WeightedFairQueuing() override;
-
-    bool initialize(const ShapingConfig& config) override;
-    void start() override;
-    void stop() override;
-    bool is_running() const override;
-
-    void set_config(const ShapingConfig& config) override;
-    ShapingConfig get_config() const override;
-
-    bool process_packet(const Packet& packet) override;
-    bool process_packet(const std::vector<uint8_t>& data, const std::string& interface, QoSClass qos_class = QoSClass::BEST_EFFORT) override;
-
-    size_t get_queue_size() const override;
-    size_t get_queue_size(QoSClass qos_class) const override;
-    void clear_queue() override;
-    void clear_queue(QoSClass qos_class) override;
-
-    ShapingStats get_statistics() const override;
-    ShapingStats get_statistics(QoSClass qos_class) const override;
-    void reset_statistics() override;
-
-    void set_rate(uint64_t rate_bps) override;
-    uint64_t get_rate() const override;
-    void set_burst_size(uint64_t burst_size) override;
-    uint64_t get_burst_size() const override;
+    static const uint32_t MAX_QUEUE_SIZE = 1000;
+    
+    WFQ(uint32_t max_queues);
+    ~WFQ();
+    
+    // Core functionality
+    bool enqueue(uint32_t queue_id, const Packet& packet);
+    bool dequeue(Packet& packet);
+    
+    // Configuration
+    void setQueueWeight(uint32_t queue_id, uint32_t weight);
+    
+    // Information
+    uint32_t getMaxQueues() const { return max_queues_; }
+    uint32_t getQueueWeight(uint32_t queue_id) const;
+    uint32_t getQueueSize(uint32_t queue_id) const;
+    uint64_t getQueueBytes(uint32_t queue_id) const;
+    
+    // Statistics
+    struct QueueStatistics {
+        uint32_t queue_id;
+        uint32_t weight;
+        uint32_t packets;
+        uint64_t bytes;
+        double finish_time;
+    };
+    
+    struct Statistics {
+        uint32_t max_queues;
+        uint32_t total_weight;
+        double virtual_time;
+        uint64_t total_packets_processed;
+        uint64_t total_bytes_processed;
+        uint64_t packets_dropped;
+        uint64_t bytes_dropped;
+        std::vector<QueueStatistics> queue_stats;
+    };
+    
+    Statistics getStatistics() const;
+    void reset();
 
 private:
-    void scheduling_loop();
-    Packet select_next_packet();
-    double calculate_finish_time(const Packet& packet, QoSClass qos_class);
+    struct Queue {
+        uint32_t weight;
+        uint32_t packets;
+        uint64_t bytes;
+        double finish_time;
+    };
     
-    std::atomic<bool> running_;
-    ShapingConfig config_;
+    uint32_t max_queues_;
+    std::vector<Queue> queues_;
+    uint32_t total_weight_;
+    double virtual_time_;
+    std::chrono::steady_clock::time_point last_update_time_;
     
-    std::map<QoSClass, std::queue<Packet>> class_queues_;
-    std::map<QoSClass, double> virtual_finish_times_;
-    std::map<QoSClass, ShapingStats> class_stats_;
+    // Statistics
+    uint64_t total_packets_processed_;
+    uint64_t total_bytes_processed_;
+    uint64_t packets_dropped_;
+    uint64_t bytes_dropped_;
     
-    mutable std::mutex queues_mutex_;
-    std::thread scheduling_thread_;
+    mutable std::mutex mutex_;
     
-    ShapingStats total_stats_;
-    mutable std::mutex stats_mutex_;
+    void updateVirtualTime();
 };
 
-// Priority Queuing implementation
-class PriorityQueuing : public ITrafficShaper {
-public:
-    PriorityQueuing();
-    ~PriorityQueuing() override;
-
-    bool initialize(const ShapingConfig& config) override;
-    void start() override;
-    void stop() override;
-    bool is_running() const override;
-
-    void set_config(const ShapingConfig& config) override;
-    ShapingConfig get_config() const override;
-
-    bool process_packet(const Packet& packet) override;
-    bool process_packet(const std::vector<uint8_t>& data, const std::string& interface, QoSClass qos_class = QoSClass::BEST_EFFORT) override;
-
-    size_t get_queue_size() const override;
-    size_t get_queue_size(QoSClass qos_class) const override;
-    void clear_queue() override;
-    void clear_queue(QoSClass qos_class) override;
-
-    ShapingStats get_statistics() const override;
-    ShapingStats get_statistics(QoSClass qos_class) const override;
-    void reset_statistics() override;
-
-    void set_rate(uint64_t rate_bps) override;
-    uint64_t get_rate() const override;
-    void set_burst_size(uint64_t burst_size) override;
-    uint64_t get_burst_size() const override;
-
-private:
-    void processing_loop();
-    Packet get_next_packet();
-    
-    std::atomic<bool> running_;
-    ShapingConfig config_;
-    
-    std::map<QoSClass, std::queue<Packet>> priority_queues_;
-    std::map<QoSClass, ShapingStats> class_stats_;
-    
-    mutable std::mutex queues_mutex_;
-    std::thread processing_thread_;
-    
-    ShapingStats total_stats_;
-    mutable std::mutex stats_mutex_;
-};
-
-// Traffic shaper factory
-class TrafficShaperFactory {
-public:
-    static std::unique_ptr<ITrafficShaper> create_shaper(ShapingAlgorithm algorithm);
-    static std::vector<ShapingAlgorithm> get_supported_algorithms();
-    static std::string get_algorithm_name(ShapingAlgorithm algorithm);
-};
-
-// Traffic shaping manager
+// Traffic Shaper - Combines Token Bucket and WFQ
 class TrafficShaper {
 public:
     TrafficShaper();
     ~TrafficShaper();
-
-    // Lifecycle
-    bool initialize(const ShapingConfig& config);
-    void start();
-    void stop();
-    bool is_running() const;
-
+    
+    // Core functionality
+    bool initialize();
+    bool processPacket(const Packet& packet);
+    bool dequeuePacket(Packet& packet);
+    
     // Configuration
-    void set_config(const ShapingConfig& config);
-    ShapingConfig get_config() const;
-
-    // Packet processing
-    bool process_packet(const Packet& packet);
-    bool process_packet(const std::vector<uint8_t>& data, const std::string& interface, QoSClass qos_class = QoSClass::BEST_EFFORT);
-
-    // Queue management
-    size_t get_queue_size() const;
-    size_t get_queue_size(QoSClass qos_class) const;
-    void clear_queue();
-    void clear_queue(QoSClass qos_class);
-
+    void setTokenBucketConfig(uint64_t capacity, uint64_t refill_rate, uint64_t burst_size);
+    void setQueueWeight(uint32_t queue_id, uint32_t weight);
+    void setEnabled(bool enabled);
+    bool isEnabled() const;
+    
     // Statistics
-    ShapingStats get_statistics() const;
-    ShapingStats get_statistics(QoSClass qos_class) const;
-    void reset_statistics();
-
-    // Rate control
-    void set_rate(uint64_t rate_bps);
-    uint64_t get_rate() const;
-    void set_burst_size(uint64_t burst_size);
-    uint64_t get_burst_size() const;
-
-    // Algorithm management
-    void set_algorithm(ShapingAlgorithm algorithm);
-    ShapingAlgorithm get_algorithm() const;
+    struct Statistics {
+        bool enabled;
+        uint64_t total_packets_processed;
+        uint64_t total_bytes_processed;
+        uint64_t packets_dropped;
+        uint64_t bytes_dropped;
+        TokenBucket::Statistics token_bucket_stats;
+        WFQ::Statistics wfq_stats;
+    };
+    
+    Statistics getStatistics() const;
+    void reset();
 
 private:
-    std::unique_ptr<ITrafficShaper> shaper_;
-    ShapingConfig config_;
-    std::atomic<bool> running_;
-    mutable std::mutex shaper_mutex_;
+    std::unique_ptr<TokenBucket> token_bucket_;
+    std::unique_ptr<WFQ> wfq_;
+    bool enabled_;
+    
+    // Statistics
+    uint64_t total_packets_processed_;
+    uint64_t total_bytes_processed_;
+    uint64_t packets_dropped_;
+    uint64_t bytes_dropped_;
+    
+    mutable std::mutex mutex_;
 };
 
 } // namespace RouterSim

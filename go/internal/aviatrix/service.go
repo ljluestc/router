@@ -301,48 +301,6 @@ func (s *Service) CreateSpokeGateway(c *gin.Context) {
 	c.JSON(http.StatusCreated, spokeGW)
 }
 
-// Request types for API calls
-type GatewayRequest struct {
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Region    string `json:"region"`
-	VPC       string `json:"vpc"`
-	Subnet    string `json:"subnet"`
-	CloudType string `json:"cloud_type"`
-}
-
-type TransitGatewayRequest struct {
-	Name      string `json:"name"`
-	CloudType string `json:"cloud_type"`
-	Region    string `json:"region"`
-	VPC       string `json:"vpc"`
-	Subnet    string `json:"subnet"`
-	ASN       int    `json:"asn"`
-}
-
-type SpokeGatewayRequest struct {
-	Name      string `json:"name"`
-	CloudType string `json:"cloud_type"`
-	Region    string `json:"region"`
-	VPC       string `json:"vpc"`
-	Subnet    string `json:"subnet"`
-	TransitGW string `json:"transit_gw"`
-}
-
-type TransitConnection struct {
-	ID           string `json:"id"`
-	TransitGW1   string `json:"transit_gw1"`
-	TransitGW2   string `json:"transit_gw2"`
-	Status       string `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	LastUpdated  time.Time `json:"last_updated"`
-}
-
-type TransitConnectionRequest struct {
-	TransitGW1 string `json:"transit_gw1"`
-	TransitGW2 string `json:"transit_gw2"`
-}
-
 // generateID generates a simple ID
 func generateID() string {
 	return "12345678"

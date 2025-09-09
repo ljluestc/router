@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+	"github.com/sirupsen/logrus"
 )
 
 // RouterStatus represents the current status of the router
@@ -92,13 +92,7 @@ type Impairment struct {
 
 var (
 	startTime = time.Now()
-	logger    *zap.Logger
 )
-
-// SetLogger sets the logger instance
-func SetLogger(l *zap.Logger) {
-	logger = l
-}
 
 // GetRouterStatus returns the current router status
 func GetRouterStatus(c *gin.Context) {
