@@ -16,7 +16,7 @@ pub mod routing_table;
 pub mod metrics;
 /// Memory pool for packet buffers
 pub mod memory_pool;
-/// ClickHouse analytics engine
+/// ClickHouse analytics integration
 pub mod clickhouse_analytics;
 
 /// Packet structure optimized for performance

@@ -1,0 +1,76 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-directory: './web/node_modules'
+
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        components: rustfmt, clippy
+
+    - name: Install dependencies
+      run: |
+        cd web
+        npm ci
+
+    - name: Build Go services
+      run: |
+        cd go
+        go mod tidy
+        go build -o ../build/api-server ./services/api
+
+    - name: Build Rust engine
+      run: |
+        cd rust
+        cargo build --release
+
+    - name: Build C++ core
+      run: |
+        mkdir -p build
+        cd build
+        cmake ..
+        make -j$(nproc)
+
+    - name: Build web application
+      run: |
+        cd web
+        npm run build
+
+    - name: Run tests
+      run: |
+        cd web
+        npm run test:ui:headless
+
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      if: github.ref == 'refs/heads/main'
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./web/dist
+        cname: cloudpods-aviatrix-demo.github.io

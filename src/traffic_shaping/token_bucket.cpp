@@ -1,285 +1,433 @@
 #include "traffic_shaping.h"
-#include <iostream>
 #include <chrono>
 #include <algorithm>
+#include <cmath>
 
 namespace RouterSim {
 
-TokenBucket::TokenBucket(uint64_t rate, uint64_t burst_size)
-    : rate_(rate), burst_size_(burst_size), tokens_(burst_size), 
-      last_update_(std::chrono::steady_clock::now()) {
-    std::cout << "TokenBucket initialized: rate=" << rate_ 
-              << " bps, burst=" << burst_size_ << " bytes\n";
+TokenBucket::TokenBucket(uint64_t capacity, uint64_t refill_rate, uint64_t burst_size)
+    : capacity_(capacity)
+    , refill_rate_(refill_rate)
+    , burst_size_(burst_size)
+    , tokens_(capacity)
+    , last_refill_time_(std::chrono::steady_clock::now())
+    , total_packets_processed_(0)
+    , total_bytes_processed_(0)
+    , packets_dropped_(0)
+    , bytes_dropped_(0)
+{
 }
 
-TokenBucket::~TokenBucket() = default;
+TokenBucket::~TokenBucket() {
+}
 
-bool TokenBucket::consume(uint64_t bytes) {
+bool TokenBucket::consume(uint64_t tokens) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last_update_);
-    
-    // Add tokens based on elapsed time
-    uint64_t tokens_to_add = (rate_ * elapsed.count()) / 1000000; // Convert to bytes
-    tokens_ = std::min(tokens_ + tokens_to_add, burst_size_);
-    last_update_ = now;
+    // Refill tokens based on time elapsed
+    refillTokens();
     
     // Check if we have enough tokens
-    if (tokens_ >= bytes) {
-        tokens_ -= bytes;
+    if (tokens_ >= tokens) {
+        tokens_ -= tokens;
+        total_packets_processed_++;
+        total_bytes_processed_ += tokens;
         return true;
     }
     
+    // Not enough tokens, drop packet
+    packets_dropped_++;
+    bytes_dropped_ += tokens;
     return false;
 }
 
-void TokenBucket::set_rate(uint64_t rate) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    rate_ = rate;
-    std::cout << "TokenBucket rate updated to " << rate_ << " bps\n";
+bool TokenBucket::consumePacket(const Packet& packet) {
+    uint64_t packet_size = packet.size;
+    
+    // Apply burst size limit
+    if (packet_size > burst_size_) {
+        packets_dropped_++;
+        bytes_dropped_ += packet_size;
+        return false;
+    }
+    
+    return consume(packet_size);
 }
 
-void TokenBucket::set_burst_size(uint64_t burst_size) {
+void TokenBucket::refillTokens() {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last_refill_time_);
+    
+    if (elapsed.count() > 0) {
+        // Calculate tokens to add based on refill rate and elapsed time
+        double elapsed_seconds = elapsed.count() / 1000000.0;
+        uint64_t tokens_to_add = static_cast<uint64_t>(refill_rate_ * elapsed_seconds);
+        
+        // Add tokens, but don't exceed capacity
+        tokens_ = std::min(capacity_, tokens_ + tokens_to_add);
+        last_refill_time_ = now;
+    }
+}
+
+void TokenBucket::setCapacity(uint64_t capacity) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    capacity_ = capacity;
+    tokens_ = std::min(tokens_, capacity_);
+}
+
+void TokenBucket::setRefillRate(uint64_t refill_rate) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    refill_rate_ = refill_rate;
+}
+
+void TokenBucket::setBurstSize(uint64_t burst_size) {
     std::lock_guard<std::mutex> lock(mutex_);
     burst_size_ = burst_size;
-    tokens_ = std::min(tokens_, burst_size_);
-    std::cout << "TokenBucket burst size updated to " << burst_size_ << " bytes\n";
 }
 
-uint64_t TokenBucket::get_tokens() const {
+uint64_t TokenBucket::getAvailableTokens() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return tokens_;
 }
 
-uint64_t TokenBucket::get_rate() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return rate_;
-}
-
-uint64_t TokenBucket::get_burst_size() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return burst_size_;
-}
-
-void TokenBucket::reset() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    tokens_ = burst_size_;
-    last_update_ = std::chrono::steady_clock::now();
-}
-
-// WFQ (Weighted Fair Queuing) implementation
-WFQScheduler::WFQScheduler(const std::vector<uint32_t>& weights)
-    : weights_(weights), queues_(weights.size()), 
-      current_round_(0), last_update_(std::chrono::steady_clock::now()) {
-    
-    std::cout << "WFQScheduler initialized with " << weights.size() << " queues\n";
-    for (size_t i = 0; i < weights.size(); ++i) {
-        std::cout << "  Queue " << i << ": weight " << weights[i] << "\n";
-    }
-}
-
-WFQScheduler::~WFQScheduler() = default;
-
-bool WFQScheduler::enqueue(uint32_t queue_id, const Packet& packet) {
-    if (queue_id >= queues_.size()) {
-        std::cerr << "Invalid queue ID: " << queue_id << "\n";
-        return false;
-    }
-    
+TokenBucket::Statistics TokenBucket::getStatistics() const {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    QueuedPacket qp;
-    qp.packet = packet;
-    qp.enqueue_time = std::chrono::steady_clock::now();
-    qp.finish_time = calculate_finish_time(queue_id, packet.size);
-    
-    queues_[queue_id].push(qp);
-    
-    std::cout << "Enqueued packet of " << packet.size << " bytes to queue " << queue_id << "\n";
-    return true;
-}
-
-bool WFQScheduler::dequeue(Packet& packet) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    // Find the queue with the minimum finish time
-    int selected_queue = -1;
-    uint64_t min_finish_time = UINT64_MAX;
-    
-    for (size_t i = 0; i < queues_.size(); ++i) {
-        if (!queues_[i].empty()) {
-            uint64_t finish_time = queues_[i].front().finish_time;
-            if (finish_time < min_finish_time) {
-                min_finish_time = finish_time;
-                selected_queue = i;
-            }
-        }
-    }
-    
-    if (selected_queue == -1) {
-        return false; // No packets available
-    }
-    
-    packet = queues_[selected_queue].front().packet;
-    queues_[selected_queue].pop();
-    
-    std::cout << "Dequeued packet of " << packet.size << " bytes from queue " << selected_queue << "\n";
-    return true;
-}
-
-bool WFQScheduler::is_empty() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    for (const auto& queue : queues_) {
-        if (!queue.empty()) {
-            return false;
-        }
-    }
-    return true;
-}
-
-size_t WFQScheduler::queue_size(uint32_t queue_id) const {
-    if (queue_id >= queues_.size()) {
-        return 0;
-    }
-    
-    std::lock_guard<std::mutex> lock(mutex_);
-    return queues_[queue_id].size();
-}
-
-size_t WFQScheduler::total_packets() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    size_t total = 0;
-    for (const auto& queue : queues_) {
-        total += queue.size();
-    }
-    return total;
-}
-
-void WFQScheduler::set_weight(uint32_t queue_id, uint32_t weight) {
-    if (queue_id >= weights_.size()) {
-        std::cerr << "Invalid queue ID: " << queue_id << "\n";
-        return;
-    }
-    
-    std::lock_guard<std::mutex> lock(mutex_);
-    weights_[queue_id] = weight;
-    std::cout << "Queue " << queue_id << " weight updated to " << weight << "\n";
-}
-
-uint32_t WFQScheduler::get_weight(uint32_t queue_id) const {
-    if (queue_id >= weights_.size()) {
-        return 0;
-    }
-    
-    std::lock_guard<std::mutex> lock(mutex_);
-    return weights_[queue_id];
-}
-
-uint64_t WFQScheduler::calculate_finish_time(uint32_t queue_id, uint64_t packet_size) {
-    if (queue_id >= weights_.size() || weights_[queue_id] == 0) {
-        return current_round_ + packet_size;
-    }
-    
-    // WFQ finish time calculation
-    uint64_t finish_time = current_round_ + (packet_size * 8) / weights_[queue_id];
-    current_round_ = finish_time;
-    
-    return finish_time;
-}
-
-// Traffic Shaper implementation
-TrafficShaper::TrafficShaper(uint64_t rate, uint64_t burst_size, 
-                           const std::vector<uint32_t>& wfq_weights)
-    : token_bucket_(rate, burst_size), wfq_scheduler_(wfq_weights),
-      enabled_(true), total_packets_processed_(0), total_bytes_processed_(0) {
-    
-    std::cout << "TrafficShaper initialized\n";
-}
-
-TrafficShaper::~TrafficShaper() = default;
-
-bool TrafficShaper::shape_packet(const Packet& packet) {
-    if (!enabled_) {
-        return true; // Pass through without shaping
-    }
-    
-    // Add packet to WFQ scheduler
-    if (!wfq_scheduler_.enqueue(packet.priority % wfq_scheduler_.get_num_queues(), packet)) {
-        std::cerr << "Failed to enqueue packet\n";
-        return false;
-    }
-    
-    // Try to dequeue and send packets
-    Packet dequeued_packet;
-    while (wfq_scheduler_.dequeue(dequeued_packet)) {
-        if (token_bucket_.consume(dequeued_packet.size)) {
-            // Packet can be sent
-            total_packets_processed_++;
-            total_bytes_processed_ += dequeued_packet.size;
-            
-            std::cout << "Shaped packet: " << dequeued_packet.size << " bytes\n";
-            return true;
-        } else {
-            // Not enough tokens, re-enqueue packet
-            wfq_scheduler_.enqueue(dequeued_packet.priority % wfq_scheduler_.get_num_queues(), 
-                                 dequeued_packet);
-            break;
-        }
-    }
-    
-    return false;
-}
-
-void TrafficShaper::set_rate(uint64_t rate) {
-    token_bucket_.set_rate(rate);
-    std::cout << "TrafficShaper rate updated to " << rate << " bps\n";
-}
-
-void TrafficShaper::set_burst_size(uint64_t burst_size) {
-    token_bucket_.set_burst_size(burst_size);
-    std::cout << "TrafficShaper burst size updated to " << burst_size << " bytes\n";
-}
-
-void TrafficShaper::set_wfq_weight(uint32_t queue_id, uint32_t weight) {
-    wfq_scheduler_.set_weight(queue_id, weight);
-    std::cout << "TrafficShaper WFQ weight for queue " << queue_id 
-              << " updated to " << weight << "\n";
-}
-
-void TrafficShaper::enable() {
-    enabled_ = true;
-    std::cout << "TrafficShaper enabled\n";
-}
-
-void TrafficShaper::disable() {
-    enabled_ = false;
-    std::cout << "TrafficShaper disabled\n";
-}
-
-bool TrafficShaper::is_enabled() const {
-    return enabled_;
-}
-
-TrafficShaper::Statistics TrafficShaper::get_statistics() const {
     Statistics stats;
+    stats.capacity = capacity_;
+    stats.refill_rate = refill_rate_;
+    stats.burst_size = burst_size_;
+    stats.available_tokens = tokens_;
     stats.total_packets_processed = total_packets_processed_;
     stats.total_bytes_processed = total_bytes_processed_;
-    stats.current_tokens = token_bucket_.get_tokens();
-    stats.rate = token_bucket_.get_rate();
-    stats.burst_size = token_bucket_.get_burst_size();
-    stats.total_queued_packets = wfq_scheduler_.total_packets();
+    stats.packets_dropped = packets_dropped_;
+    stats.bytes_dropped = bytes_dropped_;
+    
+    // Calculate utilization percentage
+    if (total_bytes_processed_ + bytes_dropped_ > 0) {
+        stats.utilization_percentage = (double)total_bytes_processed_ / 
+                                     (total_bytes_processed_ + bytes_dropped_) * 100.0;
+    } else {
+        stats.utilization_percentage = 0.0;
+    }
     
     return stats;
 }
 
-void TrafficShaper::reset_statistics() {
+void TokenBucket::reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    tokens_ = capacity_;
+    last_refill_time_ = std::chrono::steady_clock::now();
     total_packets_processed_ = 0;
     total_bytes_processed_ = 0;
-    token_bucket_.reset();
-    std::cout << "TrafficShaper statistics reset\n";
+    packets_dropped_ = 0;
+    bytes_dropped_ = 0;
+}
+
+// Weighted Fair Queueing Implementation
+WFQ::WFQ(uint32_t max_queues)
+    : max_queues_(max_queues)
+    , total_weight_(0)
+    , virtual_time_(0)
+    , last_update_time_(std::chrono::steady_clock::now())
+    , total_packets_processed_(0)
+    , total_bytes_processed_(0)
+    , packets_dropped_(0)
+    , bytes_dropped_(0)
+{
+    queues_.resize(max_queues_);
+    for (auto& queue : queues_) {
+        queue.weight = 1;
+        queue.packets = 0;
+        queue.bytes = 0;
+        queue.finish_time = 0;
+    }
+}
+
+WFQ::~WFQ() {
+}
+
+bool WFQ::enqueue(uint32_t queue_id, const Packet& packet) {
+    if (queue_id >= max_queues_) {
+        return false;
+    }
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // Check if queue is full
+    if (queues_[queue_id].packets >= MAX_QUEUE_SIZE) {
+        packets_dropped_++;
+        bytes_dropped_ += packet.size;
+        return false;
+    }
+    
+    // Add packet to queue
+    queues_[queue_id].packets++;
+    queues_[queue_id].bytes += packet.size;
+    
+    // Calculate finish time for this packet
+    updateVirtualTime();
+    double finish_time = virtual_time_ + (double)packet.size / queues_[queue_id].weight;
+    queues_[queue_id].finish_time = finish_time;
+    
+    return true;
+}
+
+bool WFQ::dequeue(Packet& packet) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    updateVirtualTime();
+    
+    // Find queue with minimum finish time
+    int32_t selected_queue = -1;
+    double min_finish_time = std::numeric_limits<double>::max();
+    
+    for (uint32_t i = 0; i < max_queues_; ++i) {
+        if (queues_[i].packets > 0 && queues_[i].finish_time < min_finish_time) {
+            min_finish_time = queues_[i].finish_time;
+            selected_queue = i;
+        }
+    }
+    
+    if (selected_queue == -1) {
+        return false; // No packets to dequeue
+    }
+    
+    // Dequeue packet (simplified - in real implementation, we'd have actual packet storage)
+    queues_[selected_queue].packets--;
+    queues_[selected_queue].bytes -= packet.size;
+    
+    total_packets_processed_++;
+    total_bytes_processed_ += packet.size;
+    
+    return true;
+}
+
+void WFQ::setQueueWeight(uint32_t queue_id, uint32_t weight) {
+    if (queue_id >= max_queues_) {
+        return;
+    }
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    total_weight_ -= queues_[queue_id].weight;
+    queues_[queue_id].weight = weight;
+    total_weight_ += weight;
+}
+
+uint32_t WFQ::getQueueWeight(uint32_t queue_id) const {
+    if (queue_id >= max_queues_) {
+        return 0;
+    }
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    return queues_[queue_id].weight;
+}
+
+uint32_t WFQ::getQueueSize(uint32_t queue_id) const {
+    if (queue_id >= max_queues_) {
+        return 0;
+    }
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    return queues_[queue_id].packets;
+}
+
+uint64_t WFQ::getQueueBytes(uint32_t queue_id) const {
+    if (queue_id >= max_queues_) {
+        return 0;
+    }
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    return queues_[queue_id].bytes;
+}
+
+void WFQ::updateVirtualTime() {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last_update_time_);
+    
+    if (elapsed.count() > 0 && total_weight_ > 0) {
+        double elapsed_seconds = elapsed.count() / 1000000.0;
+        virtual_time_ += elapsed_seconds * total_weight_;
+        last_update_time_ = now;
+    }
+}
+
+WFQ::Statistics WFQ::getStatistics() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    Statistics stats;
+    stats.max_queues = max_queues_;
+    stats.total_weight = total_weight_;
+    stats.virtual_time = virtual_time_;
+    stats.total_packets_processed = total_packets_processed_;
+    stats.total_bytes_processed = total_bytes_processed_;
+    stats.packets_dropped = packets_dropped_;
+    stats.bytes_dropped = bytes_dropped_;
+    
+    // Calculate queue statistics
+    for (uint32_t i = 0; i < max_queues_; ++i) {
+        QueueStatistics queue_stats;
+        queue_stats.queue_id = i;
+        queue_stats.weight = queues_[i].weight;
+        queue_stats.packets = queues_[i].packets;
+        queue_stats.bytes = queues_[i].bytes;
+        queue_stats.finish_time = queues_[i].finish_time;
+        stats.queue_stats.push_back(queue_stats);
+    }
+    
+    return stats;
+}
+
+void WFQ::reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    for (auto& queue : queues_) {
+        queue.packets = 0;
+        queue.bytes = 0;
+        queue.finish_time = 0;
+    }
+    
+    virtual_time_ = 0;
+    last_update_time_ = std::chrono::steady_clock::now();
+    total_packets_processed_ = 0;
+    total_bytes_processed_ = 0;
+    packets_dropped_ = 0;
+    bytes_dropped_ = 0;
+}
+
+// Traffic Shaper Implementation
+TrafficShaper::TrafficShaper()
+    : enabled_(false)
+    , total_packets_processed_(0)
+    , total_bytes_processed_(0)
+    , packets_dropped_(0)
+    , bytes_dropped_(0)
+{
+}
+
+TrafficShaper::~TrafficShaper() {
+}
+
+bool TrafficShaper::initialize() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // Initialize default token bucket
+    token_bucket_ = std::make_unique<TokenBucket>(1000000, 100000, 1500); // 1MB capacity, 100KB/s rate, 1500 byte burst
+    
+    // Initialize WFQ with 8 queues
+    wfq_ = std::make_unique<WFQ>(8);
+    
+    // Set default queue weights (equal weights)
+    for (uint32_t i = 0; i < 8; ++i) {
+        wfq_->setQueueWeight(i, 1);
+    }
+    
+    enabled_ = true;
+    return true;
+}
+
+bool TrafficShaper::processPacket(const Packet& packet) {
+    if (!enabled_) {
+        return true; // Pass through if disabled
+    }
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // First, apply token bucket rate limiting
+    if (!token_bucket_->consumePacket(packet)) {
+        packets_dropped_++;
+        bytes_dropped_ += packet.size;
+        return false;
+    }
+    
+    // Then, apply WFQ scheduling
+    uint32_t queue_id = packet.priority % wfq_->getMaxQueues();
+    if (!wfq_->enqueue(queue_id, packet)) {
+        packets_dropped_++;
+        bytes_dropped_ += packet.size;
+        return false;
+    }
+    
+    total_packets_processed_++;
+    total_bytes_processed_ += packet.size;
+    
+    return true;
+}
+
+bool TrafficShaper::dequeuePacket(Packet& packet) {
+    if (!enabled_) {
+        return false;
+    }
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    return wfq_->dequeue(packet);
+}
+
+void TrafficShaper::setTokenBucketConfig(uint64_t capacity, uint64_t refill_rate, uint64_t burst_size) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    if (token_bucket_) {
+        token_bucket_->setCapacity(capacity);
+        token_bucket_->setRefillRate(refill_rate);
+        token_bucket_->setBurstSize(burst_size);
+    }
+}
+
+void TrafficShaper::setQueueWeight(uint32_t queue_id, uint32_t weight) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    if (wfq_) {
+        wfq_->setQueueWeight(queue_id, weight);
+    }
+}
+
+void TrafficShaper::setEnabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    enabled_ = enabled;
+}
+
+bool TrafficShaper::isEnabled() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return enabled_;
+}
+
+TrafficShaper::Statistics TrafficShaper::getStatistics() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    Statistics stats;
+    stats.enabled = enabled_;
+    stats.total_packets_processed = total_packets_processed_;
+    stats.total_bytes_processed = total_bytes_processed_;
+    stats.packets_dropped = packets_dropped_;
+    stats.bytes_dropped = bytes_dropped_;
+    
+    if (token_bucket_) {
+        stats.token_bucket_stats = token_bucket_->getStatistics();
+    }
+    
+    if (wfq_) {
+        stats.wfq_stats = wfq_->getStatistics();
+    }
+    
+    return stats;
+}
+
+void TrafficShaper::reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    if (token_bucket_) {
+        token_bucket_->reset();
+    }
+    
+    if (wfq_) {
+        wfq_->reset();
+    }
+    
+    total_packets_processed_ = 0;
+    total_bytes_processed_ = 0;
+    packets_dropped_ = 0;
+    bytes_dropped_ = 0;
 }
 
 } // namespace RouterSim
