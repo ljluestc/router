@@ -1,0 +1,475 @@
+{
+  "name": "cloudpods",
+  "version": "1.0.0",
+  "description": "Terraform provider for CloudPods cloud platform",
+  "resources": [
+    {
+      "name": "cloudpods_vpc",
+      "type": "VPC",
+      "description": "Manages CloudPods VPCs",
+      "required": ["name", "cidr", "region"],
+      "optional": ["description", "tags"],
+      "computed": ["id", "status", "created_at"],
+      "attributes": [
+        {
+          "name": "name",
+          "type": "String",
+          "description": "Name of the VPC",
+          "required": true,
+          "validation": {
+            "min_length": 1,
+            "max_length": 64
+          }
+        },
+        {
+          "name": "cidr",
+          "type": "String",
+          "description": "CIDR block for the VPC",
+          "required": true,
+          "validation": {
+            "pattern": "^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}/\\d{1,2}$"
+          }
+        },
+        {
+          "name": "region",
+          "type": "String",
+          "description": "CloudPods region",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "String",
+          "description": "Description of the VPC",
+          "optional": true
+        },
+        {
+          "name": "tags",
+          "type": "Map",
+          "description": "Tags for the VPC",
+          "optional": true
+        },
+        {
+          "name": "id",
+          "type": "String",
+          "description": "VPC ID",
+          "computed": true
+        },
+        {
+          "name": "status",
+          "type": "String",
+          "description": "VPC status",
+          "computed": true
+        },
+        {
+          "name": "created_at",
+          "type": "String",
+          "description": "Creation timestamp",
+          "computed": true
+        }
+      ]
+    },
+    {
+      "name": "cloudpods_subnet",
+      "type": "Subnet",
+      "description": "Manages CloudPods subnets",
+      "required": ["name", "cidr", "vpc_id", "zone"],
+      "optional": ["description", "tags"],
+      "computed": ["id", "status", "created_at"],
+      "attributes": [
+        {
+          "name": "name",
+          "type": "String",
+          "description": "Name of the subnet",
+          "required": true
+        },
+        {
+          "name": "cidr",
+          "type": "String",
+          "description": "CIDR block for the subnet",
+          "required": true,
+          "validation": {
+            "pattern": "^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}/\\d{1,2}$"
+          }
+        },
+        {
+          "name": "vpc_id",
+          "type": "String",
+          "description": "VPC ID",
+          "required": true
+        },
+        {
+          "name": "zone",
+          "type": "String",
+          "description": "Availability zone",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "String",
+          "description": "Description of the subnet",
+          "optional": true
+        },
+        {
+          "name": "tags",
+          "type": "Map",
+          "description": "Tags for the subnet",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "name": "cloudpods_gateway",
+      "type": "Gateway",
+      "description": "Manages CloudPods gateways",
+      "required": ["name", "type", "vpc_id", "subnet_id"],
+      "optional": ["ip_address", "description", "tags"],
+      "computed": ["id", "status", "created_at"],
+      "attributes": [
+        {
+          "name": "name",
+          "type": "String",
+          "description": "Name of the gateway",
+          "required": true
+        },
+        {
+          "name": "type",
+          "type": "String",
+          "description": "Gateway type",
+          "required": true,
+          "validation": {
+            "pattern": "^(internet|nat|vpn|peering)$"
+          }
+        },
+        {
+          "name": "vpc_id",
+          "type": "String",
+          "description": "VPC ID",
+          "required": true
+        },
+        {
+          "name": "subnet_id",
+          "type": "String",
+          "description": "Subnet ID",
+          "required": true
+        },
+        {
+          "name": "ip_address",
+          "type": "String",
+          "description": "IP address for the gateway",
+          "optional": true
+        },
+        {
+          "name": "description",
+          "type": "String",
+          "description": "Description of the gateway",
+          "optional": true
+        },
+        {
+          "name": "tags",
+          "type": "Map",
+          "description": "Tags for the gateway",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "name": "cloudpods_route",
+      "type": "Route",
+      "description": "Manages CloudPods routes",
+      "required": ["destination", "next_hop", "vpc_id"],
+      "optional": ["type", "metric"],
+      "computed": ["id", "status", "created_at"],
+      "attributes": [
+        {
+          "name": "destination",
+          "type": "String",
+          "description": "Route destination CIDR",
+          "required": true,
+          "validation": {
+            "pattern": "^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}/\\d{1,2}$"
+          }
+        },
+        {
+          "name": "next_hop",
+          "type": "String",
+          "description": "Next hop IP address or gateway ID",
+          "required": true
+        },
+        {
+          "name": "vpc_id",
+          "type": "String",
+          "description": "VPC ID",
+          "required": true
+        },
+        {
+          "name": "type",
+          "type": "String",
+          "description": "Route type",
+          "optional": true,
+          "default": "static"
+        },
+        {
+          "name": "metric",
+          "type": "Int",
+          "description": "Route metric",
+          "optional": true,
+          "default": 100
+        }
+      ]
+    },
+    {
+      "name": "cloudpods_security_group",
+      "type": "SecurityGroup",
+      "description": "Manages CloudPods security groups",
+      "required": ["name", "vpc_id"],
+      "optional": ["description", "rules", "tags"],
+      "computed": ["id", "status", "created_at"],
+      "attributes": [
+        {
+          "name": "name",
+          "type": "String",
+          "description": "Name of the security group",
+          "required": true
+        },
+        {
+          "name": "vpc_id",
+          "type": "String",
+          "description": "VPC ID",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "String",
+          "description": "Description of the security group",
+          "optional": true
+        },
+        {
+          "name": "rules",
+          "type": "List",
+          "description": "Security group rules",
+          "optional": true
+        },
+        {
+          "name": "tags",
+          "type": "Map",
+          "description": "Tags for the security group",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "name": "cloudpods_security_rule",
+      "type": "SecurityRule",
+      "description": "Manages CloudPods security group rules",
+      "required": ["security_group_id", "direction", "protocol", "action"],
+      "optional": ["port_range", "source", "destination", "priority", "description"],
+      "computed": ["id", "created_at"],
+      "attributes": [
+        {
+          "name": "security_group_id",
+          "type": "String",
+          "description": "Security group ID",
+          "required": true
+        },
+        {
+          "name": "direction",
+          "type": "String",
+          "description": "Rule direction",
+          "required": true,
+          "validation": {
+            "pattern": "^(ingress|egress)$"
+          }
+        },
+        {
+          "name": "protocol",
+          "type": "String",
+          "description": "Protocol",
+          "required": true,
+          "validation": {
+            "pattern": "^(tcp|udp|icmp|all)$"
+          }
+        },
+        {
+          "name": "action",
+          "type": "String",
+          "description": "Rule action",
+          "required": true,
+          "validation": {
+            "pattern": "^(allow|deny)$"
+          }
+        },
+        {
+          "name": "port_range",
+          "type": "String",
+          "description": "Port range",
+          "optional": true,
+          "default": "0-65535"
+        },
+        {
+          "name": "source",
+          "type": "String",
+          "description": "Source CIDR",
+          "optional": true,
+          "default": "0.0.0.0/0"
+        },
+        {
+          "name": "destination",
+          "type": "String",
+          "description": "Destination CIDR",
+          "optional": true,
+          "default": "0.0.0.0/0"
+        },
+        {
+          "name": "priority",
+          "type": "Int",
+          "description": "Rule priority",
+          "optional": true,
+          "default": 100
+        },
+        {
+          "name": "description",
+          "type": "String",
+          "description": "Rule description",
+          "optional": true
+        }
+      ]
+    }
+  ],
+  "data_sources": [
+    {
+      "name": "cloudpods_vpc",
+      "type": "VPC",
+      "description": "Retrieves information about a CloudPods VPC",
+      "required": ["id"],
+      "computed": ["name", "cidr", "region", "status"],
+      "attributes": [
+        {
+          "name": "id",
+          "type": "String",
+          "description": "VPC ID",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "description": "VPC name",
+          "computed": true
+        },
+        {
+          "name": "cidr",
+          "type": "String",
+          "description": "VPC CIDR",
+          "computed": true
+        },
+        {
+          "name": "region",
+          "type": "String",
+          "description": "VPC region",
+          "computed": true
+        },
+        {
+          "name": "status",
+          "type": "String",
+          "description": "VPC status",
+          "computed": true
+        }
+      ]
+    },
+    {
+      "name": "cloudpods_subnet",
+      "type": "Subnet",
+      "description": "Retrieves information about a CloudPods subnet",
+      "required": ["id"],
+      "computed": ["name", "cidr", "vpc_id", "zone", "status"],
+      "attributes": [
+        {
+          "name": "id",
+          "type": "String",
+          "description": "Subnet ID",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "description": "Subnet name",
+          "computed": true
+        },
+        {
+          "name": "cidr",
+          "type": "String",
+          "description": "Subnet CIDR",
+          "computed": true
+        },
+        {
+          "name": "vpc_id",
+          "type": "String",
+          "description": "VPC ID",
+          "computed": true
+        },
+        {
+          "name": "zone",
+          "type": "String",
+          "description": "Availability zone",
+          "computed": true
+        },
+        {
+          "name": "status",
+          "type": "String",
+          "description": "Subnet status",
+          "computed": true
+        }
+      ]
+    },
+    {
+      "name": "cloudpods_gateway",
+      "type": "Gateway",
+      "description": "Retrieves information about a CloudPods gateway",
+      "required": ["id"],
+      "computed": ["name", "type", "vpc_id", "subnet_id", "ip_address", "status"],
+      "attributes": [
+        {
+          "name": "id",
+          "type": "String",
+          "description": "Gateway ID",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "description": "Gateway name",
+          "computed": true
+        },
+        {
+          "name": "type",
+          "type": "String",
+          "description": "Gateway type",
+          "computed": true
+        },
+        {
+          "name": "vpc_id",
+          "type": "String",
+          "description": "VPC ID",
+          "computed": true
+        },
+        {
+          "name": "subnet_id",
+          "type": "String",
+          "description": "Subnet ID",
+          "computed": true
+        },
+        {
+          "name": "ip_address",
+          "type": "String",
+          "description": "IP address",
+          "computed": true
+        },
+        {
+          "name": "status",
+          "type": "String",
+          "description": "Gateway status",
+          "computed": true
+        }
+      ]
+    }
+  ]
+}

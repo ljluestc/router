@@ -2127,14 +2127,36 @@
                     '[tabindex]',
                     '[onclick]',
                     '[onmousedown]',
-                    '[onmouseup]'
+                    '[onmouseup]',
+                    // More comprehensive selectors
+                    '[class*="composer"]',
+                    '[class*="code-block"]',
+                    '[class*="diff"]',
+                    // Windsurf specific selectors
+                    '[class*="bg-ide-button"]',
+                    '[class*="text-ide-button"]',
+                    '[class*="hover:bg-ide-button"]',
+                    '[class*="hover:text-ide-button"]',
+                    // Generic clickable elements
+                    '[style*="cursor: pointer"]',
+                    '[style*="cursor:pointer"]',
+                    'a[href]',
+                    'span[onclick]',
+                    'div[onclick]'
                 ];
                 
                 for (const selector of clickableSelectors) {
-                    const elements = element.querySelectorAll(selector);
-                    for (const el of elements) {
-                        if (this.isAcceptButton(el)) {
-                            buttons.push(el);
+                    try {
+                        const elements = element.querySelectorAll(selector);
+                        for (const el of elements) {
+                            if (this.isAcceptButton(el)) {
+                                buttons.push(el);
+                            }
+                        }
+                    } catch (error) {
+                        // Skip invalid selectors
+                        if (this.debugMode) {
+                            this.log(`Selector error: ${selector} - ${error.message}`);
                         }
                     }
                 }
