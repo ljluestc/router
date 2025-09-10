@@ -1,51 +1,19 @@
 #include "frr_integration/frr_client.h"
 #include <iostream>
 #include <chrono>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <poll.h>
-#include <cstring>
-#include <sstream>
-#include <fstream>
 
 namespace router_sim {
 
 FRRClient::FRRClient() : running_(false) {
-    // Initialize ZMQ context
-    context_ = zmq::context_t(1);
-    socket_ = nullptr;
-    connected_ = false;
 }
 
 FRRClient::~FRRClient() {
     stop();
-    if (socket_) {
-        delete socket_;
-    }
 }
 
 bool FRRClient::initialize(const FRRConfig& config) {
     config_ = config;
-    
-    // Initialize Unix socket paths
-    zebra_socket_path_ = "/var/run/frr/zserv.api";
-    bgpd_socket_path_ = "/var/run/frr/bgpd.vty";
-    ospfd_socket_path_ = "/var/run/frr/ospfd.vty";
-    isisd_socket_path_ = "/var/run/frr/isisd.vty";
-    
-    // Initialize ZMQ for advanced messaging
-    try {
-        socket_ = new zmq::socket_t(context_, ZMQ_DEALER);
-        socket_->setsockopt(ZMQ_IDENTITY, "router_sim", 12);
-        connected_ = true;
-    } catch (const zmq::error_t& e) {
-        std::cerr << "ZMQ initialization failed: " << e.what() << std::endl;
-        return false;
-    }
-    
-    std::cout << "FRR client initialized with ZMQ support\n";
+    std::cout << "FRR client initialized\n";
     return true;
 }
 

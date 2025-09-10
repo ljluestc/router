@@ -13,74 +13,143 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-      
+      with:
+        fetch-depth: 0
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
         cache: 'npm'
         cache-dependency-path: web/package-lock.json
-        
-    - name: Install dependencies
-      run: |
-        cd web
-        npm ci
-        
-    - name: Build web application
-      run: |
-        cd web
-        npm run build
-        
+
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
     - name: Setup Rust
       uses: actions-rs/toolchain@v1
       with:
         toolchain: stable
         components: rustfmt, clippy
-        
-    - name: Build Rust components
+
+    - name: Install dependencies
+      run: |
+        cd web
+        npm ci
+
+    - name: Build web application
+      run: |
+        cd web
+        npm run build
+
+    - name: Build Go services
+      run: |
+        cd go
+        go mod download
+        go build -o ../dist/cloudpods-service ./cmd/cloudpods
+        go build -o ../dist/aviatrix-service ./cmd/aviatrix
+        go build -o ../dist/analytics-service ./cmd/analytics
+
+    - name: Build Rust analytics engine
       run: |
         cd rust
         cargo build --release
-        
-    - name: Setup Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.21'
-        
-    - name: Build Go microservices
+        cp target/release/librouter_analytics.a ../dist/
+
+    - name: Build C++ router core
       run: |
-        cd go
-        go mod tidy
-        go build -o bin/cloudpods-service ./cmd/cloudpods
-        go build -o bin/aviatrix-service ./cmd/aviatrix
-        go build -o bin/analytics-service ./cmd/analytics
-        
-    - name: Setup C++ build environment
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake build-essential libpcap-dev libnl-3-dev libyaml-cpp-dev
-        
-    - name: Build C++ router simulator
-      run: |
-        mkdir build
+        mkdir -p build
         cd build
         cmake ..
         make -j$(nproc)
-        
+        cp router_sim ../dist/
+
     - name: Run tests
       run: |
-        cd build
-        ctest --output-on-failure
+        # Run Go tests
+        cd go
+        go test ./...
         
+        # Run Rust tests
+        cd ../rust
+        cargo test
+        
+        # Run C++ tests
+        cd ../build
+        make test
+
     - name: Generate documentation
       run: |
-        cd docs
-        python3 generate_docs.py
+        # Generate API documentation
+        cd go
+        go run github.com/swaggo/swag/cmd/swag@latest init
         
+        # Generate Rust documentation
+        cd ../rust
+        cargo doc --no-deps
+        
+        # Generate C++ documentation
+        cd ../build
+        make docs
+
     - name: Deploy to GitHub Pages
       uses: peaceiris/actions-gh-pages@v3
       if: github.ref == 'refs/heads/main'
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./web/dist
-        cname: router-sim.demo.com
+        cname: router-sim.calelin.dev
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-artifacts
+        path: |
+          dist/
+          web/dist/
+          docs/
+        retention-days: 30
+
+    - name: Create release
+      if: github.ref == 'refs/heads/main'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ github.run_number }}
+        release_name: Release v${{ github.run_number }}
+        body: |
+          ## Changes in this Release
+          
+          - Multi-cloud networking platform with CloudPods and Aviatrix integration
+          - Advanced traffic shaping algorithms (Token Bucket, WFQ, DRR, HTB)
+          - Network impairments simulation using tc/netem
+          - FRR control-plane integration for BGP/OSPF/ISIS
+          - ClickHouse analytics with C++ and Rust
+          - Comprehensive web UI with real-time monitoring
+          - Automated testing and deployment
+          
+          ## Build Artifacts
+          
+          - Web UI: Available at https://calelin.github.io/router/
+          - Go Services: CloudPods, Aviatrix, and Analytics microservices
+          - Rust Engine: High-performance packet processing
+          - C++ Core: Router simulation with FRR integration
+          
+          ## Documentation
+          
+          - API Documentation: Available in the docs/ directory
+          - Configuration Guide: See config.yaml
+          - Deployment Guide: See README.md
+        draft: false
+        prerelease: false
+
+    - name: Notify deployment
+      if: github.ref == 'refs/heads/main'
+      run: |
+        echo "🚀 Deployment completed successfully!"
+        echo "📊 Web UI: https://calelin.github.io/router/"
+        echo "📚 Documentation: Available in docs/"
+        echo "🔧 Build Artifacts: Available in dist/"

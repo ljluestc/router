@@ -1,393 +1,355 @@
 package cloudpods
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
 // Client represents a CloudPods API client
 type Client struct {
 	baseURL    string
+	username   string
+	password   string
 	httpClient *http.Client
-	auth       AuthConfig
-}
-
-// AuthConfig holds authentication configuration
-type AuthConfig struct {
-	Type     string `json:"type"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Token    string `json:"token"`
-}
-
-// Config holds CloudPods client configuration
-type Config struct {
-	BaseURL string     `json:"base_url"`
-	Timeout time.Duration `json:"timeout"`
-	Auth    AuthConfig `json:"auth"`
-	Region  string     `json:"region"`
+	token      string
 }
 
 // NewClient creates a new CloudPods client
-func NewClient(config Config) *Client {
+func NewClient(baseURL, username, password string) *Client {
 	return &Client{
-		baseURL: config.BaseURL,
+		baseURL:  baseURL,
+		username: username,
+		password: password,
 		httpClient: &http.Client{
-			Timeout: config.Timeout,
+			Timeout: 30 * time.Second,
 		},
-		auth: config.Auth,
 	}
 }
 
-// VPC represents a CloudPods VPC
-type VPC struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	CIDR        string            `json:"cidr"`
-	Region      string            `json:"region"`
-	Status      string            `json:"status"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
-	Tags        map[string]string `json:"tags"`
-	Subnets     []Subnet          `json:"subnets"`
-	Gateways    []Gateway         `json:"gateways"`
-}
-
-// Subnet represents a CloudPods subnet
-type Subnet struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	CIDR      string            `json:"cidr"`
-	VPCID     string            `json:"vpc_id"`
-	Zone      string            `json:"zone"`
-	Status    string            `json:"status"`
-	CreatedAt time.Time         `json:"created_at"`
-	Tags      map[string]string `json:"tags"`
-}
-
-// Gateway represents a CloudPods gateway
-type Gateway struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Type      string            `json:"type"`
-	VPCID     string            `json:"vpc_id"`
-	SubnetID  string            `json:"subnet_id"`
-	IPAddress string            `json:"ip_address"`
-	Status    string            `json:"status"`
-	CreatedAt time.Time         `json:"created_at"`
-	Tags      map[string]string `json:"tags"`
-}
-
-// Route represents a CloudPods route
-type Route struct {
-	ID          string    `json:"id"`
-	Destination string    `json:"destination"`
-	NextHop     string    `json:"next_hop"`
-	VPCID       string    `json:"vpc_id"`
-	Type        string    `json:"type"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-}
-
-// SecurityGroup represents a CloudPods security group
-type SecurityGroup struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	VPCID       string            `json:"vpc_id"`
-	Rules       []SecurityRule    `json:"rules"`
-	Status      string            `json:"status"`
-	CreatedAt   time.Time         `json:"created_at"`
-	Tags        map[string]string `json:"tags"`
-}
-
-// SecurityRule represents a CloudPods security group rule
-type SecurityRule struct {
-	ID            string `json:"id"`
-	Direction     string `json:"direction"`
-	Protocol      string `json:"protocol"`
-	PortRange     string `json:"port_range"`
-	Source        string `json:"source"`
-	Destination   string `json:"destination"`
-	Action        string `json:"action"`
-	Priority      int    `json:"priority"`
-	Description   string `json:"description"`
-}
-
-// ListVPCs retrieves all VPCs
-func (c *Client) ListVPCs(ctx context.Context) ([]VPC, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/vpcs", nil)
+// Authenticate authenticates with CloudPods and retrieves a token
+func (c *Client) Authenticate(ctx context.Context) error {
+	authURL := fmt.Sprintf("%s/api/v1/auth", c.baseURL)
+	
+	authReq := map[string]string{
+		"username": c.username,
+		"password": c.password,
+	}
+	
+	jsonData, err := json.Marshal(authReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("failed to marshal auth request: %w", err)
 	}
-
-	c.setAuthHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
+	
+	req, err := http.NewRequestWithContext(ctx, "POST", authURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
+		return fmt.Errorf("failed to create auth request: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	var result struct {
-		VPCs []VPC `json:"vpcs"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return result.VPCs, nil
-}
-
-// GetVPC retrieves a specific VPC by ID
-func (c *Client) GetVPC(ctx context.Context, vpcID string) (*VPC, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/vpcs/"+vpcID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.setAuthHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	var vpc VPC
-	if err := json.NewDecoder(resp.Body).Decode(&vpc); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &vpc, nil
-}
-
-// CreateVPC creates a new VPC
-func (c *Client) CreateVPC(ctx context.Context, vpc VPC) (*VPC, error) {
-	jsonData, err := json.Marshal(vpc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal VPC: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v1/vpcs", 
-		bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
+	
 	req.Header.Set("Content-Type", "application/json")
-	c.setAuthHeaders(req)
-
+	
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
+		return fmt.Errorf("failed to authenticate: %w", err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+	
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("authentication failed with status: %d", resp.StatusCode)
 	}
-
-	var createdVPC VPC
-	if err := json.NewDecoder(resp.Body).Decode(&createdVPC); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	
+	var authResp struct {
+		Token string `json:"token"`
 	}
-
-	return &createdVPC, nil
-}
-
-// DeleteVPC deletes a VPC
-func (c *Client) DeleteVPC(ctx context.Context, vpcID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/api/v1/vpcs/"+vpcID, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+	
+	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
+		return fmt.Errorf("failed to decode auth response: %w", err)
 	}
-
-	c.setAuthHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
+	
+	c.token = authResp.Token
 	return nil
 }
 
-// ListSubnets retrieves all subnets for a VPC
-func (c *Client) ListSubnets(ctx context.Context, vpcID string) ([]Subnet, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", 
-		c.baseURL+"/api/v1/vpcs/"+vpcID+"/subnets", nil)
+// makeRequest makes an authenticated request to CloudPods API
+func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body interface{}) (*http.Response, error) {
+	if c.token == "" {
+		if err := c.Authenticate(ctx); err != nil {
+			return nil, fmt.Errorf("authentication required: %w", err)
+		}
+	}
+	
+	url := fmt.Sprintf("%s%s", c.baseURL, endpoint)
+	
+	var reqBody io.Reader
+	if body != nil {
+		jsonData, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		reqBody = bytes.NewBuffer(jsonData)
+	}
+	
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-
-	c.setAuthHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	var result struct {
-		Subnets []Subnet `json:"subnets"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return result.Subnets, nil
-}
-
-// ListRoutes retrieves all routes for a VPC
-func (c *Client) ListRoutes(ctx context.Context, vpcID string) ([]Route, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", 
-		c.baseURL+"/api/v1/vpcs/"+vpcID+"/routes", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.setAuthHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	var result struct {
-		Routes []Route `json:"routes"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return result.Routes, nil
-}
-
-// CreateRoute creates a new route
-func (c *Client) CreateRoute(ctx context.Context, vpcID string, route Route) (*Route, error) {
-	jsonData, err := json.Marshal(route)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal route: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", 
-		c.baseURL+"/api/v1/vpcs/"+vpcID+"/routes", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
+	
+	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
-	c.setAuthHeaders(req)
-
+	
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
+		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+	
+	// If unauthorized, try to re-authenticate once
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		if err := c.Authenticate(ctx); err != nil {
+			return nil, fmt.Errorf("re-authentication failed: %w", err)
+		}
+		
+		// Retry the request
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		resp, err = c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retry request: %w", err)
+		}
 	}
-
-	var createdRoute Route
-	if err := json.NewDecoder(resp.Body).Decode(&createdRoute); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &createdRoute, nil
+	
+	return resp, nil
 }
 
-// DeleteRoute deletes a route
-func (c *Client) DeleteRoute(ctx context.Context, vpcID, routeID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", 
-		c.baseURL+"/api/v1/vpcs/"+vpcID+"/routes/"+routeID, nil)
+// GetRegions retrieves all available regions
+func (c *Client) GetRegions(ctx context.Context) ([]Region, error) {
+	resp, err := c.makeRequest(ctx, "GET", "/api/v1/regions", nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.setAuthHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to execute request: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get regions: status %d", resp.StatusCode)
 	}
+	
+	var regions []Region
+	if err := json.NewDecoder(resp.Body).Decode(&regions); err != nil {
+		return nil, fmt.Errorf("failed to decode regions: %w", err)
+	}
+	
+	return regions, nil
+}
 
+// GetZones retrieves zones for a specific region
+func (c *Client) GetZones(ctx context.Context, regionID string) ([]Zone, error) {
+	endpoint := fmt.Sprintf("/api/v1/regions/%s/zones", regionID)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get zones: status %d", resp.StatusCode)
+	}
+	
+	var zones []Zone
+	if err := json.NewDecoder(resp.Body).Decode(&zones); err != nil {
+		return nil, fmt.Errorf("failed to decode zones: %w", err)
+	}
+	
+	return zones, nil
+}
+
+// GetVPCs retrieves VPCs for a specific region
+func (c *Client) GetVPCs(ctx context.Context, regionID string) ([]VPC, error) {
+	endpoint := fmt.Sprintf("/api/v1/regions/%s/vpcs", regionID)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get VPCs: status %d", resp.StatusCode)
+	}
+	
+	var vpcs []VPC
+	if err := json.NewDecoder(resp.Body).Decode(&vpcs); err != nil {
+		return nil, fmt.Errorf("failed to decode VPCs: %w", err)
+	}
+	
+	return vpcs, nil
+}
+
+// GetSubnets retrieves subnets for a specific VPC
+func (c *Client) GetSubnets(ctx context.Context, vpcID string) ([]Subnet, error) {
+	endpoint := fmt.Sprintf("/api/v1/vpcs/%s/subnets", vpcID)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get subnets: status %d", resp.StatusCode)
+	}
+	
+	var subnets []Subnet
+	if err := json.NewDecoder(resp.Body).Decode(&subnets); err != nil {
+		return nil, fmt.Errorf("failed to decode subnets: %w", err)
+	}
+	
+	return subnets, nil
+}
+
+// GetInstances retrieves instances for a specific region
+func (c *Client) GetInstances(ctx context.Context, regionID string) ([]Instance, error) {
+	endpoint := fmt.Sprintf("/api/v1/regions/%s/instances", regionID)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get instances: status %d", resp.StatusCode)
+	}
+	
+	var instances []Instance
+	if err := json.NewDecoder(resp.Body).Decode(&instances); err != nil {
+		return nil, fmt.Errorf("failed to decode instances: %w", err)
+	}
+	
+	return instances, nil
+}
+
+// CreateInstance creates a new instance
+func (c *Client) CreateInstance(ctx context.Context, req CreateInstanceRequest) (*Instance, error) {
+	resp, err := c.makeRequest(ctx, "POST", "/api/v1/instances", req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("failed to create instance: status %d", resp.StatusCode)
+	}
+	
+	var instance Instance
+	if err := json.NewDecoder(resp.Body).Decode(&instance); err != nil {
+		return nil, fmt.Errorf("failed to decode instance: %w", err)
+	}
+	
+	return &instance, nil
+}
+
+// DeleteInstance deletes an instance
+func (c *Client) DeleteInstance(ctx context.Context, instanceID string) error {
+	endpoint := fmt.Sprintf("/api/v1/instances/%s", instanceID)
+	resp, err := c.makeRequest(ctx, "DELETE", endpoint, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to delete instance: status %d", resp.StatusCode)
+	}
+	
 	return nil
 }
 
-// ListSecurityGroups retrieves all security groups for a VPC
-func (c *Client) ListSecurityGroups(ctx context.Context, vpcID string) ([]SecurityGroup, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", 
-		c.baseURL+"/api/v1/vpcs/"+vpcID+"/security-groups", nil)
+// GetNetworks retrieves network information
+func (c *Client) GetNetworks(ctx context.Context, regionID string) ([]Network, error) {
+	endpoint := fmt.Sprintf("/api/v1/regions/%s/networks", regionID)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.setAuthHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
-
+	
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("failed to get networks: status %d", resp.StatusCode)
 	}
-
-	var result struct {
-		SecurityGroups []SecurityGroup `json:"security_groups"`
+	
+	var networks []Network
+	if err := json.NewDecoder(resp.Body).Decode(&networks); err != nil {
+		return nil, fmt.Errorf("failed to decode networks: %w", err)
 	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return result.SecurityGroups, nil
+	
+	return networks, nil
 }
 
-// setAuthHeaders sets authentication headers based on auth type
-func (c *Client) setAuthHeaders(req *http.Request) {
-	switch c.auth.Type {
-	case "basic":
-		req.SetBasicAuth(c.auth.Username, c.auth.Password)
-	case "token":
-		req.Header.Set("Authorization", "Bearer "+c.auth.Token)
-	case "api-key":
-		req.Header.Set("X-API-Key", c.auth.Token)
+// GetLoadBalancers retrieves load balancers for a region
+func (c *Client) GetLoadBalancers(ctx context.Context, regionID string) ([]LoadBalancer, error) {
+	endpoint := fmt.Sprintf("/api/v1/regions/%s/loadbalancers", regionID)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
 	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get load balancers: status %d", resp.StatusCode)
+	}
+	
+	var loadBalancers []LoadBalancer
+	if err := json.NewDecoder(resp.Body).Decode(&loadBalancers); err != nil {
+		return nil, fmt.Errorf("failed to decode load balancers: %w", err)
+	}
+	
+	return loadBalancers, nil
+}
+
+// GetSecurityGroups retrieves security groups for a region
+func (c *Client) GetSecurityGroups(ctx context.Context, regionID string) ([]SecurityGroup, error) {
+	endpoint := fmt.Sprintf("/api/v1/regions/%s/securitygroups", regionID)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get security groups: status %d", resp.StatusCode)
+	}
+	
+	var securityGroups []SecurityGroup
+	if err := json.NewDecoder(resp.Body).Decode(&securityGroups); err != nil {
+		return nil, fmt.Errorf("failed to decode security groups: %w", err)
+	}
+	
+	return securityGroups, nil
+}
+
+// GetMetrics retrieves metrics for a specific resource
+func (c *Client) GetMetrics(ctx context.Context, resourceType, resourceID string, timeRange string) (*Metrics, error) {
+	endpoint := fmt.Sprintf("/api/v1/metrics/%s/%s", resourceType, resourceID)
+	
+	params := url.Values{}
+	params.Set("time_range", timeRange)
+	
+	fullURL := fmt.Sprintf("%s?%s", endpoint, params.Encode())
+	resp, err := c.makeRequest(ctx, "GET", fullURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get metrics: status %d", resp.StatusCode)
+	}
+	
+	var metrics Metrics
+	if err := json.NewDecoder(resp.Body).Decode(&metrics); err != nil {
+		return nil, fmt.Errorf("failed to decode metrics: %w", err)
+	}
+	
+	return &metrics, nil
 }

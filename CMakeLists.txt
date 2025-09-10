@@ -15,27 +15,12 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 find_package(GTest REQUIRED)
 
-# FRR dependencies (optional)
-pkg_check_modules(FRR frr)
-if(NOT FRR_FOUND)
-    message(WARNING "FRR not found - FRR integration will be disabled")
-    set(FRR_LIBRARIES "")
-    set(FRR_INCLUDE_DIRS "")
-endif()
+# FRR dependencies
+pkg_check_modules(FRR REQUIRED frr)
 
-# Network libraries (optional)
+# Network libraries
 find_library(PCAP_LIB pcap)
 find_library(NETLINK_LIB nl-3)
-
-if(NOT PCAP_LIB)
-    message(WARNING "libpcap not found - packet capture will be disabled")
-    set(PCAP_LIB "")
-endif()
-
-if(NOT NETLINK_LIB)
-    message(WARNING "libnl-3 not found - netlink will be disabled")
-    set(NETLINK_LIB "")
-endif()
 
 # Include directories
 include_directories(

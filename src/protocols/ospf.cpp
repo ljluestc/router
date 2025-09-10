@@ -1,4 +1,4 @@
-#include "protocols/isis.h"
+#include "protocols/ospf.h"
 #include <iostream>
 #include <sstream>
 #include <algorithm>
@@ -8,43 +8,39 @@
 
 namespace router_sim {
 
-ISISProtocol::ISISProtocol() : running_(false), system_id_("0000.0000.0000"), area_id_("49.0001") {
-    config_.system_id = "0000.0000.0000";
-    config_.area_id = "49.0001";
-    config_.level = 2;
+OSPFProtocol::OSPFProtocol() : running_(false), area_id_(0), router_id_("0.0.0.0") {
+    config_.area_id = 0;
+    config_.router_id = "0.0.0.0";
     config_.hello_interval = 10;
-    config_.hold_time = 30;
-    config_.lsp_interval = 30;
-    config_.metric = 10;
+    config_.dead_interval = 40;
+    config_.retransmit_interval = 5;
+    config_.transit_delay = 1;
+    config_.priority = 1;
+    config_.cost = 1;
 }
 
-ISISProtocol::~ISISProtocol() {
+OSPFProtocol::~OSPFProtocol() {
     stop();
 }
 
-bool ISISProtocol::initialize(const ProtocolConfig& config) {
+bool OSPFProtocol::initialize(const ProtocolConfig& config) {
     std::lock_guard<std::mutex> lock(config_mutex_);
     
     config_.parameters = config.parameters;
     config_.enabled = config.enabled;
     config_.update_interval_ms = config.update_interval_ms;
     
-    // Parse IS-IS specific parameters
-    auto it = config.parameters.find("system_id");
+    // Parse OSPF-specific parameters
+    auto it = config.parameters.find("area_id");
     if (it != config.parameters.end()) {
-        config_.system_id = it->second;
-        system_id_ = config_.system_id;
-    }
-    
-    it = config.parameters.find("area_id");
-    if (it != config.parameters.end()) {
-        config_.area_id = it->second;
+        config_.area_id = std::stoul(it->second);
         area_id_ = config_.area_id;
     }
     
-    it = config.parameters.find("level");
+    it = config.parameters.find("router_id");
     if (it != config.parameters.end()) {
-        config_.level = std::stoul(it->second);
+        config_.router_id = it->second;
+        router_id_ = config_.router_id;
     }
     
     it = config.parameters.find("hello_interval");
@@ -52,131 +48,134 @@ bool ISISProtocol::initialize(const ProtocolConfig& config) {
         config_.hello_interval = std::stoul(it->second);
     }
     
-    it = config.parameters.find("hold_time");
+    it = config.parameters.find("dead_interval");
     if (it != config.parameters.end()) {
-        config_.hold_time = std::stoul(it->second);
+        config_.dead_interval = std::stoul(it->second);
     }
     
-    it = config.parameters.find("lsp_interval");
+    it = config.parameters.find("cost");
     if (it != config.parameters.end()) {
-        config_.lsp_interval = std::stoul(it->second);
+        config_.cost = std::stoul(it->second);
     }
     
-    it = config.parameters.find("metric");
+    it = config.parameters.find("priority");
     if (it != config.parameters.end()) {
-        config_.metric = std::stoul(it->second);
+        config_.priority = std::stoul(it->second);
     }
     
     // Initialize statistics
+    stats_.lsa_sent = 0;
+    stats_.lsa_received = 0;
     stats_.hello_sent = 0;
     stats_.hello_received = 0;
-    stats_.lsp_sent = 0;
-    stats_.lsp_received = 0;
-    stats_.psnp_sent = 0;
-    stats_.psnp_received = 0;
-    stats_.csnp_sent = 0;
-    stats_.csnp_received = 0;
-    stats_.adjacencies_formed = 0;
-    stats_.adjacencies_lost = 0;
+    stats_.dd_sent = 0;
+    stats_.dd_received = 0;
+    stats_.lsr_sent = 0;
+    stats_.lsr_received = 0;
+    stats_.lsu_sent = 0;
+    stats_.lsu_received = 0;
+    stats_.lsack_sent = 0;
+    stats_.lsack_received = 0;
     
-    std::cout << "IS-IS protocol initialized with system ID " << system_id_ 
-              << " and area ID " << area_id_ << "\n";
+    std::cout << "OSPF protocol initialized with area " << area_id_ 
+              << " and router ID " << router_id_ << "\n";
     return true;
 }
 
-bool ISISProtocol::start() {
+bool OSPFProtocol::start() {
     if (running_.load()) {
         return true;
     }
 
-    std::cout << "Starting IS-IS protocol...\n";
+    std::cout << "Starting OSPF protocol...\n";
     running_.store(true);
 
-    // Start IS-IS threads
-    isis_thread_ = std::thread(&ISISProtocol::isis_main_loop, this);
-    hello_thread_ = std::thread(&ISISProtocol::hello_loop, this);
-    lsp_thread_ = std::thread(&ISISProtocol::lsp_processing_loop, this);
-    spf_thread_ = std::thread(&ISISProtocol::spf_calculation_loop, this);
+    // Start OSPF threads
+    ospf_thread_ = std::thread(&OSPFProtocol::ospf_main_loop, this);
+    hello_thread_ = std::thread(&OSPFProtocol::hello_loop, this);
+    lsa_thread_ = std::thread(&OSPFProtocol::lsa_processing_loop, this);
+    spf_thread_ = std::thread(&OSPFProtocol::spf_calculation_loop, this);
 
-    std::cout << "IS-IS protocol started\n";
+    std::cout << "OSPF protocol started\n";
     return true;
 }
 
-bool ISISProtocol::stop() {
+bool OSPFProtocol::stop() {
     if (!running_.load()) {
         return true;
     }
 
-    std::cout << "Stopping IS-IS protocol...\n";
+    std::cout << "Stopping OSPF protocol...\n";
     running_.store(false);
 
     // Wait for threads to finish
-    if (isis_thread_.joinable()) {
-        isis_thread_.join();
+    if (ospf_thread_.joinable()) {
+        ospf_thread_.join();
     }
     if (hello_thread_.joinable()) {
         hello_thread_.join();
     }
-    if (lsp_thread_.joinable()) {
-        lsp_thread_.join();
+    if (lsa_thread_.joinable()) {
+        lsa_thread_.join();
     }
     if (spf_thread_.joinable()) {
         spf_thread_.join();
     }
 
-    std::cout << "IS-IS protocol stopped\n";
+    std::cout << "OSPF protocol stopped\n";
     return true;
 }
 
-bool ISISProtocol::is_running() const {
+bool OSPFProtocol::is_running() const {
     return running_.load();
 }
 
-bool ISISProtocol::add_interface(const std::string& interface, const std::map<std::string, std::string>& config) {
+bool OSPFProtocol::add_interface(const std::string& interface, const std::map<std::string, std::string>& config) {
     std::lock_guard<std::mutex> lock(interfaces_mutex_);
     
-    ISISInterface isis_if;
-    isis_if.name = interface;
-    isis_if.level = config_.level;
-    isis_if.metric = config_.metric;
-    isis_if.hello_interval = config_.hello_interval;
-    isis_if.hold_time = config_.hold_time;
-    isis_if.state = "Down";
-    isis_if.adjacencies_count = 0;
+    OSPFInterface ospf_if;
+    ospf_if.name = interface;
+    ospf_if.area_id = area_id_;
+    ospf_if.cost = config_.cost;
+    ospf_if.hello_interval = config_.hello_interval;
+    ospf_if.dead_interval = config_.dead_interval;
+    ospf_if.priority = config_.priority;
+    ospf_if.state = "Down";
+    ospf_if.neighbors_count = 0;
     
     // Parse interface-specific config
-    auto it = config.find("level");
+    auto it = config.find("cost");
     if (it != config.end()) {
-        isis_if.level = std::stoul(it->second);
-    }
-    
-    it = config.find("metric");
-    if (it != config.end()) {
-        isis_if.metric = std::stoul(it->second);
+        ospf_if.cost = std::stoul(it->second);
     }
     
     it = config.find("hello_interval");
     if (it != config.end()) {
-        isis_if.hello_interval = std::stoul(it->second);
+        ospf_if.hello_interval = std::stoul(it->second);
     }
     
-    it = config.find("hold_time");
+    it = config.find("dead_interval");
     if (it != config.end()) {
-        isis_if.hold_time = std::stoul(it->second);
+        ospf_if.dead_interval = std::stoul(it->second);
+    }
+    
+    it = config.find("priority");
+    if (it != config.end()) {
+        ospf_if.priority = std::stoul(it->second);
     }
     
     it = config.find("network");
     if (it != config.end()) {
-        isis_if.network = it->second;
+        ospf_if.network = it->second;
     }
 
-    interfaces_[interface] = isis_if;
+    interfaces_[interface] = ospf_if;
     
-    std::cout << "IS-IS: Added interface " << interface << " at level " << isis_if.level << "\n";
+    std::cout << "OSPF: Added interface " << interface << " to area " << area_id_ << "\n";
     return true;
 }
 
-bool ISISProtocol::remove_interface(const std::string& interface) {
+bool OSPFProtocol::remove_interface(const std::string& interface) {
     std::lock_guard<std::mutex> lock(interfaces_mutex_);
     
     auto it = interfaces_.find(interface);
@@ -186,19 +185,18 @@ bool ISISProtocol::remove_interface(const std::string& interface) {
 
     interfaces_.erase(it);
     
-    std::cout << "IS-IS: Removed interface " << interface << "\n";
+    std::cout << "OSPF: Removed interface " << interface << "\n";
     return true;
 }
 
-bool ISISProtocol::advertise_route(const std::string& prefix, const std::map<std::string, std::string>& attributes) {
+bool OSPFProtocol::advertise_route(const std::string& prefix, const std::map<std::string, std::string>& attributes) {
     std::lock_guard<std::mutex> lock(routes_mutex_);
     
-    ISISRoute route;
+    OSPFRoute route;
     route.prefix = prefix;
-    route.system_id = system_id_;
     route.area_id = area_id_;
-    route.metric = config_.metric;
-    route.level = config_.level;
+    route.cost = config_.cost;
+    route.type = "Intra-Area";
     route.is_valid = true;
     route.timestamp = std::chrono::system_clock::now();
     route.attributes = attributes;
@@ -206,15 +204,15 @@ bool ISISProtocol::advertise_route(const std::string& prefix, const std::map<std
     std::string key = prefix;
     advertised_routes_[key] = route;
     
-    std::cout << "IS-IS: Advertised route " << prefix << " at level " << config_.level << "\n";
+    std::cout << "OSPF: Advertised route " << prefix << " in area " << area_id_ << "\n";
     
     // Notify callback
     if (route_update_callback_) {
         RouteInfo route_info;
         route_info.prefix = prefix;
-        route_info.next_hop = system_id_;
-        route_info.metric = config_.metric;
-        route_info.protocol = "ISIS";
+        route_info.next_hop = router_id_;
+        route_info.metric = config_.cost;
+        route_info.protocol = "OSPF";
         route_info.timestamp = route.timestamp;
         route_update_callback_(route_info, true);
     }
@@ -222,7 +220,7 @@ bool ISISProtocol::advertise_route(const std::string& prefix, const std::map<std
     return true;
 }
 
-bool ISISProtocol::withdraw_route(const std::string& prefix) {
+bool OSPFProtocol::withdraw_route(const std::string& prefix) {
     std::lock_guard<std::mutex> lock(routes_mutex_);
     
     auto it = advertised_routes_.find(prefix);
@@ -232,13 +230,13 @@ bool ISISProtocol::withdraw_route(const std::string& prefix) {
 
     advertised_routes_.erase(it);
     
-    std::cout << "IS-IS: Withdrew route " << prefix << "\n";
+    std::cout << "OSPF: Withdrew route " << prefix << "\n";
     
     // Notify callback
     if (route_update_callback_) {
         RouteInfo route_info;
         route_info.prefix = prefix;
-        route_info.protocol = "ISIS";
+        route_info.protocol = "OSPF";
         route_info.timestamp = std::chrono::system_clock::now();
         route_update_callback_(route_info, false);
     }
@@ -246,7 +244,7 @@ bool ISISProtocol::withdraw_route(const std::string& prefix) {
     return true;
 }
 
-std::vector<RouteInfo> ISISProtocol::get_routes() const {
+std::vector<RouteInfo> OSPFProtocol::get_routes() const {
     std::lock_guard<std::mutex> lock(routes_mutex_);
     
     std::vector<RouteInfo> result;
@@ -256,9 +254,9 @@ std::vector<RouteInfo> ISISProtocol::get_routes() const {
         const auto& route = pair.second;
         RouteInfo route_info;
         route_info.prefix = route.prefix;
-        route_info.next_hop = system_id_;
-        route_info.metric = route.metric;
-        route_info.protocol = "ISIS";
+        route_info.next_hop = router_id_;
+        route_info.metric = route.cost;
+        route_info.protocol = "OSPF";
         route_info.timestamp = route.timestamp;
         result.push_back(route_info);
     }
@@ -269,8 +267,8 @@ std::vector<RouteInfo> ISISProtocol::get_routes() const {
         RouteInfo route_info;
         route_info.prefix = route.prefix;
         route_info.next_hop = route.next_hop;
-        route_info.metric = route.metric;
-        route_info.protocol = "ISIS";
+        route_info.metric = route.cost;
+        route_info.protocol = "OSPF";
         route_info.timestamp = route.timestamp;
         result.push_back(route_info);
     }
@@ -278,43 +276,45 @@ std::vector<RouteInfo> ISISProtocol::get_routes() const {
     return result;
 }
 
-std::vector<NeighborInfo> ISISProtocol::get_neighbors() const {
+std::vector<NeighborInfo> OSPFProtocol::get_neighbors() const {
     std::lock_guard<std::mutex> lock(neighbors_mutex_);
     
     std::vector<NeighborInfo> result;
     for (const auto& pair : neighbors_) {
         const auto& neighbor = pair.second;
         NeighborInfo neighbor_info;
-        neighbor_info.address = neighbor.system_id;
+        neighbor_info.address = neighbor.router_id;
         neighbor_info.state = neighbor.state;
-        neighbor_info.protocol = "ISIS";
+        neighbor_info.protocol = "OSPF";
         neighbor_info.established_time = neighbor.established_time;
         result.push_back(neighbor_info);
     }
     return result;
 }
 
-std::map<std::string, uint64_t> ISISProtocol::get_statistics() const {
+std::map<std::string, uint64_t> OSPFProtocol::get_statistics() const {
     std::lock_guard<std::mutex> lock(stats_mutex_);
     return {
+        {"lsa_sent", stats_.lsa_sent},
+        {"lsa_received", stats_.lsa_received},
         {"hello_sent", stats_.hello_sent},
         {"hello_received", stats_.hello_received},
-        {"lsp_sent", stats_.lsp_sent},
-        {"lsp_received", stats_.lsp_received},
-        {"psnp_sent", stats_.psnp_sent},
-        {"psnp_received", stats_.psnp_received},
-        {"csnp_sent", stats_.csnp_sent},
-        {"csnp_received", stats_.csnp_received},
-        {"adjacencies_formed", stats_.adjacencies_formed},
-        {"adjacencies_lost", stats_.adjacencies_lost}
+        {"dd_sent", stats_.dd_sent},
+        {"dd_received", stats_.dd_received},
+        {"lsr_sent", stats_.lsr_sent},
+        {"lsr_received", stats_.lsr_received},
+        {"lsu_sent", stats_.lsu_sent},
+        {"lsu_received", stats_.lsu_received},
+        {"lsack_sent", stats_.lsack_sent},
+        {"lsack_received", stats_.lsack_received}
     };
 }
 
-void ISISProtocol::isis_main_loop() {
-    std::cout << "IS-IS main loop started\n";
+void OSPFProtocol::ospf_main_loop() {
+    std::cout << "OSPF main loop started\n";
     
     while (running_.load()) {
-        // Process incoming IS-IS messages
+        // Process incoming OSPF messages
         process_incoming_messages();
         
         // Update interface states
@@ -323,11 +323,11 @@ void ISISProtocol::isis_main_loop() {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     
-    std::cout << "IS-IS main loop stopped\n";
+    std::cout << "OSPF main loop stopped\n";
 }
 
-void ISISProtocol::hello_loop() {
-    std::cout << "IS-IS hello loop started\n";
+void OSPFProtocol::hello_loop() {
+    std::cout << "OSPF hello loop started\n";
     
     while (running_.load()) {
         std::lock_guard<std::mutex> lock(interfaces_mutex_);
@@ -344,27 +344,27 @@ void ISISProtocol::hello_loop() {
         std::this_thread::sleep_for(std::chrono::seconds(config_.hello_interval));
     }
     
-    std::cout << "IS-IS hello loop stopped\n";
+    std::cout << "OSPF hello loop stopped\n";
 }
 
-void ISISProtocol::lsp_processing_loop() {
-    std::cout << "IS-IS LSP processing loop started\n";
+void OSPFProtocol::lsa_processing_loop() {
+    std::cout << "OSPF LSA processing loop started\n";
     
     while (running_.load()) {
-        // Process LSP updates
-        process_lsp_updates();
+        // Process LSA updates
+        process_lsa_updates();
         
-        // Flood LSPs
-        flood_lsps();
+        // Flood LSAs
+        flood_lsas();
         
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     
-    std::cout << "IS-IS LSP processing loop stopped\n";
+    std::cout << "OSPF LSA processing loop stopped\n";
 }
 
-void ISISProtocol::spf_calculation_loop() {
-    std::cout << "IS-IS SPF calculation loop started\n";
+void OSPFProtocol::spf_calculation_loop() {
+    std::cout << "OSPF SPF calculation loop started\n";
     
     while (running_.load()) {
         // Run SPF calculation
@@ -373,15 +373,15 @@ void ISISProtocol::spf_calculation_loop() {
         std::this_thread::sleep_for(std::chrono::seconds(5));
     }
     
-    std::cout << "IS-IS SPF calculation loop stopped\n";
+    std::cout << "OSPF SPF calculation loop stopped\n";
 }
 
-void ISISProtocol::process_incoming_messages() {
-    // Simulate processing incoming IS-IS messages
+void OSPFProtocol::process_incoming_messages() {
+    // Simulate processing incoming OSPF messages
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
 
-void ISISProtocol::update_interface_states() {
+void OSPFProtocol::update_interface_states() {
     std::lock_guard<std::mutex> lock(interfaces_mutex_);
     
     for (auto& pair : interfaces_) {
@@ -389,27 +389,27 @@ void ISISProtocol::update_interface_states() {
         
         if (interface.state == "Down") {
             interface.state = "Up";
-            std::cout << "IS-IS: Interface " << interface.name << " is now Up\n";
+            std::cout << "OSPF: Interface " << interface.name << " is now Up\n";
         }
     }
 }
 
-void ISISProtocol::process_lsp_updates() {
-    // Simulate LSP processing
+void OSPFProtocol::process_lsa_updates() {
+    // Simulate LSA processing
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
 }
 
-void ISISProtocol::flood_lsps() {
-    // Simulate LSP flooding
+void OSPFProtocol::flood_lsas() {
+    // Simulate LSA flooding
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
 }
 
-void ISISProtocol::run_spf_calculation() {
+void OSPFProtocol::run_spf_calculation() {
     // Simulate SPF calculation
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
 
-bool ISISProtocol::send_hello_message(const std::string& interface) {
+bool OSPFProtocol::send_hello_message(const std::string& interface) {
     std::lock_guard<std::mutex> lock(interfaces_mutex_);
     
     auto it = interfaces_.find(interface);
@@ -420,15 +420,15 @@ bool ISISProtocol::send_hello_message(const std::string& interface) {
     auto& interface_obj = it->second;
     interface_obj.hello_sent++;
     
-    std::cout << "IS-IS: Sent HELLO on interface " << interface << "\n";
+    std::cout << "OSPF: Sent HELLO on interface " << interface << "\n";
     return true;
 }
 
-void ISISProtocol::set_route_update_callback(std::function<void(const RouteInfo&, bool)> callback) {
+void OSPFProtocol::set_route_update_callback(std::function<void(const RouteInfo&, bool)> callback) {
     route_update_callback_ = callback;
 }
 
-void ISISProtocol::set_neighbor_update_callback(std::function<void(const NeighborInfo&, bool)> callback) {
+void OSPFProtocol::set_neighbor_update_callback(std::function<void(const NeighborInfo&, bool)> callback) {
     neighbor_update_callback_ = callback;
 }
 
