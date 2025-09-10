@@ -2,6 +2,7 @@
 #include "protocols/bgp.h"
 #include "protocols/ospf.h"
 #include "protocols/isis.h"
+#include "protocol_interface.h"
 #include <iostream>
 #include <cstdlib>
 #include <sstream>

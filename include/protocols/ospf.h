@@ -1,166 +1,198 @@
 #pragma once
 
 #include <string>
-#include <vector>
 #include <map>
-#include <mutex>
-#include <atomic>
+#include <vector>
 #include <thread>
+#include <mutex>
 #include <chrono>
 #include <functional>
-#include <memory>
 
 namespace router_sim {
 
+// Forward declarations
+struct RouteInfo;
+struct NeighborInfo;
+
+// OSPF interface states
+enum class OSPFInterfaceState {
+    DOWN,
+    WAITING,
+    DR_OTHER,
+    DR,
+    BDR
+};
+
+// OSPF neighbor states
+enum class OSPFNeighborState {
+    DOWN,
+    ATTEMPT,
+    INIT,
+    TWO_WAY,
+    EXSTART,
+    EXCHANGE,
+    LOADING,
+    FULL
+};
+
+// OSPF states
+enum class OSPFState {
+    DOWN,
+    INIT,
+    TWO_WAY,
+    EXSTART,
+    EXCHANGE,
+    LOADING,
+    FULL
+};
+
+// OSPF neighbor information
+struct OSPFNeighbor {
+    std::string neighbor_id;
+    OSPFNeighborState state;
+    uint32_t priority;
+    std::string dr;
+    std::string bdr;
+    std::chrono::steady_clock::time_point last_update;
+    uint32_t hello_sent;
+    uint32_t hello_received;
+    uint32_t lsa_sent;
+    uint32_t lsa_received;
+    uint32_t lsa_ack_sent;
+    uint32_t lsa_ack_received;
+};
+
+// OSPF interface information
 struct OSPFInterface {
     std::string name;
-    uint32_t area_id;
-    uint32_t cost;
+    std::string area_id;
     uint32_t hello_interval;
     uint32_t dead_interval;
     uint32_t retransmit_interval;
-    uint32_t transit_delay;
     uint32_t priority;
-    std::string state;
-    std::string network;
-    uint32_t neighbors_count;
-    uint64_t hello_sent = 0;
-    uint64_t hello_received = 0;
+    uint32_t cost;
+    OSPFInterfaceState state;
+    std::string dr;
+    std::string bdr;
+    std::chrono::steady_clock::time_point last_hello;
+    std::map<std::string, OSPFNeighbor> neighbors;
 };
 
+// OSPF route information
 struct OSPFRoute {
     std::string prefix;
-    uint32_t area_id;
-    uint32_t cost;
+    std::string area_id;
     std::string type;
-    bool is_valid;
-    std::map<std::string, std::string> attributes;
-    std::chrono::system_clock::time_point timestamp;
-};
-
-struct OSPFNeighbor {
-    std::string router_id;
-    std::string state;
-    uint32_t priority;
     uint32_t cost;
-    std::string interface;
-    std::chrono::system_clock::time_point established_time;
-    std::chrono::system_clock::time_point last_hello_received;
-    uint64_t hello_sent = 0;
-    uint64_t hello_received = 0;
+    std::string next_hop;
+    std::string advertising_router;
+    std::chrono::steady_clock::time_point last_update;
+    bool is_active;
 };
 
-struct OSPFConfig {
-    std::map<std::string, std::string> parameters;
-    bool enabled;
-    uint32_t update_interval_ms;
-    uint32_t area_id;
-    std::string router_id;
-    uint32_t hello_interval;
-    uint32_t dead_interval;
-    uint32_t retransmit_interval;
-    uint32_t transit_delay;
-    uint32_t priority;
-    uint32_t cost;
-};
-
-struct OSPFStatistics {
-    uint64_t lsa_sent;
-    uint64_t lsa_received;
+// OSPF statistics
+struct OSPFStats {
+    uint64_t packets_sent;
+    uint64_t packets_received;
     uint64_t hello_sent;
     uint64_t hello_received;
-    uint64_t dd_sent;
-    uint64_t dd_received;
-    uint64_t lsr_sent;
-    uint64_t lsr_received;
-    uint64_t lsu_sent;
-    uint64_t lsu_received;
-    uint64_t lsack_sent;
-    uint64_t lsack_received;
+    uint64_t lsa_sent;
+    uint64_t lsa_received;
+    uint64_t lsa_ack_sent;
+    uint64_t lsa_ack_received;
+    uint64_t routes_advertised;
+    uint64_t routes_withdrawn;
+    uint64_t neighbors_up;
+    uint64_t neighbors_down;
+    
+    void reset() {
+        packets_sent = 0;
+        packets_received = 0;
+        hello_sent = 0;
+        hello_received = 0;
+        lsa_sent = 0;
+        lsa_received = 0;
+        lsa_ack_sent = 0;
+        lsa_ack_received = 0;
+        routes_advertised = 0;
+        routes_withdrawn = 0;
+        neighbors_up = 0;
+        neighbors_down = 0;
+    }
 };
 
-using RouteUpdateCallback = std::function<void(const RouteInfo&, bool)>;
-using NeighborCallback = std::function<void(const NeighborInfo&, bool)>;
-
+// OSPF Protocol class
 class OSPFProtocol {
 public:
     OSPFProtocol();
     ~OSPFProtocol();
-
-    bool initialize(const ProtocolConfig& config);
-    bool start();
+    
+    // Protocol management
+    bool start(const std::map<std::string, std::string>& config);
     bool stop();
     bool is_running() const;
-
+    
     // Interface management
     bool add_interface(const std::string& interface, const std::map<std::string, std::string>& config);
     bool remove_interface(const std::string& interface);
-
+    
     // Route management
-    bool advertise_route(const std::string& prefix, const std::map<std::string, std::string>& attributes = {});
+    bool advertise_route(const std::string& prefix, const std::map<std::string, std::string>& attributes);
     bool withdraw_route(const std::string& prefix);
-
-    // Route and neighbor info
+    
+    // Information retrieval
     std::vector<RouteInfo> get_routes() const;
     std::vector<NeighborInfo> get_neighbors() const;
-
-    // Statistics
     std::map<std::string, uint64_t> get_statistics() const;
-
-    // Configuration
-    void update_configuration(const ProtocolConfig& config);
-    ProtocolConfig get_configuration() const;
-
+    
     // Callbacks
-    void set_route_update_callback(RouteUpdateCallback callback);
-    void set_neighbor_update_callback(NeighborCallback callback);
-
+    void set_route_update_callback(std::function<void(const RouteInfo&, bool)> callback);
+    void set_neighbor_update_callback(std::function<void(const NeighborInfo&, bool)> callback);
+    
 private:
-    // Thread functions
-    void ospf_main_loop();
-    void hello_loop();
-    void lsa_processing_loop();
-    void spf_calculation_loop();
-
-    // OSPF operations
-    bool send_hello_message(const std::string& interface);
-
-    // Message processing
+    // OSPF processing
+    void ospf_processing_loop();
+    void process_ospf_state_machine();
+    void send_hello_packets();
     void process_incoming_messages();
-    void update_interface_states();
-    void process_lsa_updates();
-    void flood_lsas();
-    void run_spf_calculation();
-
-    // Configuration and state
-    OSPFConfig config_;
-    uint32_t area_id_;
+    void check_dead_neighbors();
+    
+    // OSPF state machine
+    void maintain_ospf_interface(const std::string& interface_name, OSPFInterface& interface);
+    
+    // Interface management
+    bool bring_interface_up(const std::string& interface);
+    bool perform_dr_bdr_election(const std::string& interface);
+    
+    // OSPF message handling
+    bool send_hello_packet(const std::string& interface);
+    
+    // Utility functions
+    std::string neighbor_state_to_string(OSPFNeighborState state) const;
+    
+    // Configuration
     std::string router_id_;
-    std::atomic<bool> running_;
-    mutable std::mutex config_mutex_;
-    mutable std::mutex routes_mutex_;
-    mutable std::mutex interfaces_mutex_;
-    mutable std::mutex neighbors_mutex_;
-    mutable std::mutex stats_mutex_;
-
-    // Data structures
-    std::map<std::string, OSPFRoute> advertised_routes_;
-    std::map<std::string, OSPFRoute> learned_routes_;
-    std::map<std::string, OSPFInterface> interfaces_;
-    std::map<std::string, OSPFNeighbor> neighbors_;
-
-    // Statistics
-    OSPFStatistics stats_;
-
-    // Threads
+    std::string area_id_;
+    uint32_t hello_interval_;
+    uint32_t dead_interval_;
+    uint32_t retransmit_interval_;
+    
+    // State
+    bool running_;
+    OSPFState state_;
     std::thread ospf_thread_;
-    std::thread hello_thread_;
-    std::thread lsa_thread_;
-    std::thread spf_thread_;
-
+    
+    // Data structures
+    std::map<std::string, OSPFInterface> interfaces_;
+    std::map<std::string, OSPFRoute> routes_;
+    
+    // Statistics
+    mutable std::mutex stats_mutex_;
+    OSPFStats stats_;
+    
     // Callbacks
-    RouteUpdateCallback route_update_callback_;
-    NeighborCallback neighbor_update_callback_;
+    std::function<void(const RouteInfo&, bool)> route_update_callback_;
+    std::function<void(const NeighborInfo&, bool)> neighbor_update_callback_;
 };
 
 } // namespace router_sim

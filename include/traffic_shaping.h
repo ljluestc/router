@@ -1,307 +1,234 @@
 #pragma once
 
-#include <cstdint>
-#include <chrono>
-#include <mutex>
-#include <memory>
+#include <string>
+#include <map>
 #include <vector>
 #include <queue>
-#include <map>
-#include <string>
+#include <thread>
+#include <mutex>
+#include <chrono>
+#include <functional>
+#include <memory>
 
 namespace RouterSim {
 
-struct Packet {
-    uint64_t size;
-    uint32_t priority;
-    uint32_t flow_id;
-    std::chrono::steady_clock::time_point timestamp;
-    std::map<std::string, std::string> metadata;
+// Forward declarations
+struct PacketInfo;
+struct TokenBucketConfig;
+struct WFQClass;
+
+// Traffic shaping algorithms
+enum class ShapingAlgorithm {
+    TOKEN_BUCKET,
+    WEIGHTED_FAIR_QUEUE,
+    PRIORITY_QUEUE,
+    RATE_LIMITING
 };
 
-// Token Bucket Algorithm
+// Packet information
+struct PacketInfo {
+    uint64_t id;
+    std::string src_ip;
+    std::string dst_ip;
+    uint16_t src_port;
+    uint16_t dst_port;
+    uint8_t protocol;
+    uint32_t size;
+    uint8_t dscp;
+    uint8_t ttl;
+    uint32_t priority;
+    std::vector<uint8_t> data;
+    std::chrono::steady_clock::time_point timestamp;
+    
+    PacketInfo() : id(0), src_port(0), dst_port(0), protocol(0), size(0), dscp(0), ttl(64), priority(0) {
+        timestamp = std::chrono::steady_clock::now();
+    }
+};
+
+// Traffic statistics
+struct TrafficStats {
+    uint64_t packets_processed;
+    uint64_t packets_dropped;
+    uint64_t bytes_processed;
+    uint64_t bytes_dropped;
+    uint64_t queue_length;
+    double current_throughput_bps;
+    double peak_throughput_bps;
+    std::chrono::steady_clock::time_point last_update;
+    
+    void reset() {
+        packets_processed = 0;
+        packets_dropped = 0;
+        bytes_processed = 0;
+        bytes_dropped = 0;
+        queue_length = 0;
+        current_throughput_bps = 0.0;
+        peak_throughput_bps = 0.0;
+        last_update = std::chrono::steady_clock::now();
+    }
+};
+
+// Token bucket implementation
 class TokenBucket {
 public:
-    TokenBucket(uint64_t capacity, uint64_t refill_rate, uint64_t burst_size);
+    explicit TokenBucket(const TokenBucketConfig& config);
     ~TokenBucket();
-
-    bool consume(uint64_t tokens);
-    bool consumePacket(const Packet& packet);
-    void refillTokens();
     
-    void setCapacity(uint64_t capacity);
-    void setRefillRate(uint64_t refill_rate);
-    void setBurstSize(uint64_t burst_size);
+    bool consume_tokens(uint64_t bytes);
+    uint64_t get_available_tokens() const;
+    bool is_available(uint64_t bytes) const;
+    void update_config(const TokenBucketConfig& config);
+    TokenBucketConfig get_config() const;
     
-    uint64_t getAvailableTokens() const;
-    
-    struct Statistics {
-        uint64_t capacity;
-        uint64_t refill_rate;
-        uint64_t burst_size;
-        uint64_t available_tokens;
-        uint64_t total_packets_processed;
-        uint64_t total_bytes_processed;
-        uint64_t packets_dropped;
-        uint64_t bytes_dropped;
-        double utilization_percentage;
-    };
-    
-    Statistics getStatistics() const;
-    void reset();
-
 private:
-    uint64_t capacity_;
-    uint64_t refill_rate_;
-    uint64_t burst_size_;
+    void add_tokens();
+    
+    TokenBucketConfig config_;
     uint64_t tokens_;
-    std::chrono::steady_clock::time_point last_refill_time_;
-    
-    uint64_t total_packets_processed_;
-    uint64_t total_bytes_processed_;
-    uint64_t packets_dropped_;
-    uint64_t bytes_dropped_;
-    
+    std::chrono::steady_clock::time_point last_update_;
     mutable std::mutex mutex_;
 };
 
-// Weighted Fair Queueing Algorithm
-class WFQ {
+// Weighted Fair Queue implementation
+class WeightedFairQueue {
 public:
-    static constexpr uint32_t MAX_QUEUE_SIZE = 1000;
+    WeightedFairQueue();
+    ~WeightedFairQueue();
     
-    WFQ(uint32_t max_queues);
-    ~WFQ();
-
-    bool enqueue(uint32_t queue_id, const Packet& packet);
-    bool dequeue(Packet& packet);
+    bool initialize(const std::vector<WFQClass>& classes);
+    bool enqueue_packet(const PacketInfo& packet, uint8_t class_id);
+    bool dequeue_packet(PacketInfo& packet);
+    bool is_empty() const;
+    size_t queue_size() const;
+    size_t queue_size(uint8_t class_id) const;
+    bool add_class(const WFQClass& wfq_class);
+    bool remove_class(uint8_t class_id);
+    bool update_class(const WFQClass& wfq_class);
+    std::vector<WFQClass> get_classes() const;
+    void set_classifier(std::function<uint8_t(const PacketInfo&)> classifier);
+    uint8_t classify_packet(const PacketInfo& packet) const;
     
-    void setQueueWeight(uint32_t queue_id, uint32_t weight);
-    uint32_t getQueueWeight(uint32_t queue_id) const;
-    uint32_t getQueueSize(uint32_t queue_id) const;
-    uint64_t getQueueBytes(uint32_t queue_id) const;
-    uint32_t getMaxQueues() const { return max_queues_; }
-    
-    struct QueueStatistics {
-        uint32_t queue_id;
-        uint32_t weight;
-        uint32_t packets;
-        uint64_t bytes;
-        double finish_time;
-    };
-    
-    struct Statistics {
-        uint32_t max_queues;
-        uint32_t total_weight;
-        double virtual_time;
-        uint64_t total_packets_processed;
-        uint64_t total_bytes_processed;
-        uint64_t packets_dropped;
-        uint64_t bytes_dropped;
-        std::vector<QueueStatistics> queue_stats;
-    };
-    
-    Statistics getStatistics() const;
-    void reset();
-
 private:
-    struct Queue {
-        uint32_t weight;
-        uint32_t packets;
-        uint64_t bytes;
-        double finish_time;
-    };
+    uint64_t calculate_virtual_finish_time(const PacketInfo& packet, uint8_t class_id) const;
+    bool select_next_packet(struct QueueItem& item);
     
-    uint32_t max_queues_;
-    std::vector<Queue> queues_;
-    uint32_t total_weight_;
-    double virtual_time_;
-    std::chrono::steady_clock::time_point last_update_time_;
-    
-    uint64_t total_packets_processed_;
-    uint64_t total_bytes_processed_;
-    uint64_t packets_dropped_;
-    uint64_t bytes_dropped_;
-    
-    mutable std::mutex mutex_;
-    
-    void updateVirtualTime();
-};
-
-// Deficit Round Robin Algorithm
-class DRR {
-public:
-    static constexpr uint32_t MAX_QUEUE_SIZE = 1000;
-    
-    DRR(uint32_t max_queues);
-    ~DRR();
-
-    bool enqueue(uint32_t queue_id, const Packet& packet);
-    bool dequeue(Packet& packet);
-    
-    void setQuantum(uint32_t queue_id, uint32_t quantum);
-    uint32_t getQuantum(uint32_t queue_id) const;
-    uint32_t getQueueSize(uint32_t queue_id) const;
-    uint64_t getQueueBytes(uint32_t queue_id) const;
-    uint32_t getMaxQueues() const { return max_queues_; }
-    
-    struct QueueStatistics {
-        uint32_t queue_id;
-        uint32_t quantum;
-        uint32_t deficit;
-        uint32_t packets;
-        uint64_t bytes;
-    };
-    
-    struct Statistics {
-        uint32_t max_queues;
-        uint64_t total_packets_processed;
-        uint64_t total_bytes_processed;
-        uint64_t packets_dropped;
-        uint64_t bytes_dropped;
-        std::vector<QueueStatistics> queue_stats;
-    };
-    
-    Statistics getStatistics() const;
-    void reset();
-
-private:
-    struct Queue {
-        uint32_t quantum;
-        uint32_t deficit;
-        uint32_t packets;
-        uint64_t bytes;
-        std::queue<Packet> packet_queue;
-    };
-    
-    uint32_t max_queues_;
-    std::vector<Queue> queues_;
-    uint32_t current_queue_;
-    
-    uint64_t total_packets_processed_;
-    uint64_t total_bytes_processed_;
-    uint64_t packets_dropped_;
-    uint64_t bytes_dropped_;
-    
+    std::vector<WFQClass> classes_;
+    std::map<uint8_t, std::queue<struct QueueItem>> queues_;
+    uint64_t virtual_time_;
+    std::function<uint8_t(const PacketInfo&)> classifier_;
     mutable std::mutex mutex_;
 };
 
-// Hierarchical Token Bucket
-class HTB {
-public:
-    HTB(uint32_t max_classes);
-    ~HTB();
-
-    bool enqueue(uint32_t class_id, const Packet& packet);
-    bool dequeue(Packet& packet);
-    
-    void setClassRate(uint32_t class_id, uint64_t rate);
-    void setClassCeil(uint32_t class_id, uint64_t ceil);
-    void setClassBurst(uint32_t class_id, uint64_t burst);
-    void setClassPriority(uint32_t class_id, uint32_t priority);
-    
-    uint32_t getMaxClasses() const { return max_classes_; }
-    
-    struct ClassStatistics {
-        uint32_t class_id;
-        uint64_t rate;
-        uint64_t ceil;
-        uint64_t burst;
-        uint32_t priority;
-        uint64_t tokens;
-        uint32_t packets;
-        uint64_t bytes;
-    };
-    
-    struct Statistics {
-        uint32_t max_classes;
-        uint64_t total_packets_processed;
-        uint64_t total_bytes_processed;
-        uint64_t packets_dropped;
-        uint64_t bytes_dropped;
-        std::vector<ClassStatistics> class_stats;
-    };
-    
-    Statistics getStatistics() const;
-    void reset();
-
-private:
-    struct Class {
-        uint64_t rate;
-        uint64_t ceil;
-        uint64_t burst;
-        uint32_t priority;
-        uint64_t tokens;
-        uint32_t packets;
-        uint64_t bytes;
-        std::queue<Packet> packet_queue;
-        std::chrono::steady_clock::time_point last_refill_time;
-    };
-    
-    uint32_t max_classes_;
-    std::vector<Class> classes_;
-    
-    uint64_t total_packets_processed_;
-    uint64_t total_bytes_processed_;
-    uint64_t packets_dropped_;
-    uint64_t bytes_dropped_;
-    
-    mutable std::mutex mutex_;
-    
-    void refillTokens();
-    void updateClassTokens(Class& cls);
-};
-
-// Traffic Shaper Factory
-class TrafficShaperFactory {
-public:
-    static std::unique_ptr<TokenBucket> createTokenBucket(uint64_t capacity, uint64_t refill_rate, uint64_t burst_size);
-    static std::unique_ptr<WFQ> createWFQ(uint32_t max_queues);
-    static std::unique_ptr<DRR> createDRR(uint32_t max_queues);
-    static std::unique_ptr<HTB> createHTB(uint32_t max_classes);
-    
-    static std::vector<std::string> getAvailableAlgorithms();
-};
-
-// Main Traffic Shaper
+// Traffic shaper implementation
 class TrafficShaper {
 public:
     TrafficShaper();
     ~TrafficShaper();
-
+    
+    // Lifecycle
     bool initialize();
-    bool processPacket(const Packet& packet);
-    bool dequeuePacket(Packet& packet);
+    bool start();
+    bool stop();
+    bool is_running() const;
     
-    void setTokenBucketConfig(uint64_t capacity, uint64_t refill_rate, uint64_t burst_size);
-    void setQueueWeight(uint32_t queue_id, uint32_t weight);
-    void setEnabled(bool enabled);
-    bool isEnabled() const;
+    // Configuration
+    bool configure_token_bucket(const TokenBucketConfig& config);
+    bool configure_wfq(const std::vector<WFQClass>& classes);
+    bool set_shaping_algorithm(ShapingAlgorithm algorithm);
     
-    struct Statistics {
-        bool enabled;
-        uint64_t total_packets_processed;
-        uint64_t total_bytes_processed;
-        uint64_t packets_dropped;
-        uint64_t bytes_dropped;
-        TokenBucket::Statistics token_bucket_stats;
-        WFQ::Statistics wfq_stats;
-    };
+    // Packet processing
+    bool process_packet(const PacketInfo& packet);
+    bool process_packet_async(const PacketInfo& packet);
+    bool enqueue_packet(const PacketInfo& packet);
+    bool dequeue_packet(PacketInfo& packet);
     
-    Statistics getStatistics() const;
-    void reset();
-
+    // Queue management
+    size_t get_queue_size() const;
+    bool is_queue_empty() const;
+    
+    // Statistics
+    TrafficStats get_statistics() const;
+    void reset_statistics();
+    
+    // Callbacks
+    void set_packet_callback(std::function<void(const PacketInfo&)> callback);
+    void set_drop_callback(std::function<void(const PacketInfo&, const std::string&)> callback);
+    
 private:
+    void processing_loop();
+    bool process_packet_internal(const PacketInfo& packet);
+    void update_statistics(const PacketInfo& packet, bool dropped);
+    void notify_packet_processed(const PacketInfo& packet);
+    void notify_packet_dropped(const PacketInfo& packet, const std::string& reason);
+    
+    // Components
     std::unique_ptr<TokenBucket> token_bucket_;
-    std::unique_ptr<WFQ> wfq_;
+    std::unique_ptr<WeightedFairQueue> wfq_;
     
-    bool enabled_;
-    uint64_t total_packets_processed_;
-    uint64_t total_bytes_processed_;
-    uint64_t packets_dropped_;
-    uint64_t bytes_dropped_;
+    // Configuration
+    ShapingAlgorithm algorithm_;
     
-    mutable std::mutex mutex_;
+    // State
+    bool running_;
+    bool initialized_;
+    bool stop_processing_;
+    
+    // Threading
+    std::thread processing_thread_;
+    
+    // Queue
+    std::queue<PacketInfo> packet_queue_;
+    mutable std::mutex queue_mutex_;
+    
+    // Statistics
+    mutable std::mutex stats_mutex_;
+    TrafficStats stats_;
+    
+    // Callbacks
+    std::function<void(const PacketInfo&)> packet_callback_;
+    std::function<void(const PacketInfo&, const std::string&)> drop_callback_;
+};
+
+// Traffic shaping manager
+class TrafficShapingManager {
+public:
+    TrafficShapingManager();
+    ~TrafficShapingManager();
+    
+    // Lifecycle
+    bool initialize();
+    bool start();
+    bool stop();
+    
+    // Interface management
+    bool add_interface(const std::string& interface_name);
+    bool remove_interface(const std::string& interface_name);
+    bool configure_interface(const std::string& interface_name, 
+                            ShapingAlgorithm algorithm,
+                            const std::map<std::string, std::string>& config);
+    
+    // Packet processing
+    bool process_packet(const std::string& interface_name, const PacketInfo& packet);
+    
+    // Statistics
+    std::map<std::string, TrafficStats> get_interface_statistics() const;
+    TrafficStats get_global_statistics() const;
+    
+    // Configuration
+    bool load_config(const std::string& config_file);
+    bool save_config(const std::string& config_file) const;
+    
+private:
+    bool initialized_;
+    bool running_;
+    
+    // Interface shapers
+    std::map<std::string, std::unique_ptr<TrafficShaper>> interfaces_;
+    mutable std::mutex interfaces_mutex_;
+    
+    // Global statistics
+    TrafficStats global_stats_;
+    mutable std::mutex global_stats_mutex_;
 };
 
 } // namespace RouterSim

@@ -33,12 +33,14 @@ include_directories(
 set(ROUTER_SOURCES
     src/main.cpp
     src/router_core.cpp
+    src/frr_integration.cpp
     src/protocols/bgp.cpp
     src/protocols/ospf.cpp
     src/protocols/isis.cpp
     src/traffic_shaping/token_bucket.cpp
     src/traffic_shaping/wfq.cpp
-    src/impairments/netem.cpp
+    src/traffic_shaping.cpp
+    src/netem_impairments.cpp
     src/cli/cli_interface.cpp
     src/config/yaml_config.cpp
     src/testing/pcap_diff.cpp

@@ -15,7 +15,6 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 
 	"router-sim/internal/config"
 	"router-sim/internal/server"
@@ -162,18 +161,18 @@ func initLogger(cfg *config.Config) (*zap.Logger, error) {
 	return config.Build()
 }
 
-func parseLogLevel(level string) zapcore.Level {
+func parseLogLevel(level string) zap.Level {
 	switch level {
 	case "debug":
-		return zapcore.DebugLevel
+		return zap.DebugLevel
 	case "info":
-		return zapcore.InfoLevel
+		return zap.InfoLevel
 	case "warn":
-		return zapcore.WarnLevel
+		return zap.WarnLevel
 	case "error":
-		return zapcore.ErrorLevel
+		return zap.ErrorLevel
 	default:
-		return zapcore.InfoLevel
+		return zap.InfoLevel
 	}
 }
 

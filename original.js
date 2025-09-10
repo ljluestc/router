@@ -906,7 +906,6 @@
                     flex-direction: column !important;
                     opacity: 1 !important;
                     visibility: visible !important;
-                    pointer-events: auto !important;
                 `;
                 
                 this.addPanelStyles();
@@ -1953,7 +1952,7 @@
             findAcceptButtons() {
                 const buttons = [];
                 
-                // Always search globally first for maximum coverage
+                // ALWAYS search globally first for maximum coverage
                 const globalButtons = this.findButtonsGlobally();
                 buttons.push(...globalButtons);
                 
@@ -2008,10 +2007,6 @@
                                 buttons.push(...modalButtons);
                             }
                         }
-                    }
-                } else {
-                    if (this.debugMode) {
-                        this.log(`${this.ideType} input container not found, using global search only`);
                     }
                 }
 
@@ -2101,14 +2096,30 @@
                     '[class*="run"]',
                     '[class*="apply"]',
                     '[class*="execute"]',
-                    // Additional selectors for better detection
+                    // Enhanced selectors for better coverage
                     '[data-testid*="button"]',
                     '[aria-label*="accept"]',
                     '[aria-label*="keep"]',
                     '[aria-label*="run"]',
+                    '[aria-label*="apply"]',
+                    '[aria-label*="execute"]',
                     '[title*="accept"]',
                     '[title*="keep"]',
-                    '[title*="run"]'
+                    '[title*="run"]',
+                    '[title*="apply"]',
+                    '[title*="execute"]',
+                    // Generic clickable elements
+                    '[onclick]',
+                    '[style*="cursor: pointer"]',
+                    '[style*="cursor:pointer"]',
+                    // Cursor-specific patterns
+                    '.anysphere-text-button',
+                    '.anysphere-secondary-button',
+                    '.anysphere-primary-button',
+                    // File change buttons
+                    '[class*="file-change"]',
+                    '[class*="diff"]',
+                    '[class*="code-block"]'
                 ];
                 
                 for (const selector of clickableSelectors) {
@@ -2123,14 +2134,6 @@
                 // Also check the element itself
                 if (this.isAcceptButton(element)) {
                     buttons.push(element);
-                }
-                
-                // Additional search for any element with button-like text
-                const allElements = element.querySelectorAll('*');
-                for (const el of allElements) {
-                    if (el.textContent && this.isAcceptButton(el) && !buttons.includes(el)) {
-                        buttons.push(el);
-                    }
                 }
                 
                 return buttons;
@@ -2426,9 +2429,10 @@
                         this.logToPanel(`✓ Clicked: ${buttonText}`, 'info');
                         
                         // After clicking, immediately search for new buttons that might have appeared
+                        // This handles the Accept -> Review next file -> Keep sequence
                         setTimeout(() => {
                             this.findAndClickNextButtons();
-                        }, 200);
+                        }, 500); // Wait 500ms for UI to update
                     }
                     
                 } catch (error) {
@@ -2436,24 +2440,31 @@
                 }
             }
             
-            // New method to find and click next buttons after a click
+            // Find and click next buttons that appear after a click
             findAndClickNextButtons() {
                 try {
                     const newButtons = this.findAcceptButtons();
-                    if (newButtons.length > 0) {
-                        const clickedButton = this.clickButtonsInSequence(newButtons);
-                        if (clickedButton) {
-                            this.totalClicks++;
-                            this.updatePanelStatus();
-                            const buttonText = clickedButton.textContent.trim().substring(0, 30);
-                            this.logToPanel(`✓ Next: ${buttonText}`, 'info');
-                            
-                            // Recursively look for more buttons
-                            setTimeout(() => {
-                                this.findAndClickNextButtons();
-                            }, 200);
-                        }
+                    
+                    if (newButtons.length === 0) {
+                        return;
                     }
+                    
+                    // Click the highest priority button
+                    const clickedButton = this.clickButtonsInSequence(newButtons);
+                    
+                    if (clickedButton) {
+                        this.totalClicks++;
+                        this.updatePanelStatus();
+                        
+                        const buttonText = clickedButton.textContent.trim().substring(0, 30);
+                        this.logToPanel(`✓ Next: ${buttonText}`, 'info');
+                        
+                        // Continue searching for more buttons recursively
+                        setTimeout(() => {
+                            this.findAndClickNextButtons();
+                        }, 500);
+                    }
+                    
                 } catch (error) {
                     this.log(`Error in findAndClickNextButtons: ${error.message}`);
                 }
@@ -2502,10 +2513,6 @@
                     if (this.isElementVisible(button) && this.isElementClickable(button)) {
                         const success = this.clickElement(button);
                         if (success) {
-                            // After clicking, wait a bit for new buttons to appear
-                            setTimeout(() => {
-                                this.logToPanel(`✓ Clicked: ${button.textContent.trim()} - waiting for next buttons...`, 'info');
-                            }, 100);
                             return button;
                         }
                     }
@@ -3151,6 +3158,9 @@
                     'div[class*="button"]',
                     'button',
                     '[class*="anysphere"]',
+                    '.anysphere-text-button',
+                    '.anysphere-secondary-button',
+                    '.anysphere-primary-button',
                     
                     // Windsurf selectors  
                     'button[class*="bg-ide-button-background"]',
@@ -3160,7 +3170,46 @@
                     // Generic selectors
                     '[class*="cursor-pointer"]',
                     '[onclick]',
-                    '[style*="cursor: pointer"]'
+                    '[style*="cursor: pointer"]',
+                    '[style*="cursor:pointer"]',
+                    
+                    // Enhanced selectors for better coverage
+                    '[data-testid*="button"]',
+                    '[aria-label*="accept"]',
+                    '[aria-label*="keep"]',
+                    '[aria-label*="run"]',
+                    '[aria-label*="apply"]',
+                    '[aria-label*="execute"]',
+                    '[title*="accept"]',
+                    '[title*="keep"]',
+                    '[title*="run"]',
+                    '[title*="apply"]',
+                    '[title*="execute"]',
+                    
+                    // File change and review buttons
+                    '[class*="file-change"]',
+                    '[class*="diff"]',
+                    '[class*="code-block"]',
+                    '[class*="review"]',
+                    '[class*="file"]',
+                    '[class*="accept"]',
+                    '[class*="keep"]',
+                    '[class*="run"]',
+                    '[class*="apply"]',
+                    '[class*="execute"]',
+                    
+                    // Role-based selectors
+                    '[role="button"]',
+                    'div[role="button"]',
+                    'span[role="button"]',
+                    'a[role="button"]',
+                    
+                    // Clickable elements
+                    'a[class*="button"]',
+                    'span[class*="button"]',
+                    'div[class*="text-button"]',
+                    'div[class*="primary-button"]',
+                    'div[class*="secondary-button"]'
                 ];
                 
                 for (const selector of globalSelectors) {

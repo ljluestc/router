@@ -1939,9 +1939,9 @@
             findAcceptButtons() {
                 const buttons = [];
                 
-                // Always search globally first for maximum coverage
-                const globalButtons = this.findButtonsGlobally();
-                buttons.push(...globalButtons);
+                if (this.debugMode) {
+                    this.log('=== STARTING BUTTON SEARCH ===');
+                }
                 
                 // IDE-specific input box selectors
                 let inputBox = null;
@@ -1956,42 +1956,82 @@
                     inputBox = document.querySelector('div.full-input-box');
                 }
                 
-                if (inputBox) {
-                    if (this.ideType === 'windsurf') {
-                        // For Windsurf, search the entire document for button patterns
-                        const windsurfButtons = this.findWindsurfButtons();
-                        buttons.push(...windsurfButtons);
-                    } else {
-                        // Cursor IDE - Enhanced search strategy
-                        // 1. Check previous sibling elements for regular buttons
-                        let currentElement = inputBox.previousElementSibling;
-                        let searchDepth = 0;
-                        
-                        while (currentElement && searchDepth < 15) { // Increased search depth
-                            const acceptElements = this.findAcceptInElement(currentElement);
-                            buttons.push(...acceptElements);
-                            currentElement = currentElement.previousElementSibling;
-                            searchDepth++;
-                        }
-                        
-                        // 2. Search in conversations div for buttons in message bubbles
-                        const conversationsDiv = document.querySelector('div.conversations');
-                        if (conversationsDiv) {
-                            const conversationButtons = this.findButtonsInConversations(conversationsDiv);
-                            buttons.push(...conversationButtons);
-                        }
-                        
-                        // 3. Search in composer code blocks for Accept/Keep buttons
-                        const composerButtons = this.findButtonsInComposerBlocks();
-                        buttons.push(...composerButtons);
-                        
-                        // 4. Search for buttons in any visible code block containers
-                        const codeBlockButtons = this.findButtonsInCodeBlocks();
-                        buttons.push(...codeBlockButtons);
+                if (!inputBox) {
+                    if (this.debugMode) {
+                        this.log(`${this.ideType} input container not found, using global search`);
+                    }
+                    
+                    // Fallback: search entire document for buttons
+                    return this.findButtonsGlobally();
+                }
+                
+                if (this.ideType === 'windsurf') {
+                    // For Windsurf, search the entire document for button patterns
+                    const windsurfButtons = this.findWindsurfButtons();
+                    buttons.push(...windsurfButtons);
+                    if (this.debugMode) {
+                        this.log(`Windsurf search found ${windsurfButtons.length} buttons`);
                     }
                 } else {
+                    // Cursor IDE - Enhanced comprehensive search strategy
+                    
+                    // 1. Check previous sibling elements for regular buttons
+                    let currentElement = inputBox.previousElementSibling;
+                    let searchDepth = 0;
+                    
+                    while (currentElement && searchDepth < 10) { // Increased search depth
+                        const acceptElements = this.findAcceptInElement(currentElement);
+                        buttons.push(...acceptElements);
+                        if (this.debugMode && acceptElements.length > 0) {
+                            this.log(`Found ${acceptElements.length} buttons in sibling ${searchDepth}`);
+                        }
+                        currentElement = currentElement.previousElementSibling;
+                        searchDepth++;
+                    }
+                    
+                    // 2. Search in conversations div for buttons in message bubbles
+                    const conversationsDiv = document.querySelector('div.conversations');
+                    if (conversationsDiv) {
+                        const conversationButtons = this.findButtonsInConversations(conversationsDiv);
+                        buttons.push(...conversationButtons);
+                        if (this.debugMode) {
+                            this.log(`Conversation search found ${conversationButtons.length} buttons`);
+                        }
+                    }
+                    
+                    // 3. Search in composer code blocks for Accept/Keep buttons
+                    const composerButtons = this.findButtonsInComposerBlocks();
+                    buttons.push(...composerButtons);
                     if (this.debugMode) {
-                        this.log(`${this.ideType} input container not found, using global search only`);
+                        this.log(`Composer search found ${composerButtons.length} buttons`);
+                    }
+                    
+                    // 4. Search for buttons in any visible code block containers
+                    const codeBlockButtons = this.findButtonsInCodeBlocks();
+                    buttons.push(...codeBlockButtons);
+                    if (this.debugMode) {
+                        this.log(`Code block search found ${codeBlockButtons.length} buttons`);
+                    }
+                    
+                    // 5. NEW: Search in any visible modal, overlay, or popup
+                    const modalButtons = this.findButtonsInModals();
+                    buttons.push(...modalButtons);
+                    if (this.debugMode) {
+                        this.log(`Modal search found ${modalButtons.length} buttons`);
+                    }
+                    
+                    // 6. NEW: Search in any element with button-like classes
+                    const classButtons = this.findButtonsByClass();
+                    buttons.push(...classButtons);
+                    if (this.debugMode) {
+                        this.log(`Class-based search found ${classButtons.length} buttons`);
+                    }
+                    
+                    // 7. NEW: Search in any element containing button text
+                    const textButtons = this.findButtonsByText();
+                    buttons.push(...textButtons);
+                    if (this.debugMode) {
+                        this.log(`Text-based search found ${textButtons.length} buttons`);
                     }
                 }
 
@@ -1999,12 +2039,18 @@
                 if (this.config.enableResume) {
                     const resumeLinks = this.findResumeLinks();
                     buttons.push(...resumeLinks);
+                    if (this.debugMode) {
+                        this.log(`Resume links search found ${resumeLinks.length} buttons`);
+                    }
                 }
 
                 // Search for connection failure buttons (Resume/Try again in dropdowns)
                 if (this.config.enableConnectionResume || this.config.enableTryAgain) {
                     const connectionButtons = this.findConnectionFailureButtons();
                     buttons.push(...connectionButtons);
+                    if (this.debugMode) {
+                        this.log(`Connection buttons search found ${connectionButtons.length} buttons`);
+                    }
                 }
                 
                 // Remove duplicates based on element reference
@@ -2018,8 +2064,12 @@
                     }
                 }
                 
-                if (this.debugMode && uniqueButtons.length > 0) {
-                    this.log(`Found ${uniqueButtons.length} unique buttons: ${uniqueButtons.map(b => b.textContent.trim()).join(', ')}`);
+                if (this.debugMode) {
+                    this.log(`=== BUTTON SEARCH COMPLETE ===`);
+                    this.log(`Total unique buttons found: ${uniqueButtons.length}`);
+                    if (uniqueButtons.length > 0) {
+                        this.log(`Button texts: ${uniqueButtons.map(b => `"${b.textContent.trim()}"`).join(', ')}`);
+                    }
                 }
                 
                 return uniqueButtons;
@@ -2054,15 +2104,7 @@
                     '[tabindex]',
                     '[onclick]',
                     '[onmousedown]',
-                    '[onmouseup]',
-                    // Additional selectors for better detection
-                    '[data-testid*="button"]',
-                    '[aria-label*="accept"]',
-                    '[aria-label*="keep"]',
-                    '[aria-label*="run"]',
-                    '[title*="accept"]',
-                    '[title*="keep"]',
-                    '[title*="run"]'
+                    '[onmouseup]'
                 ];
                 
                 for (const selector of clickableSelectors) {
@@ -2077,14 +2119,6 @@
                 // Also check the element itself
                 if (this.isAcceptButton(element)) {
                     buttons.push(element);
-                }
-                
-                // Additional search for any element with button-like text
-                const allElements = element.querySelectorAll('*');
-                for (const el of allElements) {
-                    if (el.textContent && this.isAcceptButton(el) && !buttons.includes(el)) {
-                        buttons.push(el);
-                    }
                 }
                 
                 return buttons;
@@ -2166,6 +2200,107 @@
                             if (this.debugMode && blockButtons.length > 0) {
                                 this.log(`Found ${blockButtons.length} buttons in code block: ${selector}`);
                             }
+                        }
+                    }
+                }
+                
+                return buttons;
+            }
+            
+            // NEW: Find buttons in modals, overlays, and popups
+            findButtonsInModals() {
+                const buttons = [];
+                
+                const modalSelectors = [
+                    '[class*="modal"]',
+                    '[class*="overlay"]',
+                    '[class*="popup"]',
+                    '[class*="dialog"]',
+                    '[class*="dropdown"]',
+                    '[class*="tooltip"]',
+                    '[role="dialog"]',
+                    '[role="alertdialog"]',
+                    '[aria-modal="true"]'
+                ];
+                
+                for (const selector of modalSelectors) {
+                    const modals = document.querySelectorAll(selector);
+                    for (const modal of modals) {
+                        if (this.isElementVisible(modal)) {
+                            const modalButtons = this.findAcceptInElement(modal);
+                            buttons.push(...modalButtons);
+                            
+                            if (this.debugMode && modalButtons.length > 0) {
+                                this.log(`Found ${modalButtons.length} buttons in modal: ${selector}`);
+                            }
+                        }
+                    }
+                }
+                
+                return buttons;
+            }
+            
+            // NEW: Find buttons by class patterns
+            findButtonsByClass() {
+                const buttons = [];
+                
+                const buttonClassSelectors = [
+                    '[class*="button"]',
+                    '[class*="btn"]',
+                    '[class*="accept"]',
+                    '[class*="keep"]',
+                    '[class*="run"]',
+                    '[class*="apply"]',
+                    '[class*="execute"]',
+                    '[class*="anysphere"]',
+                    '[class*="cursor"]',
+                    '[class*="primary"]',
+                    '[class*="secondary"]',
+                    '[class*="text-button"]',
+                    '[class*="action"]',
+                    '[class*="confirm"]',
+                    '[class*="submit"]'
+                ];
+                
+                for (const selector of buttonClassSelectors) {
+                    const elements = document.querySelectorAll(selector);
+                    for (const element of elements) {
+                        if (this.isElementVisible(element) && this.isElementClickable(element)) {
+                            if (this.isAcceptButton(element)) {
+                                buttons.push(element);
+                            }
+                        }
+                    }
+                }
+                
+                return buttons;
+            }
+            
+            // NEW: Find buttons by text content
+            findButtonsByText() {
+                const buttons = [];
+                
+                // Get all elements that might contain button text
+                const allElements = document.querySelectorAll('*');
+                
+                for (const element of allElements) {
+                    if (!element.textContent) continue;
+                    
+                    const text = element.textContent.toLowerCase().trim();
+                    const buttonTexts = [
+                        'accept all', 'accept', 'keep all', 'keep', 
+                        'run command', 'run', 'apply', 'execute',
+                        'review next file', 'next file', 'continue',
+                        'proceed', 'confirm', 'submit', 'ok', 'yes'
+                    ];
+                    
+                    const hasButtonText = buttonTexts.some(buttonText => 
+                        text.includes(buttonText) && text.length < 50 // Reasonable button text length
+                    );
+                    
+                    if (hasButtonText && this.isElementVisible(element) && this.isElementClickable(element)) {
+                        if (this.isAcceptButton(element)) {
+                            buttons.push(element);
                         }
                     }
                 }
@@ -2465,38 +2600,10 @@
                         // Log the action
                         const buttonText = clickedButton.textContent.trim().substring(0, 30);
                         this.logToPanel(`✓ Clicked: ${buttonText}`, 'info');
-                        
-                        // After clicking, immediately search for new buttons that might have appeared
-                        setTimeout(() => {
-                            this.findAndClickNextButtons();
-                        }, 200);
                     }
                     
                 } catch (error) {
                     this.log(`Error executing: ${error.message}`);
-                }
-            }
-            
-            // New method to find and click next buttons after a click
-            findAndClickNextButtons() {
-                try {
-                    const newButtons = this.findAcceptButtons();
-                    if (newButtons.length > 0) {
-                        const clickedButton = this.clickButtonsInSequence(newButtons);
-                        if (clickedButton) {
-                            this.totalClicks++;
-                            this.updatePanelStatus();
-                            const buttonText = clickedButton.textContent.trim().substring(0, 30);
-                            this.logToPanel(`✓ Next: ${buttonText}`, 'info');
-                            
-                            // Recursively look for more buttons
-                            setTimeout(() => {
-                                this.findAndClickNextButtons();
-                            }, 200);
-                        }
-                    }
-                } catch (error) {
-                    this.log(`Error in findAndClickNextButtons: ${error.message}`);
                 }
             }
             
@@ -2543,10 +2650,6 @@
                     if (this.isElementVisible(button) && this.isElementClickable(button)) {
                         const success = this.clickElement(button);
                         if (success) {
-                            // After clicking, wait a bit for new buttons to appear
-                            setTimeout(() => {
-                                this.logToPanel(`✓ Clicked: ${button.textContent.trim()} - waiting for next buttons...`, 'info');
-                            }, 100);
                             return button;
                         }
                     }

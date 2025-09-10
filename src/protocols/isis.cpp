@@ -3,425 +3,254 @@
 #include <sstream>
 #include <algorithm>
 #include <chrono>
-#include <thread>
-#include <random>
 
 namespace router_sim {
 
 ISISProtocol::ISISProtocol() : running_(false), system_id_("0000.0000.0000"), area_id_("49.0001") {
-    config_.system_id = "0000.0000.0000";
-    config_.area_id = "49.0001";
-    config_.level = 2;
-    config_.hello_interval = 10;
-    config_.hold_time = 30;
-    config_.lsp_interval = 30;
-    config_.metric = 10;
+    stats_.reset();
 }
 
 ISISProtocol::~ISISProtocol() {
     stop();
 }
 
-bool ISISProtocol::initialize(const ProtocolConfig& config) {
-    std::lock_guard<std::mutex> lock(config_mutex_);
-    
-    config_.parameters = config.parameters;
-    config_.enabled = config.enabled;
-    config_.update_interval_ms = config.update_interval_ms;
-    
-    // Parse IS-IS specific parameters
-    auto it = config.parameters.find("system_id");
-    if (it != config.parameters.end()) {
-        config_.system_id = it->second;
-        system_id_ = config_.system_id;
-    }
-    
-    it = config.parameters.find("area_id");
-    if (it != config.parameters.end()) {
-        config_.area_id = it->second;
-        area_id_ = config_.area_id;
-    }
-    
-    it = config.parameters.find("level");
-    if (it != config.parameters.end()) {
-        config_.level = std::stoul(it->second);
-    }
-    
-    it = config.parameters.find("hello_interval");
-    if (it != config.parameters.end()) {
-        config_.hello_interval = std::stoul(it->second);
-    }
-    
-    it = config.parameters.find("hold_time");
-    if (it != config.parameters.end()) {
-        config_.hold_time = std::stoul(it->second);
-    }
-    
-    it = config.parameters.find("lsp_interval");
-    if (it != config.parameters.end()) {
-        config_.lsp_interval = std::stoul(it->second);
-    }
-    
-    it = config.parameters.find("metric");
-    if (it != config.parameters.end()) {
-        config_.metric = std::stoul(it->second);
-    }
-    
-    // Initialize statistics
-    stats_.hello_sent = 0;
-    stats_.hello_received = 0;
-    stats_.lsp_sent = 0;
-    stats_.lsp_received = 0;
-    stats_.psnp_sent = 0;
-    stats_.psnp_received = 0;
-    stats_.csnp_sent = 0;
-    stats_.csnp_received = 0;
-    stats_.adjacencies_formed = 0;
-    stats_.adjacencies_lost = 0;
-    
-    std::cout << "IS-IS protocol initialized with system ID " << system_id_ 
-              << " and area ID " << area_id_ << "\n";
-    return true;
-}
-
-bool ISISProtocol::start() {
-    if (running_.load()) {
+bool ISISProtocol::start(const std::map<std::string, std::string>& config) {
+    if (running_) {
         return true;
     }
-
-    std::cout << "Starting IS-IS protocol...\n";
-    running_.store(true);
-
-    // Start IS-IS threads
-    isis_thread_ = std::thread(&ISISProtocol::isis_main_loop, this);
-    hello_thread_ = std::thread(&ISISProtocol::hello_loop, this);
-    lsp_thread_ = std::thread(&ISISProtocol::lsp_processing_loop, this);
-    spf_thread_ = std::thread(&ISISProtocol::spf_calculation_loop, this);
-
-    std::cout << "IS-IS protocol started\n";
+    
+    // Parse configuration
+    if (config.find("system_id") != config.end()) {
+        system_id_ = config.at("system_id");
+    }
+    
+    if (config.find("area_id") != config.end()) {
+        area_id_ = config.at("area_id");
+    }
+    
+    if (config.find("hello_interval") != config.end()) {
+        hello_interval_ = std::stoul(config.at("hello_interval"));
+    }
+    
+    if (config.find("hold_time") != config.end()) {
+        hold_time_ = std::stoul(config.at("hold_time"));
+    }
+    
+    if (config.find("lsp_interval") != config.end()) {
+        lsp_interval_ = std::stoul(config.at("lsp_interval"));
+    }
+    
+    // Initialize IS-IS state
+    state_ = ISISState::DOWN;
+    running_ = true;
+    
+    // Start IS-IS processing thread
+    isis_thread_ = std::thread(&ISISProtocol::isis_processing_loop, this);
+    
+    std::cout << "IS-IS protocol started (System ID: " << system_id_ << ", Area: " << area_id_ << ")" << std::endl;
     return true;
 }
 
 bool ISISProtocol::stop() {
-    if (!running_.load()) {
+    if (!running_) {
         return true;
     }
-
-    std::cout << "Stopping IS-IS protocol...\n";
-    running_.store(false);
-
-    // Wait for threads to finish
+    
+    running_ = false;
+    state_ = ISISState::DOWN;
+    
+    // Wait for processing thread to finish
     if (isis_thread_.joinable()) {
         isis_thread_.join();
     }
-    if (hello_thread_.joinable()) {
-        hello_thread_.join();
-    }
-    if (lsp_thread_.joinable()) {
-        lsp_thread_.join();
-    }
-    if (spf_thread_.joinable()) {
-        spf_thread_.join();
-    }
-
-    std::cout << "IS-IS protocol stopped\n";
+    
+    // Clear all interfaces and routes
+    interfaces_.clear();
+    routes_.clear();
+    
+    std::cout << "IS-IS protocol stopped" << std::endl;
     return true;
 }
 
 bool ISISProtocol::is_running() const {
-    return running_.load();
+    return running_;
 }
 
 bool ISISProtocol::add_interface(const std::string& interface, const std::map<std::string, std::string>& config) {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    ISISInterface isis_if;
-    isis_if.name = interface;
-    isis_if.level = config_.level;
-    isis_if.metric = config_.metric;
-    isis_if.hello_interval = config_.hello_interval;
-    isis_if.hold_time = config_.hold_time;
-    isis_if.state = "Down";
-    isis_if.adjacencies_count = 0;
-    
-    // Parse interface-specific config
-    auto it = config.find("level");
-    if (it != config.end()) {
-        isis_if.level = std::stoul(it->second);
+    if (!running_) {
+        return false;
     }
     
-    it = config.find("metric");
-    if (it != config.end()) {
-        isis_if.metric = std::stoul(it->second);
+    ISISInterface isis_interface;
+    isis_interface.name = interface;
+    isis_interface.area_id = area_id_;
+    isis_interface.hello_interval = hello_interval_;
+    isis_interface.hold_time = hold_time_;
+    isis_interface.lsp_interval = lsp_interval_;
+    isis_interface.priority = 64; // Default priority
+    isis_interface.cost = 10; // Default cost
+    isis_interface.state = ISISInterfaceState::DOWN;
+    isis_interface.last_hello = std::chrono::steady_clock::now();
+    
+    if (config.find("area_id") != config.end()) {
+        isis_interface.area_id = config.at("area_id");
     }
     
-    it = config.find("hello_interval");
-    if (it != config.end()) {
-        isis_if.hello_interval = std::stoul(it->second);
+    if (config.find("hello_interval") != config.end()) {
+        isis_interface.hello_interval = std::stoul(config.at("hello_interval"));
     }
     
-    it = config.find("hold_time");
-    if (it != config.end()) {
-        isis_if.hold_time = std::stoul(it->second);
+    if (config.find("hold_time") != config.end()) {
+        isis_interface.hold_time = std::stoul(config.at("hold_time"));
     }
     
-    it = config.find("network");
-    if (it != config.end()) {
-        isis_if.network = it->second;
+    if (config.find("lsp_interval") != config.end()) {
+        isis_interface.lsp_interval = std::stoul(config.at("lsp_interval"));
     }
-
-    interfaces_[interface] = isis_if;
     
-    std::cout << "IS-IS: Added interface " << interface << " at level " << isis_if.level << "\n";
+    if (config.find("priority") != config.end()) {
+        isis_interface.priority = std::stoul(config.at("priority"));
+    }
+    
+    if (config.find("cost") != config.end()) {
+        isis_interface.cost = std::stoul(config.at("cost"));
+    }
+    
+    interfaces_[interface] = isis_interface;
+    
+    std::cout << "IS-IS interface added: " << interface << " (Area: " << isis_interface.area_id << ")" << std::endl;
     return true;
 }
 
 bool ISISProtocol::remove_interface(const std::string& interface) {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
+    if (!running_) {
+        return false;
+    }
     
     auto it = interfaces_.find(interface);
     if (it == interfaces_.end()) {
         return false;
     }
-
+    
     interfaces_.erase(it);
     
-    std::cout << "IS-IS: Removed interface " << interface << "\n";
+    std::cout << "IS-IS interface removed: " << interface << std::endl;
     return true;
 }
 
 bool ISISProtocol::advertise_route(const std::string& prefix, const std::map<std::string, std::string>& attributes) {
-    std::lock_guard<std::mutex> lock(routes_mutex_);
+    if (!running_) {
+        return false;
+    }
     
     ISISRoute route;
     route.prefix = prefix;
-    route.system_id = system_id_;
     route.area_id = area_id_;
-    route.metric = config_.metric;
-    route.level = config_.level;
-    route.is_valid = true;
-    route.timestamp = std::chrono::system_clock::now();
-    route.attributes = attributes;
+    route.type = attributes.at("type");
+    route.cost = std::stoul(attributes.at("cost"));
+    route.next_hop = attributes.at("next_hop");
+    route.advertising_router = system_id_;
+    route.last_update = std::chrono::steady_clock::now();
+    route.is_active = true;
     
-    std::string key = prefix;
-    advertised_routes_[key] = route;
-    
-    std::cout << "IS-IS: Advertised route " << prefix << " at level " << config_.level << "\n";
+    routes_[prefix] = route;
     
     // Notify callback
     if (route_update_callback_) {
-        RouteInfo route_info;
-        route_info.prefix = prefix;
-        route_info.next_hop = system_id_;
-        route_info.metric = config_.metric;
-        route_info.protocol = "ISIS";
-        route_info.timestamp = route.timestamp;
-        route_update_callback_(route_info, true);
+        RouteInfo info;
+        info.prefix = prefix;
+        info.next_hop = route.next_hop;
+        info.protocol = "IS-IS";
+        info.metric = route.cost;
+        info.area_id = route.area_id;
+        route_update_callback_(info, true);
     }
     
+    std::cout << "IS-IS route advertised: " << prefix << " -> " << route.next_hop << " (Cost: " << route.cost << ")" << std::endl;
     return true;
 }
 
 bool ISISProtocol::withdraw_route(const std::string& prefix) {
-    std::lock_guard<std::mutex> lock(routes_mutex_);
-    
-    auto it = advertised_routes_.find(prefix);
-    if (it == advertised_routes_.end()) {
+    if (!running_) {
         return false;
     }
-
-    advertised_routes_.erase(it);
     
-    std::cout << "IS-IS: Withdrew route " << prefix << "\n";
+    auto it = routes_.find(prefix);
+    if (it == routes_.end()) {
+        return false;
+    }
     
     // Notify callback
     if (route_update_callback_) {
-        RouteInfo route_info;
-        route_info.prefix = prefix;
-        route_info.protocol = "ISIS";
-        route_info.timestamp = std::chrono::system_clock::now();
-        route_update_callback_(route_info, false);
+        RouteInfo info;
+        info.prefix = prefix;
+        info.next_hop = it->second.next_hop;
+        info.protocol = "IS-IS";
+        info.metric = it->second.cost;
+        route_update_callback_(info, false);
     }
     
+    routes_.erase(it);
+    
+    std::cout << "IS-IS route withdrawn: " << prefix << std::endl;
     return true;
 }
 
 std::vector<RouteInfo> ISISProtocol::get_routes() const {
-    std::lock_guard<std::mutex> lock(routes_mutex_);
+    std::vector<RouteInfo> route_list;
     
-    std::vector<RouteInfo> result;
-    
-    // Add advertised routes
-    for (const auto& pair : advertised_routes_) {
-        const auto& route = pair.second;
-        RouteInfo route_info;
-        route_info.prefix = route.prefix;
-        route_info.next_hop = system_id_;
-        route_info.metric = route.metric;
-        route_info.protocol = "ISIS";
-        route_info.timestamp = route.timestamp;
-        result.push_back(route_info);
+    for (const auto& [prefix, route] : routes_) {
+        if (route.is_active) {
+            RouteInfo info;
+            info.prefix = prefix;
+            info.next_hop = route.next_hop;
+            info.protocol = "IS-IS";
+            info.metric = route.cost;
+            info.area_id = route.area_id;
+            info.last_update = route.last_update;
+            route_list.push_back(info);
+        }
     }
     
-    // Add learned routes
-    for (const auto& pair : learned_routes_) {
-        const auto& route = pair.second;
-        RouteInfo route_info;
-        route_info.prefix = route.prefix;
-        route_info.next_hop = route.next_hop;
-        route_info.metric = route.metric;
-        route_info.protocol = "ISIS";
-        route_info.timestamp = route.timestamp;
-        result.push_back(route_info);
-    }
-    
-    return result;
+    return route_list;
 }
 
 std::vector<NeighborInfo> ISISProtocol::get_neighbors() const {
-    std::lock_guard<std::mutex> lock(neighbors_mutex_);
+    std::vector<NeighborInfo> neighbor_list;
     
-    std::vector<NeighborInfo> result;
-    for (const auto& pair : neighbors_) {
-        const auto& neighbor = pair.second;
-        NeighborInfo neighbor_info;
-        neighbor_info.address = neighbor.system_id;
-        neighbor_info.state = neighbor.state;
-        neighbor_info.protocol = "ISIS";
-        neighbor_info.established_time = neighbor.established_time;
-        result.push_back(neighbor_info);
+    for (const auto& [interface_name, interface] : interfaces_) {
+        for (const auto& [neighbor_id, neighbor] : interface.neighbors) {
+            NeighborInfo info;
+            info.address = neighbor_id;
+            info.protocol = "IS-IS";
+            info.state = neighbor_state_to_string(neighbor.state);
+            info.interface = interface_name;
+            info.area_id = interface.area_id;
+            info.priority = neighbor.priority;
+            info.last_update = neighbor.last_update;
+            neighbor_list.push_back(info);
+        }
     }
-    return result;
+    
+    return neighbor_list;
 }
 
 std::map<std::string, uint64_t> ISISProtocol::get_statistics() const {
     std::lock_guard<std::mutex> lock(stats_mutex_);
     return {
+        {"packets_sent", stats_.packets_sent},
+        {"packets_received", stats_.packets_received},
         {"hello_sent", stats_.hello_sent},
         {"hello_received", stats_.hello_received},
         {"lsp_sent", stats_.lsp_sent},
         {"lsp_received", stats_.lsp_received},
-        {"psnp_sent", stats_.psnp_sent},
-        {"psnp_received", stats_.psnp_received},
-        {"csnp_sent", stats_.csnp_sent},
-        {"csnp_received", stats_.csnp_received},
-        {"adjacencies_formed", stats_.adjacencies_formed},
-        {"adjacencies_lost", stats_.adjacencies_lost}
+        {"lsp_ack_sent", stats_.lsp_ack_sent},
+        {"lsp_ack_received", stats_.lsp_ack_received},
+        {"routes_advertised", stats_.routes_advertised},
+        {"routes_withdrawn", stats_.routes_withdrawn},
+        {"neighbors_up", stats_.neighbors_up},
+        {"neighbors_down", stats_.neighbors_down}
     };
-}
-
-void ISISProtocol::isis_main_loop() {
-    std::cout << "IS-IS main loop started\n";
-    
-    while (running_.load()) {
-        // Process incoming IS-IS messages
-        process_incoming_messages();
-        
-        // Update interface states
-        update_interface_states();
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    
-    std::cout << "IS-IS main loop stopped\n";
-}
-
-void ISISProtocol::hello_loop() {
-    std::cout << "IS-IS hello loop started\n";
-    
-    while (running_.load()) {
-        std::lock_guard<std::mutex> lock(interfaces_mutex_);
-        
-        for (auto& pair : interfaces_) {
-            auto& interface = pair.second;
-            
-            if (interface.state == "Up") {
-                send_hello_message(interface.name);
-                stats_.hello_sent++;
-            }
-        }
-        
-        std::this_thread::sleep_for(std::chrono::seconds(config_.hello_interval));
-    }
-    
-    std::cout << "IS-IS hello loop stopped\n";
-}
-
-void ISISProtocol::lsp_processing_loop() {
-    std::cout << "IS-IS LSP processing loop started\n";
-    
-    while (running_.load()) {
-        // Process LSP updates
-        process_lsp_updates();
-        
-        // Flood LSPs
-        flood_lsps();
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    
-    std::cout << "IS-IS LSP processing loop stopped\n";
-}
-
-void ISISProtocol::spf_calculation_loop() {
-    std::cout << "IS-IS SPF calculation loop started\n";
-    
-    while (running_.load()) {
-        // Run SPF calculation
-        run_spf_calculation();
-        
-        std::this_thread::sleep_for(std::chrono::seconds(5));
-    }
-    
-    std::cout << "IS-IS SPF calculation loop stopped\n";
-}
-
-void ISISProtocol::process_incoming_messages() {
-    // Simulate processing incoming IS-IS messages
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-}
-
-void ISISProtocol::update_interface_states() {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    for (auto& pair : interfaces_) {
-        auto& interface = pair.second;
-        
-        if (interface.state == "Down") {
-            interface.state = "Up";
-            std::cout << "IS-IS: Interface " << interface.name << " is now Up\n";
-        }
-    }
-}
-
-void ISISProtocol::process_lsp_updates() {
-    // Simulate LSP processing
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-}
-
-void ISISProtocol::flood_lsps() {
-    // Simulate LSP flooding
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-}
-
-void ISISProtocol::run_spf_calculation() {
-    // Simulate SPF calculation
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-}
-
-bool ISISProtocol::send_hello_message(const std::string& interface) {
-    std::lock_guard<std::mutex> lock(interfaces_mutex_);
-    
-    auto it = interfaces_.find(interface);
-    if (it == interfaces_.end()) {
-        return false;
-    }
-    
-    auto& interface_obj = it->second;
-    interface_obj.hello_sent++;
-    
-    std::cout << "IS-IS: Sent HELLO on interface " << interface << "\n";
-    return true;
 }
 
 void ISISProtocol::set_route_update_callback(std::function<void(const RouteInfo&, bool)> callback) {
@@ -430,6 +259,131 @@ void ISISProtocol::set_route_update_callback(std::function<void(const RouteInfo&
 
 void ISISProtocol::set_neighbor_update_callback(std::function<void(const NeighborInfo&, bool)> callback) {
     neighbor_update_callback_ = callback;
+}
+
+void ISISProtocol::isis_processing_loop() {
+    while (running_) {
+        // Process IS-IS state machine
+        process_isis_state_machine();
+        
+        // Send hello packets
+        send_hello_packets();
+        
+        // Process incoming messages
+        process_incoming_messages();
+        
+        // Check for dead neighbors
+        check_dead_neighbors();
+        
+        // Sleep for a short time
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+}
+
+void ISISProtocol::process_isis_state_machine() {
+    for (auto& [interface_name, interface] : interfaces_) {
+        switch (interface.state) {
+            case ISISInterfaceState::DOWN:
+                // Interface is down, try to bring it up
+                if (bring_interface_up(interface_name)) {
+                    interface.state = ISISInterfaceState::UP;
+                    interface.last_hello = std::chrono::steady_clock::now();
+                }
+                break;
+                
+            case ISISInterfaceState::UP:
+                // Interface is up and running
+                maintain_isis_interface(interface_name, interface);
+                break;
+        }
+    }
+}
+
+void ISISProtocol::send_hello_packets() {
+    auto now = std::chrono::steady_clock::now();
+    
+    for (auto& [interface_name, interface] : interfaces_) {
+        if (interface.state != ISISInterfaceState::DOWN) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                now - interface.last_hello);
+            
+            if (elapsed.count() >= interface.hello_interval) {
+                if (send_hello_packet(interface_name)) {
+                    interface.last_hello = now;
+                    
+                    // Update statistics
+                    {
+                        std::lock_guard<std::mutex> lock(stats_mutex_);
+                        stats_.hello_sent++;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void ISISProtocol::process_incoming_messages() {
+    // This would process incoming IS-IS messages from the network
+    // For simulation purposes, we'll just update statistics
+}
+
+void ISISProtocol::check_dead_neighbors() {
+    auto now = std::chrono::steady_clock::now();
+    
+    for (auto& [interface_name, interface] : interfaces_) {
+        for (auto& [neighbor_id, neighbor] : interface.neighbors) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                now - neighbor.last_update);
+            
+            if (elapsed.count() > interface.hold_time) {
+                // Neighbor is dead
+                neighbor.state = ISISNeighborState::DOWN;
+                
+                // Update statistics
+                {
+                    std::lock_guard<std::mutex> lock(stats_mutex_);
+                    stats_.neighbors_down++;
+                }
+                
+                // Notify callback
+                if (neighbor_update_callback_) {
+                    NeighborInfo info;
+                    info.address = neighbor_id;
+                    info.protocol = "IS-IS";
+                    info.state = "DOWN";
+                    info.interface = interface_name;
+                    info.area_id = interface.area_id;
+                    neighbor_update_callback_(info, false);
+                }
+            }
+        }
+    }
+}
+
+bool ISISProtocol::bring_interface_up(const std::string& interface) {
+    // Simulate bringing interface up
+    // In a real implementation, this would configure the network interface
+    return true;
+}
+
+void ISISProtocol::maintain_isis_interface(const std::string& interface_name, ISISInterface& interface) {
+    // Maintain IS-IS interface state
+    // This would include sending LSPs, processing LSPs, etc.
+}
+
+bool ISISProtocol::send_hello_packet(const std::string& interface) {
+    // Simulate sending IS-IS hello packet
+    // In a real implementation, this would send actual IS-IS packets
+    return true;
+}
+
+std::string ISISProtocol::neighbor_state_to_string(ISISNeighborState state) const {
+    switch (state) {
+        case ISISNeighborState::DOWN: return "DOWN";
+        case ISISNeighborState::INIT: return "INIT";
+        case ISISNeighborState::UP: return "UP";
+        default: return "UNKNOWN";
+    }
 }
 
 } // namespace router_sim

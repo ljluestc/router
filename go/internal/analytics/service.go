@@ -1,6 +1,9 @@
 package analytics
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -10,258 +13,255 @@ import (
 
 // Service represents the analytics service
 type Service struct {
+	config *config.MonitoringConfig
 	logger *zap.Logger
 }
 
-// Metric represents a single metric
-type Metric struct {
-	Name      string            `json:"name"`
-	Value     float64           `json:"value"`
-	Unit      string            `json:"unit"`
-	Labels    map[string]string `json:"labels"`
-	Timestamp time.Time         `json:"timestamp"`
-}
-
-// Dashboard represents dashboard data
-type Dashboard struct {
-	Title       string                 `json:"title"`
-	LastUpdate  time.Time              `json:"last_update"`
-	Metrics     []Metric               `json:"metrics"`
-	Charts      []Chart                `json:"charts"`
-	Alerts      []Alert                `json:"alerts"`
-	Summary     map[string]interface{} `json:"summary"`
-}
-
-// Chart represents a chart configuration
-type Chart struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Type        string    `json:"type"`
-	Data        []DataPoint `json:"data"`
-	XAxis       string    `json:"x_axis"`
-	YAxis       string    `json:"y_axis"`
-	Description string    `json:"description"`
-}
-
-// DataPoint represents a single data point
-type DataPoint struct {
-	X interface{} `json:"x"`
-	Y interface{} `json:"y"`
-	Label string  `json:"label,omitempty"`
-}
-
-// Alert represents an alert
-type Alert struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Severity    string    `json:"severity"`
-	Status      string    `json:"status"`
-	Message     string    `json:"message"`
-	Timestamp   time.Time `json:"timestamp"`
-	Source      string    `json:"source"`
-}
-
-// Report represents a report
-type Report struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Type        string    `json:"type"`
-	GeneratedAt time.Time `json:"generated_at"`
-	Data        interface{} `json:"data"`
-	Summary     string    `json:"summary"`
-}
-
 // NewService creates a new analytics service
-func NewService(config interface{}, logger *zap.Logger) (*Service, error) {
+func NewService(config *config.MonitoringConfig, logger *zap.Logger) (*Service, error) {
 	return &Service{
+		config: config,
 		logger: logger,
 	}, nil
 }
 
-// GetMetrics returns current metrics
+// GetMetrics handles GET /api/v1/analytics/metrics
 func (s *Service) GetMetrics(c *gin.Context) {
-	metrics := []Metric{
-		{
-			Name:      "packets_per_second",
-			Value:     1250.5,
-			Unit:      "pps",
-			Labels:    map[string]string{"interface": "eth0"},
-			Timestamp: time.Now(),
+	// Mock metrics data
+	metrics := map[string]interface{}{
+		"router": map[string]interface{}{
+			"uptime_seconds":    3600,
+			"interfaces_total":  4,
+			"interfaces_up":     3,
+			"routes_total":      150,
+			"neighbors_total":   8,
+			"neighbors_up":      6,
 		},
-		{
-			Name:      "bytes_per_second",
-			Value:     1024000.0,
-			Unit:      "bps",
-			Labels:    map[string]string{"interface": "eth0"},
-			Timestamp: time.Now(),
+		"protocols": map[string]interface{}{
+			"bgp": map[string]interface{}{
+				"status":           "up",
+				"neighbors":        3,
+				"routes_advertised": 50,
+				"routes_received":  45,
+				"updates_sent":     120,
+				"updates_received": 110,
+			},
+			"ospf": map[string]interface{}{
+				"status":           "up",
+				"neighbors":        2,
+				"routes_advertised": 30,
+				"routes_received":  25,
+				"lsa_sent":         80,
+				"lsa_received":     75,
+			},
+			"isis": map[string]interface{}{
+				"status":           "up",
+				"neighbors":        1,
+				"routes_advertised": 20,
+				"routes_received":  18,
+				"lsp_sent":         60,
+				"lsp_received":     55,
+			},
 		},
-		{
-			Name:      "cpu_usage",
-			Value:     45.2,
-			Unit:      "percent",
-			Labels:    map[string]string{"core": "0"},
-			Timestamp: time.Now(),
+		"traffic": map[string]interface{}{
+			"packets_processed":   1000000,
+			"packets_dropped":     5000,
+			"bytes_processed":     500000000,
+			"bytes_dropped":       2500000,
+			"current_throughput":  1000000, // bps
+			"peak_throughput":     2000000, // bps
 		},
-		{
-			Name:      "memory_usage",
-			Value:     67.8,
-			Unit:      "percent",
-			Labels:    map[string]string{"type": "used"},
-			Timestamp: time.Now(),
+		"impairments": map[string]interface{}{
+			"interfaces_affected": 2,
+			"delay_impairments":   1,
+			"loss_impairments":    1,
+			"duplicate_impairments": 0,
 		},
-		{
-			Name:      "routing_table_size",
-			Value:     1250.0,
-			Unit:      "routes",
-			Labels:    map[string]string{"protocol": "bgp"},
-			Timestamp: time.Now(),
-		},
-		{
-			Name:      "bgp_neighbors",
-			Value:     3.0,
-			Unit:      "count",
-			Labels:    map[string]string{"status": "established"},
-			Timestamp: time.Now(),
+		"cloud_integration": map[string]interface{}{
+			"cloudpods": map[string]interface{}{
+				"resources_total": 10,
+				"instances_total": 5,
+				"networks_total":  3,
+				"storages_total":  8,
+			},
+			"aviatrix": map[string]interface{}{
+				"gateways_total":       4,
+				"transit_gateways":     2,
+				"spoke_gateways":       2,
+				"connections_active":   6,
+			},
 		},
 	}
 
-	c.JSON(http.StatusOK, gin.H{"metrics": metrics})
+	c.JSON(http.StatusOK, gin.H{
+		"metrics": metrics,
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
 }
 
-// GetDashboard returns dashboard data
+// GetDashboard handles GET /api/v1/analytics/dashboard
 func (s *Service) GetDashboard(c *gin.Context) {
-	// Generate sample time series data
-	now := time.Now()
-	var packetData []DataPoint
-	var cpuData []DataPoint
-	
-	for i := 0; i < 24; i++ {
-		timestamp := now.Add(-time.Duration(23-i) * time.Hour)
-		packetData = append(packetData, DataPoint{
-			X: timestamp.Format("15:04"),
-			Y: 1000 + float64(i*50) + float64(i%3)*100,
-		})
-		cpuData = append(cpuData, DataPoint{
-			X: timestamp.Format("15:04"),
-			Y: 30 + float64(i%5)*10,
-		})
-	}
-
-	dashboard := Dashboard{
-		Title:      "Router Analytics Dashboard",
-		LastUpdate: time.Now(),
-		Metrics: []Metric{
+	// Mock dashboard data
+	dashboard := map[string]interface{}{
+		"overview": map[string]interface{}{
+			"status": "healthy",
+			"uptime": "1h 30m",
+			"version": "1.0.0",
+		},
+		"charts": []map[string]interface{}{
 			{
-				Name:      "total_packets",
-				Value:     1000000,
-				Unit:      "count",
-				Labels:    map[string]string{"period": "24h"},
-				Timestamp: time.Now(),
+				"name": "Throughput Over Time",
+				"type": "line",
+				"data": []map[string]interface{}{
+					{"time": "00:00", "value": 1000000},
+					{"time": "00:15", "value": 1200000},
+					{"time": "00:30", "value": 1100000},
+					{"time": "00:45", "value": 1300000},
+					{"time": "01:00", "value": 1250000},
+				},
 			},
 			{
-				Name:      "average_latency",
-				Value:     25.5,
-				Unit:      "ms",
-				Labels:    map[string]string{"interface": "eth0"},
-				Timestamp: time.Now(),
+				"name": "Protocol Distribution",
+				"type": "pie",
+				"data": []map[string]interface{}{
+					{"protocol": "BGP", "routes": 50, "percentage": 50},
+					{"protocol": "OSPF", "routes": 30, "percentage": 30},
+					{"protocol": "IS-IS", "routes": 20, "percentage": 20},
+				},
+			},
+			{
+				"name": "Interface Utilization",
+				"type": "bar",
+				"data": []map[string]interface{}{
+					{"interface": "eth0", "utilization": 75},
+					{"interface": "eth1", "utilization": 60},
+					{"interface": "eth2", "utilization": 45},
+					{"interface": "eth3", "utilization": 30},
+				},
 			},
 		},
-		Charts: []Chart{
+		"alerts": []map[string]interface{}{
 			{
-				ID:          "packet_flow",
-				Title:       "Packet Flow (24h)",
-				Type:        "line",
-				Data:        packetData,
-				XAxis:       "Time",
-				YAxis:       "Packets/sec",
-				Description: "Network packet flow over the last 24 hours",
+				"id": "alert-1",
+				"severity": "warning",
+				"message": "High CPU utilization on router-sim-1",
+				"timestamp": "2024-01-01T12:30:00Z",
 			},
 			{
-				ID:          "cpu_usage",
-				Title:       "CPU Usage (24h)",
-				Type:        "line",
-				Data:        cpuData,
-				XAxis:       "Time",
-				YAxis:       "CPU %",
-				Description: "CPU utilization over the last 24 hours",
+				"id": "alert-2",
+				"severity": "info",
+				"message": "BGP neighbor 192.168.1.2 established",
+				"timestamp": "2024-01-01T12:25:00Z",
 			},
 		},
-		Alerts: []Alert{
+		"recent_events": []map[string]interface{}{
 			{
-				ID:        "high_cpu",
-				Title:     "High CPU Usage",
-				Severity:  "warning",
-				Status:    "active",
-				Message:   "CPU usage is above 80%",
-				Timestamp: time.Now().Add(-5 * time.Minute),
-				Source:    "system",
+				"timestamp": "2024-01-01T12:30:00Z",
+				"type": "route_update",
+				"message": "Route 10.0.0.0/24 advertised via BGP",
 			},
 			{
-				ID:        "packet_loss",
-				Title:     "Packet Loss Detected",
-				Severity:  "critical",
-				Status:    "active",
-				Message:   "Packet loss detected on interface eth0",
-				Timestamp: time.Now().Add(-2 * time.Minute),
-				Source:    "network",
+				"timestamp": "2024-01-01T12:25:00Z",
+				"type": "neighbor_up",
+				"message": "BGP neighbor 192.168.1.2 is up",
 			},
-		},
-		Summary: map[string]interface{}{
-			"total_interfaces": 4,
-			"active_interfaces": 3,
-			"total_routes": 1250,
-			"bgp_neighbors": 3,
-			"ospf_neighbors": 1,
-			"system_uptime": "5d 12h 30m",
+			{
+				"timestamp": "2024-01-01T12:20:00Z",
+				"type": "impairment_applied",
+				"message": "Delay impairment applied to eth0",
+			},
 		},
 	}
 
-	c.JSON(http.StatusOK, dashboard)
+	c.JSON(http.StatusOK, gin.H{
+		"dashboard": dashboard,
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
 }
 
-// GetReports returns available reports
+// GetReports handles GET /api/v1/analytics/reports
 func (s *Service) GetReports(c *gin.Context) {
-	reports := []Report{
-		{
-			ID:          "daily_summary",
-			Title:       "Daily Network Summary",
-			Type:        "summary",
-			GeneratedAt: time.Now().Add(-1 * time.Hour),
-			Data: map[string]interface{}{
-				"total_traffic": "1.2 TB",
-				"peak_bandwidth": "950 Mbps",
-				"average_latency": "25ms",
-				"packet_loss": "0.01%",
-			},
-			Summary: "Network performed well with minimal packet loss and good latency",
-		},
-		{
-			ID:          "bgp_analysis",
-			Title:       "BGP Protocol Analysis",
-			Type:        "protocol",
-			GeneratedAt: time.Now().Add(-2 * time.Hour),
-			Data: map[string]interface{}{
-				"neighbors": 3,
-				"routes_received": 1250,
-				"routes_advertised": 500,
-				"convergence_time": "45s",
-			},
-			Summary: "BGP protocol is stable with good convergence times",
-		},
-		{
-			ID:          "security_audit",
-			Title:       "Security Audit Report",
-			Type:        "security",
-			GeneratedAt: time.Now().Add(-6 * time.Hour),
-			Data: map[string]interface{}{
-				"failed_logins": 0,
-				"suspicious_activity": 0,
-				"firewall_rules": 25,
-				"access_attempts": 150,
-			},
-			Summary: "No security issues detected in the last 24 hours",
-		},
+	reportType := c.Query("type")
+	startTime := c.Query("start_time")
+	endTime := c.Query("end_time")
+
+	// Mock report data
+	report := map[string]interface{}{
+		"type": reportType,
+		"start_time": startTime,
+		"end_time": endTime,
+		"generated_at": time.Now().Format(time.RFC3339),
 	}
 
-	c.JSON(http.StatusOK, gin.H{"reports": reports})
+	switch reportType {
+	case "performance":
+		report["data"] = map[string]interface{}{
+			"throughput": map[string]interface{}{
+				"average": 1000000,
+				"peak":    2000000,
+				"min":     500000,
+			},
+			"latency": map[string]interface{}{
+				"average": 5.2,
+				"max":     15.8,
+				"min":     1.1,
+			},
+			"packet_loss": map[string]interface{}{
+				"percentage": 0.1,
+				"packets_lost": 1000,
+				"total_packets": 1000000,
+			},
+		}
+	case "convergence":
+		report["data"] = map[string]interface{}{
+			"bgp_convergence": map[string]interface{}{
+				"average_time": 15.5,
+				"max_time":     45.2,
+				"min_time":     5.1,
+			},
+			"ospf_convergence": map[string]interface{}{
+				"average_time": 8.3,
+				"max_time":     20.1,
+				"min_time":     3.2,
+			},
+			"isis_convergence": map[string]interface{}{
+				"average_time": 12.7,
+				"max_time":     35.4,
+				"min_time":     4.8,
+			},
+		}
+	case "topology":
+		report["data"] = map[string]interface{}{
+			"nodes": []map[string]interface{}{
+				{
+					"id": "router-1",
+					"type": "router",
+					"status": "up",
+					"position": map[string]int{"x": 100, "y": 100},
+				},
+				{
+					"id": "neighbor-1",
+					"type": "neighbor",
+					"status": "up",
+					"position": map[string]int{"x": 200, "y": 100},
+				},
+			},
+			"links": []map[string]interface{}{
+				{
+					"source": "router-1",
+					"target": "neighbor-1",
+					"protocol": "BGP",
+					"status": "up",
+				},
+			},
+		}
+	default:
+		report["data"] = map[string]interface{}{
+			"message": "No data available for report type: " + reportType,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"report": report,
+	})
 }

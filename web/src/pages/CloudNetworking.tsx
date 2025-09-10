@@ -1,101 +1,45 @@
 import React, { useState, useEffect } from 'react';
 import {
+  Box,
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Progress } from '@/components/ui/progress';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
+  Typography,
+  Button,
+  Grid,
+  Chip,
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
-  TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import {
+  Paper,
+  IconButton,
   Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
   DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+  DialogContent,
+  DialogActions,
+  TextField,
+  MenuItem,
+  LinearProgress,
+  Alert,
+  Tabs,
+  Tab,
+} from '@mui/material';
 import {
-  Cloud,
-  Server,
-  Network,
-  Shield,
-  Zap,
-  BarChart3,
-  Settings,
-  Plus,
-  Trash2,
-  Edit,
-  Play,
-  Pause,
-  RefreshCw,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
-  Globe,
-  Database,
-  Cpu,
-  HardDrive,
-  Wifi,
-  Router,
-  Layers,
-  Activity,
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  ArrowUpDown,
-  ArrowRightLeft,
-  ArrowDownUp,
-  ArrowLeftRight,
-  Circle,
-  Square,
-  Triangle,
-  Hexagon,
-  Octagon,
-  Pentagon,
-  Star,
-  Heart,
-  Zap as Lightning,
-  Target,
-  Compass,
-  MapPin,
-  Navigation,
-  Route,
-  GitBranch,
-  GitCommit,
-  GitMerge,
-  GitPullRequest,
-  GitCompare,
-  GitBranchPlus,
-  GitBranchMinus,
-  GitBranchX,
-  GitBranchCheck,
-  GitBranchPlusIcon,
-  GitBranchMinusIcon,
-  GitBranchXIcon,
-  GitBranchCheckIcon,
-} from 'lucide-react';
+  Add as AddIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  Refresh as RefreshIcon,
+  Cloud as CloudIcon,
+  Router as RouterIcon,
+  Security as SecurityIcon,
+  Analytics as AnalyticsIcon,
+  Network as NetworkIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Warning as WarningIcon,
+} from '@mui/icons-material';
 
 interface CloudProvider {
   id: string;
@@ -106,11 +50,6 @@ interface CloudProvider {
   resources: number;
   cost: number;
   lastSync: string;
-}
-
-interface NetworkTopology {
-  nodes: NetworkNode[];
-  edges: NetworkEdge[];
 }
 
 interface NetworkNode {
@@ -150,25 +89,6 @@ interface TrafficFlow {
   jitter: number;
   loss: number;
   timestamp: string;
-}
-
-interface SecurityPolicy {
-  id: string;
-  name: string;
-  type: 'firewall' | 'acl' | 'nat' | 'vpn';
-  status: 'active' | 'inactive';
-  rules: SecurityRule[];
-  lastModified: string;
-}
-
-interface SecurityRule {
-  id: string;
-  action: 'allow' | 'deny';
-  source: string;
-  destination: string;
-  protocol: string;
-  port: string;
-  description: string;
 }
 
 const CloudNetworking: React.FC = () => {
@@ -215,7 +135,10 @@ const CloudNetworking: React.FC = () => {
     },
   ]);
 
-  const [networkTopology, setNetworkTopology] = useState<NetworkTopology>({
+  const [networkTopology, setNetworkTopology] = useState<{
+    nodes: NetworkNode[];
+    edges: NetworkEdge[];
+  }>({
     nodes: [
       {
         id: '1',
@@ -315,125 +238,78 @@ const CloudNetworking: React.FC = () => {
     },
   ]);
 
-  const [securityPolicies, setSecurityPolicies] = useState<SecurityPolicy[]>([
-    {
-      id: '1',
-      name: 'Default Firewall',
-      type: 'firewall',
-      status: 'active',
-      lastModified: '2024-01-15T09:00:00Z',
-      rules: [
-        {
-          id: '1',
-          action: 'allow',
-          source: '0.0.0.0/0',
-          destination: '10.0.0.0/8',
-          protocol: 'TCP',
-          port: '80,443',
-          description: 'Allow HTTP/HTTPS traffic',
-        },
-        {
-          id: '2',
-          action: 'deny',
-          source: '0.0.0.0/0',
-          destination: '10.0.0.0/8',
-          protocol: 'TCP',
-          port: '22',
-          description: 'Deny SSH access',
-        },
-      ],
-    },
-  ]);
-
   const [selectedProvider, setSelectedProvider] = useState<string>('all');
   const [selectedRegion, setSelectedRegion] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(false);
+  const [tabValue, setTabValue] = useState(0);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'connected':
       case 'active':
       case 'up':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
+        return <CheckCircleIcon color="success" />;
       case 'disconnected':
       case 'inactive':
       case 'down':
-        return <XCircle className="h-4 w-4 text-red-500" />;
+        return <ErrorIcon color="error" />;
       case 'error':
-        return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
+        return <WarningIcon color="warning" />;
       default:
-        return <Circle className="h-4 w-4 text-gray-500" />;
+        return <ErrorIcon color="disabled" />;
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    const variants = {
-      connected: 'default',
-      active: 'default',
-      up: 'default',
-      disconnected: 'secondary',
-      inactive: 'secondary',
-      down: 'destructive',
-      error: 'destructive',
-    } as const;
-
-    return (
-      <Badge variant={variants[status as keyof typeof variants] || 'secondary'}>
-        {status}
-      </Badge>
-    );
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'connected':
+      case 'active':
+      case 'up':
+        return 'success';
+      case 'disconnected':
+      case 'inactive':
+      case 'down':
+        return 'error';
+      case 'error':
+        return 'warning';
+      default:
+        return 'default';
+    }
   };
 
   const getProviderIcon = (type: string) => {
     switch (type) {
       case 'cloudpods':
-        return <Cloud className="h-5 w-5" />;
+        return <CloudIcon />;
       case 'aviatrix':
-        return <Shield className="h-5 w-5" />;
+        return <SecurityIcon />;
       case 'aws':
-        return <Server className="h-5 w-5" />;
+        return <RouterIcon />;
       case 'azure':
-        return <Database className="h-5 w-5" />;
+        return <NetworkIcon />;
       case 'gcp':
-        return <Globe className="h-5 w-5" />;
+        return <CloudIcon />;
       default:
-        return <Network className="h-5 w-5" />;
+        return <NetworkIcon />;
     }
   };
 
   const getNodeIcon = (type: string) => {
     switch (type) {
       case 'cloud':
-        return <Cloud className="h-6 w-6" />;
+        return <CloudIcon />;
       case 'gateway':
-        return <Shield className="h-6 w-6" />;
+        return <SecurityIcon />;
       case 'router':
-        return <Router className="h-6 w-6" />;
+        return <RouterIcon />;
       case 'switch':
-        return <Layers className="h-6 w-6" />;
+        return <NetworkIcon />;
       case 'server':
-        return <Server className="h-6 w-6" />;
+        return <RouterIcon />;
       case 'region':
-        return <Globe className="h-6 w-6" />;
+        return <CloudIcon />;
       default:
-        return <Circle className="h-6 w-6" />;
-    }
-  };
-
-  const getEdgeIcon = (type: string) => {
-    switch (type) {
-      case 'bgp':
-        return <GitBranch className="h-4 w-4" />;
-      case 'ospf':
-        return <Route className="h-4 w-4" />;
-      case 'isis':
-        return <Navigation className="h-4 w-4" />;
-      case 'static':
-        return <ArrowRightLeft className="h-4 w-4" />;
-      case 'cloud':
-        return <Cloud className="h-4 w-4" />;
-      default:
-        return <ArrowUpDown className="h-4 w-4" />;
+        return <NetworkIcon />;
     }
   };
 
@@ -444,519 +320,289 @@ const CloudNetworking: React.FC = () => {
     setIsLoading(false);
   };
 
-  const handleProviderAction = (providerId: string, action: string) => {
-    console.log(`Performing ${action} on provider ${providerId}`);
-    // Implement provider actions
-  };
-
-  const handleNodeAction = (nodeId: string, action: string) => {
-    console.log(`Performing ${action} on node ${nodeId}`);
-    // Implement node actions
-  };
-
-  const handleEdgeAction = (edgeId: string, action: string) => {
-    console.log(`Performing ${action} on edge ${edgeId}`);
-    // Implement edge actions
-  };
-
-  const handleSecurityPolicyAction = (policyId: string, action: string) => {
-    console.log(`Performing ${action} on security policy ${policyId}`);
-    // Implement security policy actions
+  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setTabValue(newValue);
   };
 
   return (
-    <div className="space-y-6">
+    <Box>
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Cloud Networking</h1>
-          <p className="text-muted-foreground">
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Box>
+          <Typography variant="h4" component="h1">
+            Cloud Networking
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
             Multi-cloud network management and monitoring
-          </p>
-        </div>
-        <div className="flex items-center space-x-2">
+          </Typography>
+        </Box>
+        <Box>
           <Button
-            variant="outline"
-            size="sm"
+            variant="outlined"
+            startIcon={<RefreshIcon />}
             onClick={handleRefresh}
             disabled={isLoading}
+            sx={{ mr: 1 }}
           >
-            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Button size="sm">
-            <Plus className="h-4 w-4 mr-2" />
+          <Button variant="contained" startIcon={<AddIcon />}>
             Add Provider
           </Button>
-        </div>
-      </div>
+        </Box>
+      </Box>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center">
-              <Cloud className="h-8 w-8 text-blue-500" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-muted-foreground">
-                  Total Providers
-                </p>
-                <p className="text-2xl font-bold">{cloudProviders.length}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center">
-              <Server className="h-8 w-8 text-green-500" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-muted-foreground">
-                  Active Resources
-                </p>
-                <p className="text-2xl font-bold">
-                  {cloudProviders.reduce((sum, p) => sum + p.resources, 0)}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center">
-              <DollarSign className="h-8 w-8 text-yellow-500" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-muted-foreground">
-                  Total Cost
-                </p>
-                <p className="text-2xl font-bold">
-                  ${cloudProviders.reduce((sum, p) => sum + p.cost, 0).toFixed(2)}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center">
-              <Activity className="h-8 w-8 text-purple-500" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-muted-foreground">
-                  Network Health
-                </p>
-                <p className="text-2xl font-bold">98.5%</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Main Content */}
-      <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="topology">Network Topology</TabsTrigger>
-          <TabsTrigger value="traffic">Traffic Flows</TabsTrigger>
-          <TabsTrigger value="security">Security</TabsTrigger>
-          <TabsTrigger value="analytics">Analytics</TabsTrigger>
-        </TabsList>
-
-        {/* Overview Tab */}
-        <TabsContent value="overview" className="space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Cloud Providers */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Cloud className="h-5 w-5 mr-2" />
-                  Cloud Providers
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {cloudProviders.map((provider) => (
-                    <div
-                      key={provider.id}
-                      className="flex items-center justify-between p-4 border rounded-lg"
-                    >
-                      <div className="flex items-center space-x-3">
-                        {getProviderIcon(provider.type)}
-                        <div>
-                          <p className="font-medium">{provider.name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {provider.region} • {provider.resources} resources
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        {getStatusIcon(provider.status)}
-                        <div className="text-right">
-                          <p className="text-sm font-medium">
-                            ${provider.cost.toFixed(2)}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {provider.lastSync}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Network Health */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Activity className="h-5 w-5 mr-2" />
-                  Network Health
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Overall Health</span>
-                    <span className="text-sm text-muted-foreground">98.5%</span>
-                  </div>
-                  <Progress value={98.5} className="h-2" />
-                  
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">BGP Sessions</span>
-                      <Badge variant="default">12/12</Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">OSPF Neighbors</span>
-                      <Badge variant="default">8/8</Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">ISIS Adjacencies</span>
-                      <Badge variant="default">6/6</Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">Traffic Shaping</span>
-                      <Badge variant="default">Active</Badge>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* Network Topology Tab */}
-        <TabsContent value="topology" className="space-y-4">
+      <Grid container spacing={3} sx={{ mb: 3 }}>
+        <Grid item xs={12} md={3}>
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Network className="h-5 w-5 mr-2" />
-                Network Topology
-              </CardTitle>
-            </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {/* Topology Controls */}
-                <div className="flex items-center space-x-4">
-                  <Select value={selectedProvider} onValueChange={setSelectedProvider}>
-                    <SelectTrigger className="w-48">
-                      <SelectValue placeholder="Select Provider" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Providers</SelectItem>
-                      <SelectItem value="cloudpods">CloudPods</SelectItem>
-                      <SelectItem value="aviatrix">Aviatrix</SelectItem>
-                      <SelectItem value="aws">AWS</SelectItem>
-                      <SelectItem value="azure">Azure</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  
-                  <Select value={selectedRegion} onValueChange={setSelectedRegion}>
-                    <SelectTrigger className="w-48">
-                      <SelectValue placeholder="Select Region" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Regions</SelectItem>
-                      <SelectItem value="us-west-1">US West 1</SelectItem>
-                      <SelectItem value="us-east-1">US East 1</SelectItem>
-                      <SelectItem value="us-west-2">US West 2</SelectItem>
-                      <SelectItem value="eastus">East US</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  
-                  <Button variant="outline" size="sm">
-                    <Settings className="h-4 w-4 mr-2" />
-                    Settings
-                  </Button>
-                </div>
-
-                {/* Topology Visualization */}
-                <div className="border rounded-lg p-4 bg-gray-50 min-h-[400px]">
-                  <div className="relative w-full h-96">
-                    {networkTopology.nodes.map((node) => (
-                      <div
-                        key={node.id}
-                        className="absolute flex items-center justify-center w-16 h-16 bg-white border-2 rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow"
-                        style={{
-                          left: `${node.position.x}px`,
-                          top: `${node.position.y}px`,
-                        }}
-                      >
-                        <div className="text-center">
-                          {getNodeIcon(node.type)}
-                          <p className="text-xs mt-1 font-medium">{node.name}</p>
-                          <div className="flex items-center justify-center mt-1">
-                            {getStatusIcon(node.status)}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    
-                    {/* Edges */}
-                    <svg className="absolute inset-0 w-full h-full pointer-events-none">
-                      {networkTopology.edges.map((edge) => {
-                        const sourceNode = networkTopology.nodes.find(n => n.id === edge.source);
-                        const targetNode = networkTopology.nodes.find(n => n.id === edge.target);
-                        
-                        if (!sourceNode || !targetNode) return null;
-                        
-                        const x1 = sourceNode.position.x + 32;
-                        const y1 = sourceNode.position.y + 32;
-                        const x2 = targetNode.position.x + 32;
-                        const y2 = targetNode.position.y + 32;
-                        
-                        return (
-                          <g key={edge.id}>
-                            <line
-                              x1={x1}
-                              y1={y1}
-                              x2={x2}
-                              y2={y2}
-                              stroke={edge.status === 'up' ? '#10b981' : edge.status === 'down' ? '#ef4444' : '#f59e0b'}
-                              strokeWidth="2"
-                              strokeDasharray={edge.status === 'degraded' ? '5,5' : '0'}
-                            />
-                            <circle
-                              cx={(x1 + x2) / 2}
-                              cy={(y1 + y2) / 2}
-                              r="8"
-                              fill="white"
-                              stroke={edge.status === 'up' ? '#10b981' : edge.status === 'down' ? '#ef4444' : '#f59e0b'}
-                              strokeWidth="2"
-                            />
-                            <text
-                              x={(x1 + x2) / 2}
-                              y={(y1 + y2) / 2 + 3}
-                              textAnchor="middle"
-                              className="text-xs font-medium fill-current"
-                            >
-                              {getEdgeIcon(edge.type)}
-                            </text>
-                          </g>
-                        );
-                      })}
-                    </svg>
-                  </div>
-                </div>
-
-                {/* Node Details */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {networkTopology.nodes.map((node) => (
-                    <Card key={node.id} className="p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center space-x-2">
-                          {getNodeIcon(node.type)}
-                          <span className="font-medium">{node.name}</span>
-                        </div>
-                        {getStatusIcon(node.status)}
-                      </div>
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span>CPU</span>
-                          <span>{node.metrics.cpu}%</span>
-                        </div>
-                        <Progress value={node.metrics.cpu} className="h-1" />
-                        <div className="flex justify-between text-sm">
-                          <span>Memory</span>
-                          <span>{node.metrics.memory}%</span>
-                        </div>
-                        <Progress value={node.metrics.memory} className="h-1" />
-                        <div className="flex justify-between text-sm">
-                          <span>Network</span>
-                          <span>{node.metrics.network}%</span>
-                        </div>
-                        <Progress value={node.metrics.network} className="h-1" />
-                        <div className="flex justify-between text-sm">
-                          <span>Latency</span>
-                          <span>{node.metrics.latency}ms</span>
-                        </div>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-              </div>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <CloudIcon color="primary" sx={{ mr: 2, fontSize: 40 }} />
+                <Box>
+                  <Typography variant="h6" color="text.secondary">
+                    Total Providers
+                  </Typography>
+                  <Typography variant="h4">{cloudProviders.length}</Typography>
+                </Box>
+              </Box>
             </CardContent>
           </Card>
-        </TabsContent>
+        </Grid>
+        <Grid item xs={12} md={3}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <RouterIcon color="success" sx={{ mr: 2, fontSize: 40 }} />
+                <Box>
+                  <Typography variant="h6" color="text.secondary">
+                    Active Resources
+                  </Typography>
+                  <Typography variant="h4">
+                    {cloudProviders.reduce((sum, p) => sum + p.resources, 0)}
+                  </Typography>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} md={3}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <AnalyticsIcon color="warning" sx={{ mr: 2, fontSize: 40 }} />
+                <Box>
+                  <Typography variant="h6" color="text.secondary">
+                    Total Cost
+                  </Typography>
+                  <Typography variant="h4">
+                    ${cloudProviders.reduce((sum, p) => sum + p.cost, 0).toFixed(2)}
+                  </Typography>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} md={3}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <NetworkIcon color="info" sx={{ mr: 2, fontSize: 40 }} />
+                <Box>
+                  <Typography variant="h6" color="text.secondary">
+                    Network Health
+                  </Typography>
+                  <Typography variant="h4">98.5%</Typography>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+
+      {/* Main Content Tabs */}
+      <Card>
+        <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+          <Tabs value={tabValue} onChange={handleTabChange} aria-label="cloud networking tabs">
+            <Tab label="Overview" />
+            <Tab label="Network Topology" />
+            <Tab label="Traffic Flows" />
+            <Tab label="Security" />
+            <Tab label="Analytics" />
+          </Tabs>
+        </Box>
+
+        {/* Overview Tab */}
+        {tabValue === 0 && (
+          <CardContent>
+            <Grid container spacing={3}>
+              {/* Cloud Providers */}
+              <Grid item xs={12} md={6}>
+                <Typography variant="h6" gutterBottom>
+                  Cloud Providers
+                </Typography>
+                <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
+                  {cloudProviders.map((provider) => (
+                    <Card key={provider.id} sx={{ mb: 2 }}>
+                      <CardContent>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            {getProviderIcon(provider.type)}
+                            <Box sx={{ ml: 2 }}>
+                              <Typography variant="subtitle1">{provider.name}</Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                {provider.region} • {provider.resources} resources
+                              </Typography>
+                            </Box>
+                          </Box>
+                          <Box sx={{ textAlign: 'right' }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                              {getStatusIcon(provider.status)}
+                              <Chip 
+                                label={provider.status} 
+                                color={getStatusColor(provider.status)}
+                                size="small"
+                                sx={{ ml: 1 }}
+                              />
+                            </Box>
+                            <Typography variant="h6">
+                              ${provider.cost.toFixed(2)}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {provider.lastSync}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </Box>
+              </Grid>
+
+              {/* Network Health */}
+              <Grid item xs={12} md={6}>
+                <Typography variant="h6" gutterBottom>
+                  Network Health
+                </Typography>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ mb: 2 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography variant="body2">Overall Health</Typography>
+                        <Typography variant="body2">98.5%</Typography>
+                      </Box>
+                      <LinearProgress variant="determinate" value={98.5} />
+                    </Box>
+                    
+                    <Box sx={{ mt: 3 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography variant="body2">BGP Sessions</Typography>
+                        <Chip label="12/12" color="success" size="small" />
+                      </Box>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography variant="body2">OSPF Neighbors</Typography>
+                        <Chip label="8/8" color="success" size="small" />
+                      </Box>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography variant="body2">ISIS Adjacencies</Typography>
+                        <Chip label="6/6" color="success" size="small" />
+                      </Box>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <Typography variant="body2">Traffic Shaping</Typography>
+                        <Chip label="Active" color="success" size="small" />
+                      </Box>
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+          </CardContent>
+        )}
+
+        {/* Network Topology Tab */}
+        {tabValue === 1 && (
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Network Topology
+            </Typography>
+            <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 2, minHeight: 400, backgroundColor: 'grey.50' }}>
+              <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 20 }}>
+                Network topology visualization coming soon...
+              </Typography>
+            </Box>
+          </CardContent>
+        )}
 
         {/* Traffic Flows Tab */}
-        <TabsContent value="traffic" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Activity className="h-5 w-5 mr-2" />
-                Traffic Flows
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
+        {tabValue === 2 && (
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Traffic Flows
+            </Typography>
+            <TableContainer component={Paper} sx={{ backgroundColor: 'transparent' }}>
               <Table>
-                <TableHeader>
+                <TableHead>
                   <TableRow>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Destination</TableHead>
-                    <TableHead>Protocol</TableHead>
-                    <TableHead>Bytes</TableHead>
-                    <TableHead>Packets</TableHead>
-                    <TableHead>Latency</TableHead>
-                    <TableHead>Jitter</TableHead>
-                    <TableHead>Loss</TableHead>
-                    <TableHead>Actions</TableHead>
+                    <TableCell>Source</TableCell>
+                    <TableCell>Destination</TableCell>
+                    <TableCell>Protocol</TableCell>
+                    <TableCell>Bytes</TableCell>
+                    <TableCell>Packets</TableCell>
+                    <TableCell>Latency</TableCell>
+                    <TableCell>Jitter</TableCell>
+                    <TableCell>Loss</TableCell>
                   </TableRow>
-                </TableHeader>
+                </TableHead>
                 <TableBody>
                   {trafficFlows.map((flow) => (
                     <TableRow key={flow.id}>
-                      <TableCell className="font-medium">{flow.source}</TableCell>
+                      <TableCell>{flow.source}</TableCell>
                       <TableCell>{flow.destination}</TableCell>
                       <TableCell>
-                        <Badge variant="outline">{flow.protocol}</Badge>
+                        <Chip label={flow.protocol} size="small" />
                       </TableCell>
                       <TableCell>{(flow.bytes / 1024 / 1024).toFixed(2)} MB</TableCell>
                       <TableCell>{flow.packets.toLocaleString()}</TableCell>
                       <TableCell>{flow.latency}ms</TableCell>
                       <TableCell>{flow.jitter}ms</TableCell>
                       <TableCell>
-                        <span className={flow.loss > 0 ? 'text-red-500' : 'text-green-500'}>
+                        <Typography color={flow.loss > 0 ? 'error' : 'success'}>
                           {flow.loss}%
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center space-x-2">
-                          <Button variant="ghost" size="sm">
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                        </Typography>
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
+            </TableContainer>
+          </CardContent>
+        )}
 
         {/* Security Tab */}
-        <TabsContent value="security" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Shield className="h-5 w-5 mr-2" />
-                Security Policies
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {securityPolicies.map((policy) => (
-                  <Card key={policy.id} className="p-4">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center space-x-2">
-                        <Shield className="h-5 w-5" />
-                        <div>
-                          <h3 className="font-medium">{policy.name}</h3>
-                          <p className="text-sm text-muted-foreground">
-                            {policy.type} • {policy.rules.length} rules
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        {getStatusBadge(policy.status)}
-                        <Button variant="ghost" size="sm">
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      {policy.rules.map((rule) => (
-                        <div key={rule.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                          <div className="flex items-center space-x-2">
-                            <Badge variant={rule.action === 'allow' ? 'default' : 'destructive'}>
-                              {rule.action}
-                            </Badge>
-                            <span className="text-sm">
-                              {rule.source} → {rule.destination}
-                            </span>
-                            <span className="text-sm text-muted-foreground">
-                              {rule.protocol}/{rule.port}
-                            </span>
-                          </div>
-                          <span className="text-sm text-muted-foreground">
-                            {rule.description}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+        {tabValue === 3 && (
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Security Policies
+            </Typography>
+            <Alert severity="info">
+              Security policies and firewall rules management coming soon...
+            </Alert>
+          </CardContent>
+        )}
 
         {/* Analytics Tab */}
-        <TabsContent value="analytics" className="space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <BarChart3 className="h-5 w-5 mr-2" />
-                  Network Performance
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="h-64 bg-gray-50 rounded flex items-center justify-center">
-                    <p className="text-muted-foreground">Performance Chart</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <TrendingUp className="h-5 w-5 mr-2" />
-                  Traffic Trends
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="h-64 bg-gray-50 rounded flex items-center justify-center">
-                    <p className="text-muted-foreground">Traffic Chart</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-      </Tabs>
-    </div>
+        {tabValue === 4 && (
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Analytics Dashboard
+            </Typography>
+            <Alert severity="info">
+              Real-time analytics and monitoring charts coming soon...
+            </Alert>
+          </CardContent>
+        )}
+      </Card>
+    </Box>
   );
 };
 
