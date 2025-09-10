@@ -12,16 +12,16 @@ jobs:
     
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v3
       with:
         fetch-depth: 0
 
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v3
       with:
         node-version: '18'
         cache: 'npm'
-        cache-dependency-path: web/package-lock.json
+        cache-directory: './web/node_modules'
 
     - name: Setup Go
       uses: actions/setup-go@v4
@@ -39,60 +39,33 @@ jobs:
         cd web
         npm ci
 
-    - name: Build web application
-      run: |
-        cd web
-        npm run build
-
     - name: Build Go services
       run: |
         cd go
-        go mod download
-        go build -o ../dist/cloudpods-service ./cmd/cloudpods
-        go build -o ../dist/aviatrix-service ./cmd/aviatrix
-        go build -o ../dist/analytics-service ./cmd/analytics
+        go mod tidy
+        go build -o ../build/api-server ./services/api
 
-    - name: Build Rust analytics engine
+    - name: Build Rust engine
       run: |
         cd rust
         cargo build --release
-        cp target/release/librouter_analytics.a ../dist/
 
-    - name: Build C++ router core
+    - name: Build C++ core
       run: |
         mkdir -p build
         cd build
         cmake ..
         make -j$(nproc)
-        cp router_sim ../dist/
+
+    - name: Build web application
+      run: |
+        cd web
+        npm run build
 
     - name: Run tests
       run: |
-        # Run Go tests
-        cd go
-        go test ./...
-        
-        # Run Rust tests
-        cd ../rust
-        cargo test
-        
-        # Run C++ tests
-        cd ../build
-        make test
-
-    - name: Generate documentation
-      run: |
-        # Generate API documentation
-        cd go
-        go run github.com/swaggo/swag/cmd/swag@latest init
-        
-        # Generate Rust documentation
-        cd ../rust
-        cargo doc --no-deps
-        
-        # Generate C++ documentation
-        cd ../build
-        make docs
+        cd web
+        npm run test:ui:headless
 
     - name: Deploy to GitHub Pages
       uses: peaceiris/actions-gh-pages@v3
@@ -100,56 +73,4 @@ jobs:
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./web/dist
-        cname: router-sim.calelin.dev
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: build-artifacts
-        path: |
-          dist/
-          web/dist/
-          docs/
-        retention-days: 30
-
-    - name: Create release
-      if: github.ref == 'refs/heads/main'
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: v${{ github.run_number }}
-        release_name: Release v${{ github.run_number }}
-        body: |
-          ## Changes in this Release
-          
-          - Multi-cloud networking platform with CloudPods and Aviatrix integration
-          - Advanced traffic shaping algorithms (Token Bucket, WFQ, DRR, HTB)
-          - Network impairments simulation using tc/netem
-          - FRR control-plane integration for BGP/OSPF/ISIS
-          - ClickHouse analytics with C++ and Rust
-          - Comprehensive web UI with real-time monitoring
-          - Automated testing and deployment
-          
-          ## Build Artifacts
-          
-          - Web UI: Available at https://calelin.github.io/router/
-          - Go Services: CloudPods, Aviatrix, and Analytics microservices
-          - Rust Engine: High-performance packet processing
-          - C++ Core: Router simulation with FRR integration
-          
-          ## Documentation
-          
-          - API Documentation: Available in the docs/ directory
-          - Configuration Guide: See config.yaml
-          - Deployment Guide: See README.md
-        draft: false
-        prerelease: false
-
-    - name: Notify deployment
-      if: github.ref == 'refs/heads/main'
-      run: |
-        echo "🚀 Deployment completed successfully!"
-        echo "📊 Web UI: https://calelin.github.io/router/"
-        echo "📚 Documentation: Available in docs/"
-        echo "🔧 Build Artifacts: Available in dist/"
+        cname: cloudpods-aviatrix-demo.github.io

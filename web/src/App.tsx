@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   ThemeProvider,
   createTheme,
@@ -30,18 +30,13 @@ import {
   Timeline as TimelineIcon,
   Storage as StorageIcon,
 } from '@mui/icons-material';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router } from 'react-router-dom';
 
 // Import pages
 import Dashboard from './pages/Dashboard';
 import RouterSimulation from './pages/RouterSimulation';
-import CloudNetworking from './pages/CloudNetworking';
 import CloudPods from './pages/CloudPods';
 import AviatrixIntegration from './pages/AviatrixIntegration';
-import Analytics from './pages/Analytics';
-import NetworkTopology from './pages/NetworkTopology';
-import TrafficShaping from './pages/TrafficShaping';
-import NetworkImpairments from './pages/NetworkImpairments';
 
 // Create theme
 const theme = createTheme({
@@ -121,13 +116,8 @@ function App() {
   const tabs = [
     { label: 'Dashboard', icon: <DashboardIcon />, component: <Dashboard /> },
     { label: 'Router Simulation', icon: <RouterIcon />, component: <RouterSimulation /> },
-    { label: 'Cloud Networking', icon: <CloudIcon />, component: <CloudNetworking /> },
     { label: 'CloudPods', icon: <StorageIcon />, component: <CloudPods /> },
     { label: 'Aviatrix', icon: <NetworkIcon />, component: <AviatrixIntegration /> },
-    { label: 'Analytics', icon: <AnalyticsIcon />, component: <Analytics /> },
-    { label: 'Topology', icon: <TimelineIcon />, component: <NetworkTopology /> },
-    { label: 'Traffic Shaping', icon: <NetworkIcon />, component: <TrafficShaping /> },
-    { label: 'Impairments', icon: <SettingsIcon />, component: <NetworkImpairments /> },
   ];
 
   return (

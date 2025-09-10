@@ -3,302 +3,346 @@
 #include "protocols/bgp.h"
 #include "protocols/ospf.h"
 #include "protocols/isis.h"
-#include "traffic_shaping/traffic_shaper.h"
+#include "traffic_shaping.h"
+#include "netem/impairments.h"
+#include "testing/pcap_diff.h"
 
+using namespace RouterSim;
 using namespace router_sim;
 
 class RouterCoreTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        router_ = std::make_unique<RouterCore>();
+        // Initialize router core
+        router_core_ = std::make_unique<RouterCore>();
+        ASSERT_TRUE(router_core_->initialize());
     }
 
     void TearDown() override {
-        if (router_) {
-            router_->stop();
+        if (router_core_) {
+            router_core_->shutdown();
         }
     }
 
-    std::unique_ptr<RouterCore> router_;
+    std::unique_ptr<RouterCore> router_core_;
 };
 
-TEST_F(RouterCoreTest, Initialize) {
-    EXPECT_TRUE(router_->initialize());
+TEST_F(RouterCoreTest, Initialization) {
+    EXPECT_TRUE(router_core_->is_initialized());
+    EXPECT_FALSE(router_core_->is_running());
 }
 
 TEST_F(RouterCoreTest, StartStop) {
-    ASSERT_TRUE(router_->initialize());
-    EXPECT_TRUE(router_->start());
-    EXPECT_TRUE(router_->is_running());
-    router_->stop();
-    EXPECT_FALSE(router_->is_running());
+    EXPECT_TRUE(router_core_->start());
+    EXPECT_TRUE(router_core_->is_running());
+    
+    EXPECT_TRUE(router_core_->stop());
+    EXPECT_FALSE(router_core_->is_running());
 }
 
-TEST_F(RouterCoreTest, AddRemoveInterface) {
-    ASSERT_TRUE(router_->initialize());
-    ASSERT_TRUE(router_->start());
-
-    // Add interface
-    EXPECT_TRUE(router_->add_interface("eth0", "192.168.1.1", "255.255.255.0"));
-    
-    // Check interface exists
-    auto interfaces = router_->get_interfaces();
-    EXPECT_EQ(interfaces.size(), 1);
-    EXPECT_EQ(interfaces[0].name, "eth0");
-    EXPECT_EQ(interfaces[0].ip_address, "192.168.1.1");
-
-    // Remove interface
-    EXPECT_TRUE(router_->remove_interface("eth0"));
-    
-    // Check interface is removed
-    interfaces = router_->get_interfaces();
-    EXPECT_EQ(interfaces.size(), 0);
-}
-
-TEST_F(RouterCoreTest, AddRemoveRoute) {
-    ASSERT_TRUE(router_->initialize());
-    ASSERT_TRUE(router_->start());
-
-    // Add route
-    Route route;
-    route.destination = "10.0.0.0";
-    route.prefix_length = 8;
-    route.next_hop = "192.168.1.1";
-    route.interface = "eth0";
-    route.metric = 1;
-    route.protocol = "static";
-    route.is_active = true;
-
-    EXPECT_TRUE(router_->add_route(route));
-    
-    // Check route exists
-    auto routes = router_->get_routes();
-    EXPECT_EQ(routes.size(), 1);
-    EXPECT_EQ(routes[0].destination, "10.0.0.0");
-
-    // Remove route
-    EXPECT_TRUE(router_->remove_route("10.0.0.0", 8));
-    
-    // Check route is removed
-    routes = router_->get_routes();
-    EXPECT_EQ(routes.size(), 0);
-}
-
-TEST_F(RouterCoreTest, EnableDisableProtocol) {
-    ASSERT_TRUE(router_->initialize());
-    ASSERT_TRUE(router_->start());
-
-    // Enable BGP
+TEST_F(RouterCoreTest, ProtocolManagement) {
+    // Test BGP protocol
+    auto bgp = std::make_unique<BGPProtocol>();
     std::map<std::string, std::string> bgp_config;
     bgp_config["local_as"] = "65001";
     bgp_config["router_id"] = "1.1.1.1";
     
-    EXPECT_TRUE(router_->enable_protocol(ProtocolType::BGP, bgp_config));
+    EXPECT_TRUE(bgp->initialize(bgp_config));
+    EXPECT_TRUE(bgp->start());
+    EXPECT_TRUE(bgp->is_running());
     
-    // Check protocol is active
-    auto protocols = router_->get_active_protocols();
-    EXPECT_EQ(protocols.size(), 1);
-    EXPECT_EQ(protocols[0], ProtocolType::BGP);
-
-    // Disable BGP
-    EXPECT_TRUE(router_->disable_protocol(ProtocolType::BGP));
+    // Test OSPF protocol
+    auto ospf = std::make_unique<OSPFProtocol>();
+    std::map<std::string, std::string> ospf_config;
+    ospf_config["router_id"] = "2.2.2.2";
+    ospf_config["area_id"] = "0.0.0.0";
     
-    // Check protocol is disabled
-    protocols = router_->get_active_protocols();
-    EXPECT_EQ(protocols.size(), 0);
+    EXPECT_TRUE(ospf->initialize(ospf_config));
+    EXPECT_TRUE(ospf->start());
+    EXPECT_TRUE(ospf->is_running());
+    
+    // Test IS-IS protocol
+    auto isis = std::make_unique<ISISProtocol>();
+    std::map<std::string, std::string> isis_config;
+    isis_config["system_id"] = "1921.6800.1001";
+    isis_config["area_id"] = "49.0001";
+    
+    EXPECT_TRUE(isis->initialize(isis_config));
+    EXPECT_TRUE(isis->start());
+    EXPECT_TRUE(isis->is_running());
 }
 
-TEST_F(RouterCoreTest, InterfaceState) {
-    ASSERT_TRUE(router_->initialize());
-    ASSERT_TRUE(router_->start());
-
-    // Add interface
-    EXPECT_TRUE(router_->add_interface("eth0", "192.168.1.1", "255.255.255.0"));
-    
-    // Check initial state
-    auto interfaces = router_->get_interfaces();
-    EXPECT_FALSE(interfaces[0].is_up);
-
-    // Bring interface up
-    EXPECT_TRUE(router_->set_interface_state("eth0", true));
-    
-    // Check interface is up
-    interfaces = router_->get_interfaces();
-    EXPECT_TRUE(interfaces[0].is_up);
-
-    // Bring interface down
-    EXPECT_TRUE(router_->set_interface_state("eth0", false));
-    
-    // Check interface is down
-    interfaces = router_->get_interfaces();
-    EXPECT_FALSE(interfaces[0].is_up);
-}
-
-TEST_F(RouterCoreTest, Statistics) {
-    ASSERT_TRUE(router_->initialize());
-    ASSERT_TRUE(router_->start());
-
-    // Add some interfaces and routes
-    router_->add_interface("eth0", "192.168.1.1", "255.255.255.0");
-    router_->add_interface("eth1", "192.168.2.1", "255.255.255.0");
-    
-    Route route;
-    route.destination = "10.0.0.0";
-    route.prefix_length = 8;
-    route.next_hop = "192.168.1.1";
-    route.interface = "eth0";
-    route.metric = 1;
-    route.protocol = "static";
-    route.is_active = true;
-    router_->add_route(route);
-
-    // Get statistics
-    auto stats = router_->get_statistics();
-    EXPECT_EQ(stats.interface_stats.size(), 2);
-    EXPECT_TRUE(stats.interface_stats.find("eth0") != stats.interface_stats.end());
-    EXPECT_TRUE(stats.interface_stats.find("eth1") != stats.interface_stats.end());
-}
-
-class BGPProtocolTest : public ::testing::Test {
+class TrafficShapingTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        bgp_ = std::make_unique<BGPProtocol>();
+        traffic_shaper_ = std::make_unique<TrafficShaper>();
+        ASSERT_TRUE(traffic_shaper_->initialize());
     }
 
     void TearDown() override {
-        if (bgp_) {
-            bgp_->stop();
+        if (traffic_shaper_) {
+            traffic_shaper_->stop();
         }
     }
 
-    std::unique_ptr<BGPProtocol> bgp_;
+    std::unique_ptr<TrafficShaper> traffic_shaper_;
 };
 
-TEST_F(BGPProtocolTest, Initialize) {
-    ProtocolConfig config;
-    config.parameters["local_as"] = "65001";
-    config.parameters["router_id"] = "1.1.1.1";
-    config.enabled = true;
-    config.update_interval_ms = 1000;
-
-    EXPECT_TRUE(bgp_->initialize(config));
+TEST_F(TrafficShapingTest, TokenBucketInitialization) {
+    TokenBucketConfig config;
+    config.capacity = 1000;
+    config.rate = 100;
+    config.burst_size = 500;
+    config.allow_burst = true;
+    
+    EXPECT_TRUE(traffic_shaper_->configure_token_bucket(config));
 }
 
-TEST_F(BGPProtocolTest, AddRemoveNeighbor) {
-    ProtocolConfig config;
-    config.parameters["local_as"] = "65001";
-    config.parameters["router_id"] = "1.1.1.1";
-    config.enabled = true;
-    config.update_interval_ms = 1000;
-
-    ASSERT_TRUE(bgp_->initialize(config));
-    ASSERT_TRUE(bgp_->start());
-
-    // Add neighbor
-    EXPECT_TRUE(bgp_->add_neighbor("192.168.1.2", 65002));
+TEST_F(TrafficShapingTest, TokenBucketConsumption) {
+    TokenBucketConfig config;
+    config.capacity = 1000;
+    config.rate = 100;
+    config.burst_size = 500;
+    config.allow_burst = true;
     
-    // Check neighbor exists
-    auto neighbors = bgp_->get_neighbors();
-    EXPECT_EQ(neighbors.size(), 1);
-    EXPECT_EQ(neighbors[0].address, "192.168.1.2");
-    EXPECT_EQ(neighbors[0].as_number, 65002);
-
-    // Remove neighbor
-    EXPECT_TRUE(bgp_->remove_neighbor("192.168.1.2"));
+    traffic_shaper_->configure_token_bucket(config);
+    traffic_shaper_->set_shaping_algorithm(ShapingAlgorithm::TOKEN_BUCKET);
+    traffic_shaper_->start();
     
-    // Check neighbor is removed
-    neighbors = bgp_->get_neighbors();
-    EXPECT_EQ(neighbors.size(), 0);
-}
-
-TEST_F(BGPProtocolTest, AdvertiseWithdrawRoute) {
-    ProtocolConfig config;
-    config.parameters["local_as"] = "65001";
-    config.parameters["router_id"] = "1.1.1.1";
-    config.enabled = true;
-    config.update_interval_ms = 1000;
-
-    ASSERT_TRUE(bgp_->initialize(config));
-    ASSERT_TRUE(bgp_->start());
-
-    // Advertise route
-    EXPECT_TRUE(bgp_->advertise_route("10.0.0.0", 8, 100));
-    
-    // Check route is advertised
-    auto routes = bgp_->get_advertised_routes();
-    EXPECT_EQ(routes.size(), 1);
-    EXPECT_EQ(routes[0], "10.0.0.0/8");
-
-    // Withdraw route
-    EXPECT_TRUE(bgp_->withdraw_route("10.0.0.0", 8));
-    
-    // Check route is withdrawn
-    routes = bgp_->get_advertised_routes();
-    EXPECT_EQ(routes.size(), 0);
-}
-
-class TrafficShaperTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        shaper_ = TrafficShaperFactory::create("token_bucket");
-    }
-
-    void TearDown() override {
-        if (shaper_) {
-            shaper_->stop();
-        }
-    }
-
-    std::unique_ptr<TrafficShaper> shaper_;
-};
-
-TEST_F(TrafficShaperTest, Initialize) {
-    TrafficShapingConfig config;
-    config.algorithm = "token_bucket";
-    config.rate_bps = 1000000; // 1 Mbps
-    config.burst_size = 10000; // 10 KB
-    config.queue_size = 100;
-
-    EXPECT_TRUE(shaper_->initialize(config));
-}
-
-TEST_F(TrafficShaperTest, ShapePacket) {
-    TrafficShapingConfig config;
-    config.algorithm = "token_bucket";
-    config.rate_bps = 1000000; // 1 Mbps
-    config.burst_size = 10000; // 10 KB
-    config.queue_size = 100;
-
-    ASSERT_TRUE(shaper_->initialize(config));
-    ASSERT_TRUE(shaper_->start());
-
     // Create test packet
-    std::vector<uint8_t> packet(1000, 0xAA);
+    PacketInfo packet;
+    packet.size = 100;
+    packet.src_ip = "192.168.1.1";
+    packet.dst_ip = "192.168.1.2";
+    packet.protocol = 6; // TCP
     
-    // Shape packet
-    EXPECT_TRUE(shaper_->shape_packet("eth0", packet));
-    
-    // Check queue size
-    EXPECT_GT(shaper_->get_queue_size("eth0"), 0);
+    // Should be able to process packet
+    EXPECT_TRUE(traffic_shaper_->process_packet(packet));
 }
 
-TEST_F(TrafficShaperTest, SetRate) {
-    TrafficShapingConfig config;
-    config.algorithm = "token_bucket";
-    config.rate_bps = 1000000; // 1 Mbps
-    config.burst_size = 10000; // 10 KB
-    config.queue_size = 100;
-
-    ASSERT_TRUE(shaper_->initialize(config));
-    ASSERT_TRUE(shaper_->start());
-
-    // Set new rate
-    EXPECT_TRUE(shaper_->set_rate("eth0", 2000000)); // 2 Mbps
+TEST_F(TrafficShapingTest, WFQInitialization) {
+    std::vector<WFQClass> classes;
     
-    // Check rate is set
-    EXPECT_EQ(shaper_->get_current_rate("eth0"), 2000000);
+    WFQClass high_priority;
+    high_priority.class_id = 1;
+    high_priority.weight = 10;
+    high_priority.min_bandwidth = 1000000;
+    high_priority.max_bandwidth = 10000000;
+    high_priority.name = "High Priority";
+    high_priority.is_active = true;
+    classes.push_back(high_priority);
+    
+    WFQClass low_priority;
+    low_priority.class_id = 2;
+    low_priority.weight = 1;
+    low_priority.min_bandwidth = 100000;
+    low_priority.max_bandwidth = 1000000;
+    low_priority.name = "Low Priority";
+    low_priority.is_active = true;
+    classes.push_back(low_priority);
+    
+    EXPECT_TRUE(traffic_shaper_->configure_wfq(classes));
 }
 
+class NetemImpairmentsTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        netem_ = std::make_unique<NetemImpairments>();
+        ASSERT_TRUE(netem_->initialize());
+    }
+
+    void TearDown() override {
+        if (netem_) {
+            netem_->stop();
+        }
+    }
+
+    std::unique_ptr<NetemImpairments> netem_;
+};
+
+TEST_F(NetemImpairmentsTest, Initialization) {
+    EXPECT_TRUE(netem_->is_running());
+}
+
+TEST_F(NetemImpairmentsTest, DelayImpairment) {
+    DelayConfig delay_config;
+    delay_config.delay_ms = 100;
+    delay_config.jitter_ms = 10;
+    delay_config.distribution = DelayDistribution::NORMAL;
+    
+    // Note: This test requires root privileges and a real interface
+    // In a real test environment, you would use a test interface
+    // EXPECT_TRUE(netem_->add_delay("lo", delay_config));
+}
+
+TEST_F(NetemImpairmentsTest, LossImpairment) {
+    LossConfig loss_config;
+    loss_config.loss_type = LossType::RANDOM;
+    loss_config.loss_percentage = 5.0;
+    
+    // Note: This test requires root privileges and a real interface
+    // EXPECT_TRUE(netem_->add_loss("lo", loss_config));
+}
+
+class PcapDiffTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        pcap_diff_ = std::make_unique<PcapDiff>();
+        ASSERT_TRUE(pcap_diff_->initialize());
+    }
+
+    std::unique_ptr<PcapDiff> pcap_diff_;
+};
+
+TEST_F(PcapDiffTest, Initialization) {
+    EXPECT_TRUE(pcap_diff_->initialize());
+}
+
+TEST_F(PcapDiffTest, PacketComparison) {
+    // Create test packet data
+    PcapData pcap1, pcap2;
+    
+    // Create identical packets
+    PacketInfo packet1, packet2;
+    packet1.packet_number = 1;
+    packet1.timestamp = std::chrono::system_clock::now();
+    packet1.src_ip = "192.168.1.1";
+    packet1.dst_ip = "192.168.1.2";
+    packet1.protocol = 6;
+    packet1.src_port = 80;
+    packet1.dst_port = 8080;
+    packet1.size = 100;
+    
+    packet2 = packet1; // Copy
+    
+    pcap1.packets.push_back(packet1);
+    pcap2.packets.push_back(packet2);
+    
+    // Compare identical packets
+    PcapDiffOptions options;
+    EXPECT_TRUE(pcap_diff_->compare_pcap_data(pcap1, pcap2, options));
+    EXPECT_TRUE(pcap_diff_->get_differences().empty());
+}
+
+TEST_F(PcapDiffTest, PacketDifferences) {
+    // Create test packet data with differences
+    PcapData pcap1, pcap2;
+    
+    PacketInfo packet1, packet2;
+    packet1.packet_number = 1;
+    packet1.timestamp = std::chrono::system_clock::now();
+    packet1.src_ip = "192.168.1.1";
+    packet1.dst_ip = "192.168.1.2";
+    packet1.protocol = 6;
+    packet1.src_port = 80;
+    packet1.dst_port = 8080;
+    packet1.size = 100;
+    
+    packet2 = packet1;
+    packet2.src_ip = "192.168.1.3"; // Different source IP
+    
+    pcap1.packets.push_back(packet1);
+    pcap2.packets.push_back(packet2);
+    
+    // Compare different packets
+    PcapDiffOptions options;
+    EXPECT_FALSE(pcap_diff_->compare_pcap_data(pcap1, pcap2, options));
+    EXPECT_FALSE(pcap_diff_->get_differences().empty());
+}
+
+// Integration tests
+class RouterIntegrationTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        router_core_ = std::make_unique<RouterCore>();
+        ASSERT_TRUE(router_core_->initialize());
+        ASSERT_TRUE(router_core_->start());
+    }
+
+    void TearDown() override {
+        if (router_core_) {
+            router_core_->stop();
+            router_core_->shutdown();
+        }
+    }
+
+    std::unique_ptr<RouterCore> router_core_;
+};
+
+TEST_F(RouterIntegrationTest, FullRouterSimulation) {
+    // Test complete router simulation
+    EXPECT_TRUE(router_core_->is_running());
+    
+    // Add interfaces
+    EXPECT_TRUE(router_core_->add_interface("eth0", "192.168.1.1/24"));
+    EXPECT_TRUE(router_core_->add_interface("eth1", "10.0.0.1/24"));
+    
+    // Configure routing protocols
+    std::map<std::string, std::string> bgp_config;
+    bgp_config["local_as"] = "65001";
+    bgp_config["router_id"] = "1.1.1.1";
+    
+    EXPECT_TRUE(router_core_->configure_protocol(Protocol::BGP, bgp_config));
+    
+    // Add routes
+    Route route;
+    route.destination = "0.0.0.0/0";
+    route.next_hop = "192.168.1.254";
+    route.protocol = Protocol::STATIC;
+    route.metric = 1;
+    
+    EXPECT_TRUE(router_core_->add_route(route));
+    
+    // Verify route exists
+    auto routes = router_core_->get_routes();
+    EXPECT_FALSE(routes.empty());
+}
+
+// Performance tests
+class RouterPerformanceTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        traffic_shaper_ = std::make_unique<TrafficShaper>();
+        ASSERT_TRUE(traffic_shaper_->initialize());
+        ASSERT_TRUE(traffic_shaper_->start());
+    }
+
+    void TearDown() override {
+        if (traffic_shaper_) {
+            traffic_shaper_->stop();
+        }
+    }
+
+    std::unique_ptr<TrafficShaper> traffic_shaper_;
+};
+
+TEST_F(RouterPerformanceTest, HighThroughputProcessing) {
+    // Test high throughput packet processing
+    const int num_packets = 10000;
+    
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
+    for (int i = 0; i < num_packets; ++i) {
+        PacketInfo packet;
+        packet.size = 64; // Small packet
+        packet.src_ip = "192.168.1.1";
+        packet.dst_ip = "192.168.1.2";
+        packet.protocol = 6;
+        
+        traffic_shaper_->process_packet_async(packet);
+    }
+    
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+    
+    std::cout << "Processed " << num_packets << " packets in " 
+              << duration.count() << " ms" << std::endl;
+    
+    // Should complete within reasonable time
+    EXPECT_LT(duration.count(), 1000); // Less than 1 second
+}
+
+// Main test runner
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
