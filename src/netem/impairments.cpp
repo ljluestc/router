@@ -1,433 +1,423 @@
 #include "netem/impairments.h"
 #include <iostream>
-#include <sstream>
-#include <cstdlib>
-#include <chrono>
 #include <random>
-#include <thread>
+#include <chrono>
 
-namespace RouterSim {
+namespace router_sim {
 
-NetemImpairments::NetemImpairments() : running_(false), initialized_(false) {
-    stats_.reset();
+ImpairmentManager::ImpairmentManager() : running_(false) {
 }
 
-NetemImpairments::~NetemImpairments() {
+ImpairmentManager::~ImpairmentManager() {
     stop();
 }
 
-bool NetemImpairments::initialize() {
-    if (initialized_) {
-        return true;
-    }
-    
-    // Check if tc/netem is available
-    int result = std::system("which tc > /dev/null 2>&1");
-    if (result != 0) {
-        std::cerr << "tc (traffic control) not found. Please install iproute2." << std::endl;
-        return false;
-    }
-    
-    initialized_ = true;
-    std::cout << "Netem impairments initialized successfully" << std::endl;
+bool ImpairmentManager::initialize() {
+    std::cout << "Impairment manager initialized\n";
     return true;
 }
 
-bool NetemImpairments::start() {
-    if (!initialized_) {
-        if (!initialize()) {
-            return false;
+bool ImpairmentManager::start() {
+    if (running_.load()) {
+        return true;
+    }
+
+    std::cout << "Starting impairment manager...\n";
+    running_.store(true);
+
+    processing_thread_ = std::thread(&ImpairmentManager::packet_processing_loop, this);
+
+    std::cout << "Impairment manager started\n";
+    return true;
+}
+
+bool ImpairmentManager::stop() {
+    if (!running_.load()) {
+        return true;
+    }
+
+    std::cout << "Stopping impairment manager...\n";
+    running_.store(false);
+
+    if (processing_thread_.joinable()) {
+        processing_thread_.join();
+    }
+
+    std::cout << "Impairment manager stopped\n";
+    return true;
+}
+
+bool ImpairmentManager::is_running() const {
+    return running_.load();
+}
+
+bool ImpairmentManager::apply_impairments(const std::string& interface, const ImpairmentConfig& config) {
+    std::lock_guard<std::mutex> lock(impairments_mutex_);
+    
+    ImpairmentState state;
+    state.config = config;
+    state.stats = ImpairmentStatistics{};
+    state.last_reset = std::chrono::steady_clock::now();
+    
+    initialize_random_generators(state);
+    
+    interface_impairments_[interface].push_back(state);
+    
+    std::cout << "Applied " << config.type << " impairment to interface " << interface 
+              << " with value " << config.value << "\n";
+    return true;
+}
+
+bool ImpairmentManager::remove_impairments(const std::string& interface) {
+    std::lock_guard<std::mutex> lock(impairments_mutex_);
+    
+    auto it = interface_impairments_.find(interface);
+    if (it == interface_impairments_.end()) {
+        return false;
+    }
+
+    interface_impairments_.erase(it);
+    std::cout << "Removed impairments from interface " << interface << "\n";
+    return true;
+}
+
+bool ImpairmentManager::update_impairments(const std::string& interface, const ImpairmentConfig& config) {
+    std::lock_guard<std::mutex> lock(impairments_mutex_);
+    
+    auto it = interface_impairments_.find(interface);
+    if (it == interface_impairments_.end()) {
+        return false;
+    }
+
+    if (!it->second.empty()) {
+        it->second[0].config = config;
+        initialize_random_generators(it->second[0]);
+    }
+    
+    std::cout << "Updated impairments for interface " << interface << "\n";
+    return true;
+}
+
+std::vector<ImpairmentConfig> ImpairmentManager::get_impairments(const std::string& interface) const {
+    std::lock_guard<std::mutex> lock(impairments_mutex_);
+    
+    auto it = interface_impairments_.find(interface);
+    if (it == interface_impairments_.end()) {
+        return {};
+    }
+
+    std::vector<ImpairmentConfig> result;
+    for (const auto& state : it->second) {
+        result.push_back(state.config);
+    }
+    return result;
+}
+
+bool ImpairmentManager::has_impairments(const std::string& interface) const {
+    std::lock_guard<std::mutex> lock(impairments_mutex_);
+    
+    auto it = interface_impairments_.find(interface);
+    return it != interface_impairments_.end() && !it->second.empty();
+}
+
+ImpairmentManager::ImpairmentStatistics ImpairmentManager::get_statistics(const std::string& interface) const {
+    std::lock_guard<std::mutex> lock(impairments_mutex_);
+    
+    auto it = interface_impairments_.find(interface);
+    if (it == interface_impairments_.end() || it->second.empty()) {
+        return ImpairmentStatistics{};
+    }
+
+    return it->second[0].stats;
+}
+
+void ImpairmentManager::packet_processing_loop() {
+    std::cout << "Packet processing loop started\n";
+    
+    while (running_.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        
+        // TODO: Implement packet processing
+    }
+    
+    std::cout << "Packet processing loop stopped\n";
+}
+
+bool ImpairmentManager::process_packet(const std::string& interface, std::vector<uint8_t>& packet) {
+    std::lock_guard<std::mutex> lock(impairments_mutex_);
+    
+    auto it = interface_impairments_.find(interface);
+    if (it == interface_impairments_.end()) {
+        return true; // No impairments
+    }
+
+    for (auto& state : it->second) {
+        if (!state.config.enabled) {
+            continue;
         }
-    }
-    
-    if (running_) {
-        return true;
-    }
-    
-    running_ = true;
-    std::cout << "Netem impairments started" << std::endl;
-    return true;
-}
 
-bool NetemImpairments::stop() {
-    if (!running_) {
-        return true;
-    }
-    
-    // Remove all impairments
-    clear_all_impairments();
-    
-    running_ = false;
-    std::cout << "Netem impairments stopped" << std::endl;
-    return true;
-}
-
-bool NetemImpairments::is_running() const {
-    return running_;
-}
-
-bool NetemImpairments::add_delay(const std::string& interface, const DelayConfig& config) {
-    if (!running_) {
-        return false;
-    }
-    
-    std::ostringstream cmd;
-    cmd << "tc qdisc add dev " << interface << " root netem delay " 
-        << config.delay_ms << "ms";
-    
-    if (config.jitter_ms > 0) {
-        cmd << " " << config.jitter_ms << "ms";
-    }
-    
-    if (config.distribution != "uniform") {
-        cmd << " distribution " << config.distribution;
-    }
-    
-    int result = std::system(cmd.str().c_str());
-    if (result == 0) {
-        impairments_[interface].delay = config;
-        std::cout << "Added delay impairment to " << interface 
-                  << " (delay: " << config.delay_ms << "ms, jitter: " << config.jitter_ms << "ms)" << std::endl;
-        return true;
-    }
-    
-    return false;
-}
-
-bool NetemImpairments::add_loss(const std::string& interface, const LossConfig& config) {
-    if (!running_) {
-        return false;
-    }
-    
-    std::ostringstream cmd;
-    cmd << "tc qdisc add dev " << interface << " root netem loss ";
-    
-    if (config.loss_type == "random") {
-        cmd << config.loss_percentage << "%";
-    } else if (config.loss_type == "state") {
-        cmd << "state " << config.p13 << "% " << config.p31 << "% " 
-            << config.p32 << "% " << config.p23 << "% " << config.p14 << "%";
-    } else if (config.loss_type == "gemodel") {
-        cmd << "gemodel " << config.p << " " << config.r << " " 
-            << config.h << " " << config.k << " " << config.one << " " << config.two;
-    }
-    
-    int result = std::system(cmd.str().c_str());
-    if (result == 0) {
-        impairments_[interface].loss = config;
-        std::cout << "Added loss impairment to " << interface 
-                  << " (type: " << config.loss_type << ", percentage: " << config.loss_percentage << "%)" << std::endl;
-        return true;
-    }
-    
-    return false;
-}
-
-bool NetemImpairments::add_duplicate(const std::string& interface, const DuplicateConfig& config) {
-    if (!running_) {
-        return false;
-    }
-    
-    std::ostringstream cmd;
-    cmd << "tc qdisc add dev " << interface << " root netem duplicate " 
-        << config.duplicate_percentage << "%";
-    
-    int result = std::system(cmd.str().c_str());
-    if (result == 0) {
-        impairments_[interface].duplicate = config;
-        std::cout << "Added duplicate impairment to " << interface 
-                  << " (percentage: " << config.duplicate_percentage << "%)" << std::endl;
-        return true;
-    }
-    
-    return false;
-}
-
-bool NetemImpairments::add_corrupt(const std::string& interface, const CorruptConfig& config) {
-    if (!running_) {
-        return false;
-    }
-    
-    std::ostringstream cmd;
-    cmd << "tc qdisc add dev " << interface << " root netem corrupt " 
-        << config.corrupt_percentage << "%";
-    
-    int result = std::system(cmd.str().c_str());
-    if (result == 0) {
-        impairments_[interface].corrupt = config;
-        std::cout << "Added corrupt impairment to " << interface 
-                  << " (percentage: " << config.corrupt_percentage << "%)" << std::endl;
-        return true;
-    }
-    
-    return false;
-}
-
-bool NetemImpairments::add_reorder(const std::string& interface, const ReorderConfig& config) {
-    if (!running_) {
-        return false;
-    }
-    
-    std::ostringstream cmd;
-    cmd << "tc qdisc add dev " << interface << " root netem reorder " 
-        << config.reorder_percentage << "%";
-    
-    if (config.gap > 0) {
-        cmd << " gap " << config.gap;
-    }
-    
-    int result = std::system(cmd.str().c_str());
-    if (result == 0) {
-        impairments_[interface].reorder = config;
-        std::cout << "Added reorder impairment to " << interface 
-                  << " (percentage: " << config.reorder_percentage << "%, gap: " << config.gap << ")" << std::endl;
-        return true;
-    }
-    
-    return false;
-}
-
-bool NetemImpairments::add_rate_limit(const std::string& interface, const RateLimitConfig& config) {
-    if (!running_) {
-        return false;
-    }
-    
-    std::ostringstream cmd;
-    cmd << "tc qdisc add dev " << interface << " root tbf rate " 
-        << config.rate << " burst " << config.burst << " latency " << config.latency << "ms";
-    
-    int result = std::system(cmd.str().c_str());
-    if (result == 0) {
-        impairments_[interface].rate_limit = config;
-        std::cout << "Added rate limit impairment to " << interface 
-                  << " (rate: " << config.rate << ", burst: " << config.burst << ")" << std::endl;
-        return true;
-    }
-    
-    return false;
-}
-
-bool NetemImpairments::remove_impairment(const std::string& interface, const std::string& type) {
-    if (!running_) {
-        return false;
-    }
-    
-    std::ostringstream cmd;
-    cmd << "tc qdisc del dev " << interface << " root";
-    
-    int result = std::system(cmd.str().c_str());
-    if (result == 0) {
-        // Remove from our tracking
-        auto it = impairments_.find(interface);
-        if (it != impairments_.end()) {
-            if (type == "delay") {
-                it->second.delay.reset();
-            } else if (type == "loss") {
-                it->second.loss.reset();
-            } else if (type == "duplicate") {
-                it->second.duplicate.reset();
-            } else if (type == "corrupt") {
-                it->second.corrupt.reset();
-            } else if (type == "reorder") {
-                it->second.reorder.reset();
-            } else if (type == "rate_limit") {
-                it->second.rate_limit.reset();
+        if (state.config.type == "delay") {
+            apply_delay_impairment(state, packet);
+        } else if (state.config.type == "loss") {
+            if (apply_loss_impairment(state, packet)) {
+                return false; // Packet dropped
             }
+        } else if (state.config.type == "jitter") {
+            apply_jitter_impairment(state, packet);
+        } else if (state.config.type == "duplicate") {
+            apply_duplicate_impairment(state, packet);
+        } else if (state.config.type == "reorder") {
+            apply_reorder_impairment(state, packet);
+        } else if (state.config.type == "corrupt") {
+            apply_corrupt_impairment(state, packet);
         }
-        
-        std::cout << "Removed " << type << " impairment from " << interface << std::endl;
-        return true;
     }
-    
-    return false;
-}
 
-bool NetemImpairments::clear_interface_impairments(const std::string& interface) {
-    if (!running_) {
-        return false;
-    }
-    
-    std::ostringstream cmd;
-    cmd << "tc qdisc del dev " << interface << " root";
-    
-    int result = std::system(cmd.str().c_str());
-    if (result == 0) {
-        impairments_.erase(interface);
-        std::cout << "Cleared all impairments from " << interface << std::endl;
-        return true;
-    }
-    
-    return false;
-}
-
-bool NetemImpairments::clear_all_impairments() {
-    if (!running_) {
-        return true;
-    }
-    
-    for (const auto& [interface, _] : impairments_) {
-        clear_interface_impairments(interface);
-    }
-    
-    impairments_.clear();
-    std::cout << "Cleared all impairments" << std::endl;
     return true;
 }
 
-std::vector<std::string> NetemImpairments::get_interfaces() const {
-    std::vector<std::string> interfaces;
-    for (const auto& [interface, _] : impairments_) {
-        interfaces.push_back(interface);
-    }
-    return interfaces;
-}
-
-std::map<std::string, ImpairmentConfig> NetemImpairments::get_impairments() const {
-    return impairments_;
-}
-
-ImpairmentConfig NetemImpairments::get_interface_impairments(const std::string& interface) const {
-    auto it = impairments_.find(interface);
-    if (it != impairments_.end()) {
-        return it->second;
-    }
-    return ImpairmentConfig();
-}
-
-bool NetemImpairments::simulate_network_conditions(const std::string& scenario) {
-    if (!running_) {
-        return false;
-    }
-    
-    if (scenario == "high_latency") {
-        // Simulate high latency network
-        DelayConfig delay_config;
-        delay_config.delay_ms = 200;
-        delay_config.jitter_ms = 50;
-        delay_config.distribution = "normal";
-        
-        for (const auto& [interface, _] : impairments_) {
-            add_delay(interface, delay_config);
-        }
-        
-    } else if (scenario == "packet_loss") {
-        // Simulate packet loss
-        LossConfig loss_config;
-        loss_config.loss_type = "random";
-        loss_config.loss_percentage = 5.0;
-        
-        for (const auto& [interface, _] : impairments_) {
-            add_loss(interface, loss_config);
-        }
-        
-    } else if (scenario == "unreliable_network") {
-        // Simulate unreliable network with multiple impairments
-        DelayConfig delay_config;
-        delay_config.delay_ms = 100;
-        delay_config.jitter_ms = 25;
-        
-        LossConfig loss_config;
-        loss_config.loss_type = "random";
-        loss_config.loss_percentage = 2.0;
-        
-        DuplicateConfig duplicate_config;
-        duplicate_config.duplicate_percentage = 1.0;
-        
-        for (const auto& [interface, _] : impairments_) {
-            add_delay(interface, delay_config);
-            add_loss(interface, loss_config);
-            add_duplicate(interface, duplicate_config);
-        }
-        
-    } else if (scenario == "bandwidth_limited") {
-        // Simulate bandwidth-limited network
-        RateLimitConfig rate_config;
-        rate_config.rate = "1mbit";
-        rate_config.burst = 100000;
-        rate_config.latency = 50;
-        
-        for (const auto& [interface, _] : impairments_) {
-            add_rate_limit(interface, rate_config);
-        }
-    }
-    
-    std::cout << "Applied network scenario: " << scenario << std::endl;
+bool ImpairmentManager::apply_delay_impairment(ImpairmentState& state, std::vector<uint8_t>& packet) {
+    // TODO: Implement delay impairment
+    update_statistics(state, "delayed");
     return true;
 }
 
-std::map<std::string, uint64_t> NetemImpairments::get_statistics() const {
-    std::lock_guard<std::mutex> lock(stats_mutex_);
-    return {
-        {"impairments_applied", stats_.impairments_applied},
-        {"impairments_removed", stats_.impairments_removed},
-        {"interfaces_affected", stats_.interfaces_affected},
-        {"scenarios_executed", stats_.scenarios_executed}
-    };
+bool ImpairmentManager::apply_loss_impairment(ImpairmentState& state, std::vector<uint8_t>& packet) {
+    double random_value = generate_random_value(state);
+    if (random_value < state.config.value / 100.0) {
+        update_statistics(state, "dropped");
+        return true; // Packet dropped
+    }
+    return false;
 }
 
-void NetemImpairments::reset_statistics() {
-    std::lock_guard<std::mutex> lock(stats_mutex_);
-    stats_.reset();
+bool ImpairmentManager::apply_jitter_impairment(ImpairmentState& state, std::vector<uint8_t>& packet) {
+    // TODO: Implement jitter impairment
+    update_statistics(state, "jittered");
+    return true;
 }
 
-bool NetemImpairments::validate_interface(const std::string& interface) {
-    // Check if interface exists
-    std::ostringstream cmd;
-    cmd << "ip link show " << interface << " > /dev/null 2>&1";
+bool ImpairmentManager::apply_duplicate_impairment(ImpairmentState& state, std::vector<uint8_t>& packet) {
+    double random_value = generate_random_value(state);
+    if (random_value < state.config.value / 100.0) {
+        // TODO: Duplicate packet
+        update_statistics(state, "duplicated");
+    }
+    return true;
+}
+
+bool ImpairmentManager::apply_reorder_impairment(ImpairmentState& state, std::vector<uint8_t>& packet) {
+    // TODO: Implement reorder impairment
+    update_statistics(state, "reordered");
+    return true;
+}
+
+bool ImpairmentManager::apply_corrupt_impairment(ImpairmentState& state, std::vector<uint8_t>& packet) {
+    double random_value = generate_random_value(state);
+    if (random_value < state.config.value / 100.0) {
+        // TODO: Corrupt packet
+        update_statistics(state, "corrupted");
+    }
+    return true;
+}
+
+void ImpairmentManager::initialize_random_generators(ImpairmentState& state) {
+    std::random_device rd;
+    state.rng = std::mt19937(rd());
+    state.uniform_dist = std::uniform_real_distribution<double>(0.0, 1.0);
+    state.normal_dist = std::normal_distribution<double>(0.0, 1.0);
+    state.exp_dist = std::exponential_distribution<double>(1.0);
+}
+
+double ImpairmentManager::generate_random_value(ImpairmentState& state) {
+    if (state.config.distribution == "uniform") {
+        return state.uniform_dist(state.rng);
+    } else if (state.config.distribution == "normal") {
+        return state.normal_dist(state.rng);
+    } else if (state.config.distribution == "exponential") {
+        return state.exp_dist(state.rng);
+    } else {
+        return state.uniform_dist(state.rng);
+    }
+}
+
+void ImpairmentManager::update_statistics(ImpairmentState& state, const std::string& action) {
+    state.stats.packets_processed++;
     
-    int result = std::system(cmd.str().c_str());
+    if (action == "delayed") {
+        state.stats.packets_delayed++;
+    } else if (action == "dropped") {
+        state.stats.packets_dropped++;
+    } else if (action == "duplicated") {
+        state.stats.packets_duplicated++;
+    } else if (action == "reordered") {
+        state.stats.packets_reordered++;
+    } else if (action == "corrupted") {
+        state.stats.packets_corrupted++;
+    }
+}
+
+// NetEmManager implementation
+NetEmManager::NetEmManager() : tc_available_(false) {
+}
+
+NetEmManager::~NetEmManager() {
+}
+
+bool NetEmManager::initialize() {
+    // Check if tc is available
+    int result = system("which tc > /dev/null 2>&1");
+    tc_available_ = (result == 0);
+    
+    if (tc_available_) {
+        tc_path_ = "tc";
+        std::cout << "NetEm manager initialized with tc support\n";
+    } else {
+        std::cout << "NetEm manager initialized without tc support\n";
+    }
+    
+    return true;
+}
+
+bool NetEmManager::is_available() const {
+    return tc_available_;
+}
+
+bool NetEmManager::apply_delay(const std::string& interface, uint32_t delay_ms, const std::string& distribution) {
+    if (!tc_available_) {
+        return false;
+    }
+
+    std::string parameters = build_delay_parameters(delay_ms, distribution);
+    return create_qdisc(interface, "netem", parameters);
+}
+
+bool NetEmManager::apply_loss(const std::string& interface, double loss_percentage, const std::string& distribution) {
+    if (!tc_available_) {
+        return false;
+    }
+
+    std::string parameters = build_loss_parameters(loss_percentage, distribution);
+    return create_qdisc(interface, "netem", parameters);
+}
+
+bool NetEmManager::apply_jitter(const std::string& interface, uint32_t jitter_ms, const std::string& distribution) {
+    if (!tc_available_) {
+        return false;
+    }
+
+    std::string parameters = build_jitter_parameters(jitter_ms, distribution);
+    return create_qdisc(interface, "netem", parameters);
+}
+
+bool NetEmManager::apply_duplicate(const std::string& interface, double duplicate_percentage) {
+    if (!tc_available_) {
+        return false;
+    }
+
+    std::string parameters = build_duplicate_parameters(duplicate_percentage);
+    return create_qdisc(interface, "netem", parameters);
+}
+
+bool NetEmManager::apply_reorder(const std::string& interface, double reorder_percentage, uint32_t correlation_percentage) {
+    if (!tc_available_) {
+        return false;
+    }
+
+    std::string parameters = build_reorder_parameters(reorder_percentage, correlation_percentage);
+    return create_qdisc(interface, "netem", parameters);
+}
+
+bool NetEmManager::apply_corrupt(const std::string& interface, double corrupt_percentage) {
+    if (!tc_available_) {
+        return false;
+    }
+
+    std::string parameters = build_corrupt_parameters(corrupt_percentage);
+    return create_qdisc(interface, "netem", parameters);
+}
+
+bool NetEmManager::apply_bandwidth_limit(const std::string& interface, uint64_t rate_bps) {
+    if (!tc_available_) {
+        return false;
+    }
+
+    std::string parameters = build_bandwidth_parameters(rate_bps);
+    return create_qdisc(interface, "tbf", parameters);
+}
+
+bool NetEmManager::remove_all_impairments(const std::string& interface) {
+    if (!tc_available_) {
+        return false;
+    }
+
+    return delete_qdisc(interface);
+}
+
+bool NetEmManager::clear_interface(const std::string& interface) {
+    if (!tc_available_) {
+        return false;
+    }
+
+    return delete_qdisc(interface);
+}
+
+std::vector<std::string> NetEmManager::get_available_interfaces() const {
+    // TODO: Implement interface discovery
+    return {};
+}
+
+std::string NetEmManager::get_interface_status(const std::string& interface) const {
+    // TODO: Implement interface status checking
+    return "unknown";
+}
+
+bool NetEmManager::execute_tc_command(const std::string& command) {
+    int result = system(command.c_str());
     return result == 0;
 }
 
-bool NetemImpairments::apply_impairment_sequence(const std::string& interface, 
-                                                const std::vector<ImpairmentStep>& sequence) {
-    if (!running_) {
-        return false;
-    }
-    
-    for (const auto& step : sequence) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(step.delay_ms));
-        
-        switch (step.type) {
-            case ImpairmentType::DELAY:
-                if (!add_delay(interface, step.delay_config)) {
-                    return false;
-                }
-                break;
-                
-            case ImpairmentType::LOSS:
-                if (!add_loss(interface, step.loss_config)) {
-                    return false;
-                }
-                break;
-                
-            case ImpairmentType::DUPLICATE:
-                if (!add_duplicate(interface, step.duplicate_config)) {
-                    return false;
-                }
-                break;
-                
-            case ImpairmentType::CORRUPT:
-                if (!add_corrupt(interface, step.corrupt_config)) {
-                    return false;
-                }
-                break;
-                
-            case ImpairmentType::REORDER:
-                if (!add_reorder(interface, step.reorder_config)) {
-                    return false;
-                }
-                break;
-                
-            case ImpairmentType::RATE_LIMIT:
-                if (!add_rate_limit(interface, step.rate_limit_config)) {
-                    return false;
-                }
-                break;
-        }
-    }
-    
-    return true;
+bool NetEmManager::create_qdisc(const std::string& interface, const std::string& qdisc_type, const std::string& parameters) {
+    std::string command = tc_path_ + " qdisc add dev " + interface + " root " + qdisc_type + " " + parameters;
+    return execute_tc_command(command);
 }
 
-} // namespace RouterSim
+bool NetEmManager::modify_qdisc(const std::string& interface, const std::string& qdisc_type, const std::string& parameters) {
+    std::string command = tc_path_ + " qdisc change dev " + interface + " root " + qdisc_type + " " + parameters;
+    return execute_tc_command(command);
+}
+
+bool NetEmManager::delete_qdisc(const std::string& interface) {
+    std::string command = tc_path_ + " qdisc del dev " + interface + " root";
+    return execute_tc_command(command);
+}
+
+std::string NetEmManager::build_delay_parameters(uint32_t delay_ms, const std::string& distribution) const {
+    return std::to_string(delay_ms) + "ms";
+}
+
+std::string NetEmManager::build_loss_parameters(double loss_percentage, const std::string& distribution) const {
+    return "loss " + std::to_string(loss_percentage) + "%";
+}
+
+std::string NetEmManager::build_jitter_parameters(uint32_t jitter_ms, const std::string& distribution) const {
+    return "delay " + std::to_string(jitter_ms) + "ms";
+}
+
+std::string NetEmManager::build_duplicate_parameters(double duplicate_percentage) const {
+    return "duplicate " + std::to_string(duplicate_percentage) + "%";
+}
+
+std::string NetEmManager::build_reorder_parameters(double reorder_percentage, uint32_t correlation) const {
+    return "reorder " + std::to_string(reorder_percentage) + "% " + std::to_string(correlation) + "%";
+}
+
+std::string NetEmManager::build_corrupt_parameters(double corrupt_percentage) const {
+    return "corrupt " + std::to_string(corrupt_percentage) + "%";
+}
+
+std::string NetEmManager::build_bandwidth_parameters(uint64_t rate_bps) const {
+    return "rate " + std::to_string(rate_bps) + "bps";
+}
+
+} // namespace router_sim

@@ -1,350 +1,439 @@
-#include "testing/pcap_diff.h"
+#include "pcap_diff.h"
 #include <iostream>
 #include <fstream>
-#include <sstream>
 #include <algorithm>
 #include <iomanip>
+#include <sstream>
 
 namespace RouterSim {
 
-PcapDiff::PcapDiff() : initialized_(false) {
+PCAPDiff::PCAPDiff() {
 }
 
-PcapDiff::~PcapDiff() = default;
-
-bool PcapDiff::initialize() {
-    if (initialized_) {
-        return true;
-    }
-    
-    // Check if required tools are available
-    int result = std::system("which tcpdump > /dev/null 2>&1");
-    if (result != 0) {
-        std::cerr << "tcpdump not found. Please install tcpdump." << std::endl;
-        return false;
-    }
-    
-    result = std::system("which diff > /dev/null 2>&1");
-    if (result != 0) {
-        std::cerr << "diff not found. Please install diffutils." << std::endl;
-        return false;
-    }
-    
-    initialized_ = true;
-    std::cout << "PcapDiff initialized successfully" << std::endl;
-    return true;
+PCAPDiff::~PCAPDiff() {
 }
 
-bool PcapDiff::compare_pcap_files(const std::string& file1, const std::string& file2, 
-                                 const PcapDiffOptions& options) {
-    if (!initialized_) {
-        if (!initialize()) {
-            return false;
-        }
+bool PCAPDiff::compare_files(const std::string& file1, const std::string& file2) {
+    std::ifstream f1(file1, std::ios::binary);
+    std::ifstream f2(file2, std::ios::binary);
     
-    // Check if files exist
-    if (!file_exists(file1) || !file_exists(file2)) {
-        std::cerr << "One or both pcap files do not exist" << std::endl;
+    if (!f1.is_open() || !f2.is_open()) {
+        std::cerr << "Failed to open one or both files" << std::endl;
         return false;
     }
     
-    // Generate text representations of pcap files
-    std::string text1 = pcap_to_text(file1, options);
-    std::string text2 = pcap_to_text(file2, options);
+    // Compare file sizes
+    f1.seekg(0, std::ios::end);
+    f2.seekg(0, std::ios::end);
+    size_t size1 = f1.tellg();
+    size_t size2 = f2.tellg();
     
-    if (text1.empty() || text2.empty()) {
-        std::cerr << "Failed to convert pcap files to text" << std::endl;
+    if (size1 != size2) {
+        std::cout << "Files have different sizes: " << size1 << " vs " << size2 << std::endl;
         return false;
     }
     
-    // Compare the text representations
-    return compare_text(text1, text2, options);
-}
-
-bool PcapDiff::compare_pcap_files_detailed(const std::string& file1, const std::string& file2,
-                                          const PcapDiffOptions& options, PcapDiffResult& result) {
-    if (!initialized_) {
-        if (!initialize()) {
-            return false;
-        }
-    }
+    // Compare content byte by byte
+    f1.seekg(0, std::ios::beg);
+    f2.seekg(0, std::ios::beg);
     
-    // Check if files exist
-    if (!file_exists(file1) || !file_exists(file2)) {
-        result.error_message = "One or both pcap files do not exist";
-        return false;
-    }
+    char byte1, byte2;
+    size_t position = 0;
+    size_t differences = 0;
     
-    // Generate text representations
-    std::string text1 = pcap_to_text(file1, options);
-    std::string text2 = pcap_to_text(file2, options);
-    
-    if (text1.empty() || text2.empty()) {
-        result.error_message = "Failed to convert pcap files to text";
-        return false;
-    }
-    
-    // Compare with detailed results
-    return compare_text_detailed(text1, text2, options, result);
-}
-
-bool PcapDiff::validate_pcap_file(const std::string& filename, const PcapValidationOptions& options) {
-    if (!initialized_) {
-        if (!initialize()) {
-            return false;
-        }
-    }
-    
-    if (!file_exists(filename)) {
-        std::cerr << "Pcap file does not exist: " << filename << std::endl;
-        return false;
-    }
-    
-    // Check file size
-    if (options.min_size > 0) {
-        std::ifstream file(filename, std::ios::binary | std::ios::ate);
-        if (file.is_open()) {
-            std::streampos size = file.tellg();
-            if (size < options.min_size) {
-                std::cerr << "Pcap file too small: " << size << " bytes (minimum: " << options.min_size << ")" << std::endl;
-                return false;
+    while (f1.get(byte1) && f2.get(byte2)) {
+        if (byte1 != byte2) {
+            differences++;
+            if (differences <= 10) { // Show first 10 differences
+                std::cout << "Difference at position " << position 
+                         << ": 0x" << std::hex << std::setw(2) << std::setfill('0') 
+                         << static_cast<int>(static_cast<unsigned char>(byte1))
+                         << " vs 0x" << std::setw(2) << std::setfill('0')
+                         << static_cast<int>(static_cast<unsigned char>(byte2))
+                         << std::dec << std::endl;
             }
         }
+        position++;
     }
     
-    // Check packet count
-    if (options.min_packets > 0) {
-        int packet_count = count_packets(filename);
-        if (packet_count < options.min_packets) {
-            std::cerr << "Pcap file has too few packets: " << packet_count << " (minimum: " << options.min_packets << ")" << std::endl;
-            return false;
-        }
+    if (differences > 10) {
+        std::cout << "... and " << (differences - 10) << " more differences" << std::endl;
     }
     
-    // Check for specific protocols
-    if (!options.required_protocols.empty()) {
-        for (const auto& protocol : options.required_protocols) {
-            if (!has_protocol(filename, protocol)) {
-                std::cerr << "Pcap file missing required protocol: " << protocol << std::endl;
-                return false;
-            }
-        }
-    }
-    
-    return true;
+    std::cout << "Total differences: " << differences << std::endl;
+    return differences == 0;
 }
 
-std::string PcapDiff::pcap_to_text(const std::string& filename, const PcapDiffOptions& options) {
-    std::ostringstream cmd;
-    cmd << "tcpdump -r " << filename;
+bool PCAPDiff::compare_pcap_files(const std::string& file1, const std::string& file2) {
+    PCAPFile pcap1, pcap2;
     
-    if (options.verbose) {
-        cmd << " -v";
+    if (!load_pcap_file(file1, pcap1)) {
+        std::cerr << "Failed to load PCAP file: " << file1 << std::endl;
+        return false;
     }
     
-    if (!options.filter.empty()) {
-        cmd << " " << options.filter;
+    if (!load_pcap_file(file2, pcap2)) {
+        std::cerr << "Failed to load PCAP file: " << file2 << std::endl;
+        return false;
     }
     
-    cmd << " 2>/dev/null";
-    
-    // Execute command and capture output
-    FILE* pipe = popen(cmd.str().c_str(), "r");
-    if (!pipe) {
-        return "";
-    }
-    
-    std::string result;
-    char buffer[128];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-    
-    pclose(pipe);
-    return result;
+    return compare_pcap_structures(pcap1, pcap2);
 }
 
-bool PcapDiff::compare_text(const std::string& text1, const std::string& text2, 
-                           const PcapDiffOptions& options) {
-    if (options.ignore_timestamps) {
-        // Remove timestamps from both texts
-        std::string clean_text1 = remove_timestamps(text1);
-        std::string clean_text2 = remove_timestamps(text2);
-        return clean_text1 == clean_text2;
+bool PCAPDiff::load_pcap_file(const std::string& filename, PCAPFile& pcap) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        return false;
     }
     
-    return text1 == text2;
-}
-
-bool PcapDiff::compare_text_detailed(const std::string& text1, const std::string& text2,
-                                    const PcapDiffOptions& options, PcapDiffResult& result) {
-    result.identical = (text1 == text2);
-    
-    if (result.identical) {
-        return true;
+    // Read PCAP global header
+    file.read(reinterpret_cast<char*>(&pcap.global_header), sizeof(pcap.global_header));
+    if (file.gcount() != sizeof(pcap.global_header)) {
+        return false;
     }
     
-    // Calculate differences
-    result.differences = calculate_differences(text1, text2);
-    result.similarity = calculate_similarity(text1, text2);
-    
-    // Generate diff output
-    result.diff_output = generate_diff_output(text1, text2);
-    
-    return false;
-}
-
-std::string PcapDiff::remove_timestamps(const std::string& text) {
-    std::string result = text;
-    
-    // Remove timestamp patterns like "12:34:56.789123"
-    std::regex timestamp_regex(R"(\d{2}:\d{2}:\d{2}\.\d{6})");
-    result = std::regex_replace(result, timestamp_regex, "XX:XX:XX.XXXXXX");
-    
-    return result;
-}
-
-std::vector<PcapDifference> PcapDiff::calculate_differences(const std::string& text1, const std::string& text2) {
-    std::vector<PcapDifference> differences;
-    
-    // Split texts into lines
-    std::vector<std::string> lines1 = split_lines(text1);
-    std::vector<std::string> lines2 = split_lines(text2);
-    
-    // Find differences using simple line-by-line comparison
-    size_t max_lines = std::max(lines1.size(), lines2.size());
-    
-    for (size_t i = 0; i < max_lines; ++i) {
-        std::string line1 = (i < lines1.size()) ? lines1[i] : "";
-        std::string line2 = (i < lines2.size()) ? lines2[i] : "";
+    // Read packet records
+    while (file.good()) {
+        PCAPRecord record;
         
-        if (line1 != line2) {
-            PcapDifference diff;
-            diff.line_number = i + 1;
-            diff.type = (i >= lines1.size()) ? "ADDED" : (i >= lines2.size()) ? "REMOVED" : "MODIFIED";
-            diff.expected = line1;
-            diff.actual = line2;
-            differences.push_back(diff);
+        // Read packet header
+        file.read(reinterpret_cast<char*>(&record.header), sizeof(record.header));
+        if (file.gcount() != sizeof(record.header)) {
+            break;
         }
-    }
-    
-    return differences;
-}
-
-double PcapDiff::calculate_similarity(const std::string& text1, const std::string& text2) {
-    if (text1.empty() && text2.empty()) {
-        return 1.0;
-    }
-    
-    if (text1.empty() || text2.empty()) {
-        return 0.0;
-    }
-    
-    // Simple similarity calculation based on common substrings
-    size_t common_chars = 0;
-    size_t min_length = std::min(text1.length(), text2.length());
-    
-    for (size_t i = 0; i < min_length; ++i) {
-        if (text1[i] == text2[i]) {
-            common_chars++;
+        
+        // Read packet data
+        record.data.resize(record.header.caplen);
+        file.read(reinterpret_cast<char*>(record.data.data()), record.header.caplen);
+        if (file.gcount() != static_cast<std::streamsize>(record.header.caplen)) {
+            break;
         }
+        
+        pcap.records.push_back(record);
     }
     
-    return static_cast<double>(common_chars) / std::max(text1.length(), text2.length());
+    return true;
 }
 
-std::string PcapDiff::generate_diff_output(const std::string& text1, const std::string& text2) {
-    // Write texts to temporary files
-    std::string temp1 = "/tmp/pcap_diff_1.txt";
-    std::string temp2 = "/tmp/pcap_diff_2.txt";
-    
-    std::ofstream file1(temp1);
-    std::ofstream file2(temp2);
-    
-    if (!file1.is_open() || !file2.is_open()) {
-        return "Failed to create temporary files";
-    }
-    
-    file1 << text1;
-    file2 << text2;
-    
-    file1.close();
-    file2.close();
-    
-    // Run diff command
-    std::ostringstream cmd;
-    cmd << "diff -u " << temp1 << " " << temp2 << " 2>/dev/null";
-    
-    FILE* pipe = popen(cmd.str().c_str(), "r");
-    if (!pipe) {
-        return "Failed to run diff command";
-    }
-    
-    std::string result;
-    char buffer[128];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-    
-    pclose(pipe);
-    
-    // Clean up temporary files
-    std::remove(temp1.c_str());
-    std::remove(temp2.c_str());
-    
-    return result;
-}
-
-bool PcapDiff::file_exists(const std::string& filename) {
-    std::ifstream file(filename);
-    return file.good();
-}
-
-int PcapDiff::count_packets(const std::string& filename) {
-    std::ostringstream cmd;
-    cmd << "tcpdump -r " << filename << " 2>/dev/null | wc -l";
-    
-    FILE* pipe = popen(cmd.str().c_str(), "r");
-    if (!pipe) {
-        return -1;
-    }
-    
-    char buffer[128];
-    if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        pclose(pipe);
-        return std::stoi(buffer);
-    }
-    
-    pclose(pipe);
-    return -1;
-}
-
-bool PcapDiff::has_protocol(const std::string& filename, const std::string& protocol) {
-    std::ostringstream cmd;
-    cmd << "tcpdump -r " << filename << " " << protocol << " 2>/dev/null | head -1";
-    
-    FILE* pipe = popen(cmd.str().c_str(), "r");
-    if (!pipe) {
+bool PCAPDiff::compare_pcap_structures(const PCAPFile& pcap1, const PCAPFile& pcap2) {
+    // Compare global headers
+    if (memcmp(&pcap1.global_header, &pcap2.global_header, sizeof(PCAPGlobalHeader)) != 0) {
+        std::cout << "PCAP global headers differ" << std::endl;
         return false;
     }
     
-    char buffer[128];
-    bool has_protocol = (fgets(buffer, sizeof(buffer), pipe) != nullptr);
-    
-    pclose(pipe);
-    return has_protocol;
-}
-
-std::vector<std::string> PcapDiff::split_lines(const std::string& text) {
-    std::vector<std::string> lines;
-    std::istringstream stream(text);
-    std::string line;
-    
-    while (std::getline(stream, line)) {
-        lines.push_back(line);
+    // Compare number of packets
+    if (pcap1.records.size() != pcap2.records.size()) {
+        std::cout << "Different number of packets: " << pcap1.records.size() 
+                 << " vs " << pcap2.records.size() << std::endl;
+        return false;
     }
     
-    return lines;
+    // Compare each packet
+    size_t differences = 0;
+    for (size_t i = 0; i < pcap1.records.size(); ++i) {
+        if (!compare_packet_records(pcap1.records[i], pcap2.records[i], i)) {
+            differences++;
+        }
+    }
+    
+    std::cout << "Packet differences: " << differences << std::endl;
+    return differences == 0;
+}
+
+bool PCAPDiff::compare_packet_records(const PCAPRecord& record1, 
+                                     const PCAPRecord& record2, 
+                                     size_t packet_index) {
+    // Compare packet headers
+    if (memcmp(&record1.header, &record2.header, sizeof(PCAPPacketHeader)) != 0) {
+        std::cout << "Packet " << packet_index << " headers differ" << std::endl;
+        return false;
+    }
+    
+    // Compare packet data
+    if (record1.data.size() != record2.data.size()) {
+        std::cout << "Packet " << packet_index << " data sizes differ: " 
+                 << record1.data.size() << " vs " << record2.data.size() << std::endl;
+        return false;
+    }
+    
+    if (record1.data != record2.data) {
+        std::cout << "Packet " << packet_index << " data differs" << std::endl;
+        return false;
+    }
+    
+    return true;
+}
+
+PCAPDiff::Statistics PCAPDiff::analyze_pcap_file(const std::string& filename) {
+    Statistics stats;
+    PCAPFile pcap;
+    
+    if (!load_pcap_file(filename, pcap)) {
+        return stats;
+    }
+    
+    stats.total_packets = pcap.records.size();
+    stats.total_bytes = 0;
+    
+    for (const auto& record : pcap.records) {
+        stats.total_bytes += record.header.caplen;
+        
+        // Analyze packet types
+        if (record.data.size() >= 14) { // Minimum Ethernet header size
+            uint16_t ethertype = (static_cast<uint16_t>(record.data[12]) << 8) | 
+                                 static_cast<uint16_t>(record.data[13]);
+            
+            switch (ethertype) {
+                case 0x0800: // IPv4
+                    stats.ipv4_packets++;
+                    analyze_ipv4_packet(record.data, stats);
+                    break;
+                case 0x0806: // ARP
+                    stats.arp_packets++;
+                    break;
+                case 0x86DD: // IPv6
+                    stats.ipv6_packets++;
+                    break;
+                default:
+                    stats.other_packets++;
+                    break;
+            }
+        }
+    }
+    
+    return stats;
+}
+
+void PCAPDiff::analyze_ipv4_packet(const std::vector<uint8_t>& data, Statistics& stats) {
+    if (data.size() < 34) { // Minimum IP header size
+        return;
+    }
+    
+    uint8_t protocol = data[23]; // Protocol field in IP header
+    
+    switch (protocol) {
+        case 1: // ICMP
+            stats.icmp_packets++;
+            break;
+        case 6: // TCP
+            stats.tcp_packets++;
+            break;
+        case 17: // UDP
+            stats.udp_packets++;
+            break;
+        case 89: // OSPF
+            stats.ospf_packets++;
+            break;
+        default:
+            stats.other_ip_packets++;
+            break;
+    }
+}
+
+bool PCAPDiff::generate_pcap_report(const std::string& filename, 
+                                   const Statistics& stats) {
+    std::ofstream file(filename);
+    if (!file.is_open()) {
+        return false;
+    }
+    
+    file << "PCAP Analysis Report\n";
+    file << "===================\n\n";
+    
+    file << "Total Packets: " << stats.total_packets << "\n";
+    file << "Total Bytes: " << stats.total_bytes << "\n\n";
+    
+    file << "Packet Types:\n";
+    file << "  IPv4: " << stats.ipv4_packets << "\n";
+    file << "  IPv6: " << stats.ipv6_packets << "\n";
+    file << "  ARP: " << stats.arp_packets << "\n";
+    file << "  Other: " << stats.other_packets << "\n\n";
+    
+    file << "IP Protocols:\n";
+    file << "  TCP: " << stats.tcp_packets << "\n";
+    file << "  UDP: " << stats.udp_packets << "\n";
+    file << "  ICMP: " << stats.icmp_packets << "\n";
+    file << "  OSPF: " << stats.ospf_packets << "\n";
+    file << "  Other: " << stats.other_ip_packets << "\n";
+    
+    file.close();
+    return true;
+}
+
+// PCAPCapture implementation
+PCAPCapture::PCAPCapture() 
+    : capturing_(false), packet_count_(0), max_packets_(1000) {
+}
+
+PCAPCapture::~PCAPCapture() {
+    stop_capture();
+}
+
+bool PCAPCapture::start_capture(const std::string& interface, 
+                               const std::string& output_file) {
+    if (capturing_) {
+        return false;
+    }
+    
+    interface_ = interface;
+    output_file_ = output_file;
+    packet_count_ = 0;
+    
+    // Start capture thread
+    capturing_ = true;
+    capture_thread_ = std::thread(&PCAPCapture::capture_loop, this);
+    
+    std::cout << "Started PCAP capture on interface " << interface 
+              << " to file " << output_file << std::endl;
+    return true;
+}
+
+bool PCAPCapture::stop_capture() {
+    if (!capturing_) {
+        return true;
+    }
+    
+    capturing_ = false;
+    
+    if (capture_thread_.joinable()) {
+        capture_thread_.join();
+    }
+    
+    std::cout << "Stopped PCAP capture. Captured " << packet_count_ << " packets" << std::endl;
+    return true;
+}
+
+void PCAPCapture::capture_loop() {
+    // This is a simplified implementation
+    // In a real implementation, you would use libpcap or similar
+    
+    while (capturing_ && packet_count_ < max_packets_) {
+        // Simulate packet capture
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        
+        // Generate dummy packet
+        PCAPRecord record;
+        record.header.ts_sec = time(nullptr);
+        record.header.ts_usec = 0;
+        record.header.caplen = 64;
+        record.header.len = 64;
+        
+        record.data.resize(64);
+        for (size_t i = 0; i < 64; ++i) {
+            record.data[i] = rand() % 256;
+        }
+        
+        // Write packet to file
+        write_packet_to_file(record);
+        packet_count_++;
+    }
+}
+
+void PCAPCapture::write_packet_to_file(const PCAPRecord& record) {
+    std::ofstream file(output_file_, std::ios::binary | std::ios::app);
+    if (file.is_open()) {
+        file.write(reinterpret_cast<const char*>(&record.header), sizeof(record.header));
+        file.write(reinterpret_cast<const char*>(record.data.data()), record.data.size());
+    }
+}
+
+void PCAPCapture::set_max_packets(size_t max_packets) {
+    max_packets_ = max_packets;
+}
+
+size_t PCAPCapture::get_packet_count() const {
+    return packet_count_;
+}
+
+bool PCAPCapture::is_capturing() const {
+    return capturing_;
+}
+
+// PCAPReplay implementation
+PCAPReplay::PCAPReplay() 
+    : replaying_(false), speed_multiplier_(1.0) {
+}
+
+PCAPReplay::~PCAPReplay() {
+    stop_replay();
+}
+
+bool PCAPReplay::start_replay(const std::string& pcap_file, 
+                             const std::string& interface) {
+    if (replaying_) {
+        return false;
+    }
+    
+    pcap_file_ = pcap_file;
+    interface_ = interface;
+    
+    // Load PCAP file
+    if (!load_pcap_file(pcap_file_, pcap_data_)) {
+        std::cerr << "Failed to load PCAP file: " << pcap_file << std::endl;
+        return false;
+    }
+    
+    // Start replay thread
+    replaying_ = true;
+    replay_thread_ = std::thread(&PCAPReplay::replay_loop, this);
+    
+    std::cout << "Started PCAP replay from file " << pcap_file 
+              << " to interface " << interface << std::endl;
+    return true;
+}
+
+bool PCAPReplay::stop_replay() {
+    if (!replaying_) {
+        return true;
+    }
+    
+    replaying_ = false;
+    
+    if (replay_thread_.joinable()) {
+        replay_thread_.join();
+    }
+    
+    std::cout << "Stopped PCAP replay" << std::endl;
+    return true;
+}
+
+void PCAPReplay::replay_loop() {
+    auto start_time = std::chrono::steady_clock::now();
+    auto last_packet_time = start_time;
+    
+    for (size_t i = 0; i < pcap_data_.records.size() && replaying_; ++i) {
+        const auto& record = pcap_data_.records[i];
+        
+        // Calculate delay between packets
+        auto packet_time = std::chrono::steady_clock::now();
+        if (i > 0) {
+            auto delay = std::chrono::microseconds(
+                static_cast<uint64_t>((record.header.ts_usec - 
+                pcap_data_.records[i-1].header.ts_usec) / speed_multiplier_));
+            
+            std::this_thread::sleep_for(delay);
+        }
+        
+        // Send packet to interface
+        send_packet_to_interface(record);
+        
+        last_packet_time = packet_time;
+    }
+}
+
+void PCAPReplay::send_packet_to_interface(const PCAPRecord& record) {
+    // This is a simplified implementation
+    // In a real implementation, you would use raw sockets or similar
+    std::cout << "Replaying packet of size " << record.data.size() << " bytes" << std::endl;
+}
+
+void PCAPReplay::set_speed_multiplier(double multiplier) {
+    speed_multiplier_ = multiplier;
+}
+
+bool PCAPReplay::is_replaying() const {
+    return replaying_;
 }
 
 } // namespace RouterSim
