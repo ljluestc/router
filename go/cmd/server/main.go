@@ -52,7 +52,7 @@ func main() {
 	}
 
 	// Initialize handlers
-	handlers := handlers.New(analyticsEngine, aviatrixClient, cloudpodsClient)
+	handlers := handlers.New(analyticsEngine, cloudpodsClient, aviatrixClient)
 
 	// Setup Gin router
 	if cfg.Server.Environment == "production" {

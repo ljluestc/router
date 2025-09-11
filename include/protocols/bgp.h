@@ -39,6 +39,7 @@ struct BGPNeighbor {
     uint64_t messages_received;
     std::string last_error;
     std::chrono::steady_clock::time_point last_hello;
+    std::chrono::steady_clock::time_point last_keepalive_sent;
     std::map<std::string, std::string> capabilities;
 };
 
@@ -147,6 +148,12 @@ private:
 
     // Policy application
     bool apply_route_policy(const std::string& policy_name, BGPRoute& route);
+    
+    // Additional helper methods
+    void process_incoming_messages();
+    void send_keepalives();
+    void process_route_updates();
+    void check_session_timeouts();
 };
 
 } // namespace router_sim

@@ -38,6 +38,7 @@ set(ROUTER_SOURCES
     src/protocols/isis.cpp
     src/traffic_shaping/token_bucket.cpp
     src/traffic_shaping/wfq.cpp
+    src/traffic_shaping/drr.cpp
     src/impairments/netem.cpp
     src/cli/cli_interface.cpp
     src/config/yaml_config.cpp
@@ -65,6 +66,8 @@ add_executable(router_tests
     tests/test_impairments.cpp
     tests/test_cli.cpp
     tests/test_config.cpp
+    tests/test_drr.cpp
+    tests/test_integration.cpp
 )
 
 target_link_libraries(router_tests

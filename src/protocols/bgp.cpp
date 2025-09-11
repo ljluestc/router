@@ -290,7 +290,15 @@ void BGPProtocol::bgp_main_loop() {
     std::cout << "BGP main loop started\n";
     
     while (running_.load()) {
-        // TODO: Implement BGP main processing
+        // Process incoming BGP messages
+        process_incoming_messages();
+        
+        // Send keepalive messages to established neighbors
+        send_keepalives();
+        
+        // Process route updates
+        process_route_updates();
+        
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     
@@ -358,6 +366,50 @@ void BGPProtocol::process_update_message(const std::string& neighbor_address,
 void BGPProtocol::process_notification_message(const std::string& neighbor_address, 
                                               const std::vector<uint8_t>& message) {
     // TODO: Implement BGP NOTIFICATION message processing
+}
+
+void BGPProtocol::process_incoming_messages() {
+    // Process incoming BGP messages from all neighbors
+    std::lock_guard<std::mutex> lock(neighbors_mutex_);
+    
+    for (auto& [address, neighbor] : neighbors_) {
+        if (neighbor.state == "Established") {
+            // Simulate receiving messages
+            // In a real implementation, this would read from network sockets
+        }
+    }
+}
+
+void BGPProtocol::send_keepalives() {
+    std::lock_guard<std::mutex> lock(neighbors_mutex_);
+    
+    auto now = std::chrono::steady_clock::now();
+    
+    for (auto& [address, neighbor] : neighbors_) {
+        if (neighbor.state == "Established") {
+            auto time_since_last_keepalive = std::chrono::duration_cast<std::chrono::seconds>(
+                now - neighbor.last_keepalive_sent).count();
+            
+            if (time_since_last_keepalive >= neighbor.keepalive_interval) {
+                send_keepalive(address);
+                neighbor.last_keepalive_sent = now;
+            }
+        }
+    }
+}
+
+void BGPProtocol::process_route_updates() {
+    std::lock_guard<std::mutex> lock(routes_mutex_);
+    
+    // Process route updates and apply policies
+    for (auto& [key, route] : advertised_routes_) {
+        if (route.is_valid && route_update_callback_) {
+            // Apply export policies
+            if (apply_route_policy("export", route)) {
+                route_update_callback_(route.prefix, route.prefix_length, route.metric);
+            }
+        }
+    }
 }
 
 } // namespace router_sim

@@ -7,10 +7,11 @@
 
 namespace RouterSim {
 
-// WFQ-specific structures
-struct WFQClass {
+// DRR-specific structures
+struct DRRClass {
     uint8_t class_id;
-    uint32_t weight;
+    uint32_t quantum;
+    uint32_t deficit;
     uint64_t min_bandwidth;
     uint64_t max_bandwidth;
     std::string name;
@@ -18,39 +19,39 @@ struct WFQClass {
     std::map<std::string, std::string> attributes;
 };
 
-struct QueueItem {
+struct DRRQueueItem {
     PacketInfo packet;
     uint8_t class_id;
     std::chrono::steady_clock::time_point enqueue_time;
-    uint64_t virtual_finish_time;
 };
 
-struct ClassStatistics {
+struct DRRClassStatistics {
     uint8_t class_id;
     uint64_t packets_queued;
     uint64_t packets_dequeued;
     uint64_t bytes_queued;
     uint64_t bytes_dequeued;
     size_t current_queue_length;
+    uint32_t current_deficit;
     std::chrono::steady_clock::time_point last_activity;
 };
 
-struct WFQStatistics {
+struct DRRStatistics {
     uint64_t total_packets_queued;
     uint64_t total_packets_dequeued;
     uint64_t total_bytes_queued;
     uint64_t total_bytes_dequeued;
     size_t current_queue_length;
-    std::map<uint8_t, ClassStatistics> class_statistics;
+    std::map<uint8_t, DRRClassStatistics> class_statistics;
 };
 
-class WeightedFairQueue {
+class DeficitRoundRobin {
 public:
-    WeightedFairQueue();
-    ~WeightedFairQueue();
+    DeficitRoundRobin();
+    ~DeficitRoundRobin();
 
-    // Core WFQ operations
-    bool initialize(const std::vector<WFQClass>& classes);
+    // Core DRR operations
+    bool initialize(const std::vector<DRRClass>& classes);
     bool enqueue_packet(const PacketInfo& packet, uint8_t class_id);
     bool dequeue_packet(PacketInfo& packet);
     bool is_empty() const;
@@ -58,24 +59,23 @@ public:
     size_t queue_size(uint8_t class_id) const;
 
     // Class management
-    bool add_class(const WFQClass& wfq_class);
+    bool add_class(const DRRClass& drr_class);
     bool remove_class(uint8_t class_id);
-    bool update_class(const WFQClass& wfq_class);
-    std::vector<WFQClass> get_classes() const;
+    bool update_class(const DRRClass& drr_class);
+    std::vector<DRRClass> get_classes() const;
 
     // Packet classification
     void set_classifier(std::function<uint8_t(const PacketInfo&)> classifier);
     uint8_t classify_packet(const PacketInfo& packet) const;
 
     // Statistics
-    WFQStatistics get_statistics() const;
+    DRRStatistics get_statistics() const;
     void reset_statistics();
 
 private:
     // Internal state
-    std::vector<WFQClass> classes_;
-    std::map<uint8_t, std::queue<QueueItem>> queues_;
-    uint64_t virtual_time_;
+    std::vector<DRRClass> classes_;
+    std::map<uint8_t, std::queue<DRRQueueItem>> queues_;
     std::function<uint8_t(const PacketInfo&)> classifier_;
     
     // Statistics tracking
@@ -92,8 +92,8 @@ private:
     mutable std::mutex mutex_;
 
     // Internal methods
-    uint64_t calculate_virtual_finish_time(const PacketInfo& packet, uint8_t class_id) const;
-    bool select_next_packet(QueueItem& item);
+    bool select_next_packet(DRRQueueItem& item);
+    void update_deficit(uint8_t class_id, uint32_t packet_size);
 };
 
 } // namespace RouterSim
