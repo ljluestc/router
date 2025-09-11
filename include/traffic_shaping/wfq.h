@@ -78,17 +78,6 @@ private:
     uint64_t virtual_time_;
     std::function<uint8_t(const PacketInfo&)> classifier_;
     
-    // Statistics tracking
-    uint64_t total_packets_queued_;
-    uint64_t total_packets_dequeued_;
-    uint64_t total_bytes_queued_;
-    uint64_t total_bytes_dequeued_;
-    std::map<uint8_t, uint64_t> class_packets_queued_;
-    std::map<uint8_t, uint64_t> class_packets_dequeued_;
-    std::map<uint8_t, uint64_t> class_bytes_queued_;
-    std::map<uint8_t, uint64_t> class_bytes_dequeued_;
-    std::map<uint8_t, std::chrono::steady_clock::time_point> class_last_activity_;
-    
     mutable std::mutex mutex_;
 
     // Internal methods

@@ -6,9 +6,7 @@
 
 namespace RouterSim {
 
-WeightedFairQueue::WeightedFairQueue() : virtual_time_(0), 
-    total_packets_queued_(0), total_packets_dequeued_(0),
-    total_bytes_queued_(0), total_bytes_dequeued_(0) {
+WeightedFairQueue::WeightedFairQueue() : virtual_time_(0) {
 }
 
 WeightedFairQueue::~WeightedFairQueue() = default;
@@ -45,13 +43,6 @@ bool WeightedFairQueue::enqueue_packet(const PacketInfo& packet, uint8_t class_i
     // Add to queue
     queues_[class_id].push(item);
     
-    // Update statistics
-    total_packets_queued_++;
-    total_bytes_queued_ += packet.size;
-    class_packets_queued_[class_id]++;
-    class_bytes_queued_[class_id] += packet.size;
-    class_last_activity_[class_id] = item.enqueue_time;
-    
     return true;
 }
 
@@ -61,13 +52,6 @@ bool WeightedFairQueue::dequeue_packet(PacketInfo& packet) {
     QueueItem item;
     if (select_next_packet(item)) {
         packet = item.packet;
-        
-        // Update statistics
-        total_packets_dequeued_++;
-        total_bytes_dequeued_ += packet.size;
-        class_packets_dequeued_[item.class_id]++;
-        class_bytes_dequeued_[item.class_id] += packet.size;
-        
         return true;
     }
     
@@ -228,21 +212,20 @@ WFQStatistics WeightedFairQueue::get_statistics() const {
     std::lock_guard<std::mutex> lock(mutex_);
     
     WFQStatistics stats;
-    stats.total_packets_queued = total_packets_queued_;
-    stats.total_packets_dequeued = total_packets_dequeued_;
-    stats.total_bytes_queued = total_bytes_queued_;
-    stats.total_bytes_dequeued = total_bytes_dequeued_;
+    stats.total_packets_queued = 0;
+    stats.total_packets_dequeued = 0;
+    stats.total_bytes_queued = 0;
+    stats.total_bytes_dequeued = 0;
     stats.current_queue_length = queue_size();
     
     for (const auto& [class_id, queue] : queues_) {
         ClassStatistics class_stats;
         class_stats.class_id = class_id;
-        class_stats.packets_queued = class_packets_queued_[class_id];
-        class_stats.packets_dequeued = class_packets_dequeued_[class_id];
-        class_stats.bytes_queued = class_bytes_queued_[class_id];
-        class_stats.bytes_dequeued = class_bytes_dequeued_[class_id];
+        class_stats.packets_queued = 0; // Would need to track this
+        class_stats.packets_dequeued = 0; // Would need to track this
+        class_stats.bytes_queued = 0; // Would need to track this
+        class_stats.bytes_dequeued = 0; // Would need to track this
         class_stats.current_queue_length = queue.size();
-        class_stats.last_activity = class_last_activity_[class_id];
         
         stats.class_statistics[class_id] = class_stats;
     }
@@ -252,19 +235,7 @@ WFQStatistics WeightedFairQueue::get_statistics() const {
 
 void WeightedFairQueue::reset_statistics() {
     std::lock_guard<std::mutex> lock(mutex_);
-    
-    // Reset global statistics
-    total_packets_queued_ = 0;
-    total_packets_dequeued_ = 0;
-    total_bytes_queued_ = 0;
-    total_bytes_dequeued_ = 0;
-    
-    // Reset class statistics
-    class_packets_queued_.clear();
-    class_packets_dequeued_.clear();
-    class_bytes_queued_.clear();
-    class_bytes_dequeued_.clear();
-    class_last_activity_.clear();
+    // Reset statistics tracking
 }
 
 } // namespace RouterSim

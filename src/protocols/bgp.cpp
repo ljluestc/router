@@ -159,37 +159,39 @@ bool BGPProtocol::withdraw_route(const std::string& prefix, uint8_t prefix_lengt
     return true;
 }
 
-void BGPProtocol::update_configuration(const ProtocolConfig& config) {
+bool BGPProtocol::update_config(const std::map<std::string, std::string>& config) {
     std::lock_guard<std::mutex> lock(config_mutex_);
-    config_.parameters = config.parameters;
-    config_.enabled = config.enabled;
-    config_.update_interval_ms = config.update_interval_ms;
+    config_.parameters = config;
+    return true;
 }
 
-ProtocolConfig BGPProtocol::get_configuration() const {
+std::map<std::string, std::string> BGPProtocol::get_config() const {
     std::lock_guard<std::mutex> lock(config_mutex_);
-    
-    ProtocolConfig config;
-    config.parameters = config_.parameters;
-    config.enabled = config_.enabled;
-    config.update_interval_ms = config_.update_interval_ms;
-    return config;
+    return config_.parameters;
 }
 
 void BGPProtocol::set_route_update_callback(RouteUpdateCallback callback) {
     route_update_callback_ = callback;
 }
 
-void BGPProtocol::set_neighbor_callback(NeighborCallback callback) {
+void BGPProtocol::set_neighbor_update_callback(NeighborCallback callback) {
     neighbor_callback_ = callback;
 }
 
-bool BGPProtocol::add_neighbor(const std::string& address, uint32_t as_number) {
+bool BGPProtocol::add_neighbor(const std::string& address, const std::map<std::string, std::string>& config) {
     std::lock_guard<std::mutex> lock(neighbors_mutex_);
     
     BGPNeighbor neighbor;
     neighbor.address = address;
-    neighbor.as_number = as_number;
+    
+    // Parse AS number from config
+    auto it = config.find("as_number");
+    if (it != config.end()) {
+        neighbor.as_number = std::stoul(it->second);
+    } else {
+        neighbor.as_number = 0;
+    }
+    
     neighbor.state = "Idle";
     neighbor.hold_time = config_.hold_time;
     neighbor.keepalive_interval = config_.keepalive_interval;
@@ -199,9 +201,9 @@ bool BGPProtocol::add_neighbor(const std::string& address, uint32_t as_number) {
 
     neighbors_[address] = neighbor;
     config_.neighbors.push_back(address);
-    config_.neighbor_as[address] = as_number;
+    config_.neighbor_as[address] = neighbor.as_number;
     
-    std::cout << "BGP: Added neighbor " << address << " with AS " << as_number << "\n";
+    std::cout << "BGP: Added neighbor " << address << " with AS " << neighbor.as_number << "\n";
     return true;
 }
 
@@ -269,6 +271,56 @@ std::vector<BGPProtocol::BGPRoute> BGPProtocol::get_bgp_routes() const {
         result.push_back(pair.second);
     }
     return result;
+}
+
+bool BGPProtocol::is_neighbor_established(const std::string& address) const {
+    std::lock_guard<std::mutex> lock(neighbors_mutex_);
+    
+    auto it = neighbors_.find(address);
+    if (it != neighbors_.end()) {
+        return it->second.state == "Established";
+    }
+    return false;
+}
+
+std::vector<router_sim::RouteInfo> BGPProtocol::get_routes() const {
+    std::lock_guard<std::mutex> lock(routes_mutex_);
+    
+    std::vector<router_sim::RouteInfo> result;
+    for (const auto& pair : advertised_routes_) {
+        router_sim::RouteInfo route;
+        route.destination = pair.second.prefix;
+        route.prefix_length = pair.second.prefix_length;
+        route.next_hop = pair.second.next_hop;
+        route.protocol = "bgp";
+        route.metric = pair.second.metric;
+        route.admin_distance = 20; // BGP admin distance
+        route.is_active = pair.second.is_valid;
+        route.last_updated = pair.second.last_updated;
+        result.push_back(route);
+    }
+    for (const auto& pair : learned_routes_) {
+        router_sim::RouteInfo route;
+        route.destination = pair.second.prefix;
+        route.prefix_length = pair.second.prefix_length;
+        route.next_hop = pair.second.next_hop;
+        route.protocol = "bgp";
+        route.metric = pair.second.metric;
+        route.admin_distance = 20; // BGP admin distance
+        route.is_active = pair.second.is_valid;
+        route.last_updated = pair.second.last_updated;
+        result.push_back(route);
+    }
+    return result;
+}
+
+bool BGPProtocol::advertise_route(const router_sim::RouteInfo& route) {
+    return advertise_route(route.destination, route.prefix_length, route.metric);
+}
+
+router_sim::ProtocolStatistics BGPProtocol::get_statistics() const {
+    std::lock_guard<std::mutex> lock(statistics_mutex_);
+    return statistics_;
 }
 
 bool BGPProtocol::apply_route_policy(const std::string& policy_name, BGPRoute& route) {

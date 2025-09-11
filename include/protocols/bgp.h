@@ -16,6 +16,15 @@ struct RouteInfo;
 struct NeighborInfo;
 struct ProtocolStatistics;
 
+// Protocol configuration structure
+struct ProtocolConfig {
+    std::map<std::string, std::string> parameters;
+    bool enabled;
+    uint32_t update_interval_ms;
+    
+    ProtocolConfig() : enabled(false), update_interval_ms(1000) {}
+};
+
 // BGP-specific structures
 struct BGPRoute {
     std::string prefix;
@@ -39,7 +48,6 @@ struct BGPNeighbor {
     uint64_t messages_received;
     std::string last_error;
     std::chrono::steady_clock::time_point last_hello;
-    std::chrono::steady_clock::time_point last_keepalive_sent;
     std::map<std::string, std::string> capabilities;
 };
 
@@ -66,27 +74,30 @@ public:
     ~BGPProtocol();
 
     // Core protocol management
-    bool initialize(const std::map<std::string, std::string>& config);
+    bool initialize(const ProtocolConfig& config);
     bool start();
     bool stop();
     bool is_running() const;
 
     // Route management
     bool advertise_route(const std::string& prefix, uint8_t prefix_length, uint32_t metric);
+    bool advertise_route(const router_sim::RouteInfo& route);
     bool withdraw_route(const std::string& prefix, uint8_t prefix_length);
     std::vector<std::string> get_advertised_routes() const;
     std::vector<std::string> get_learned_routes() const;
     std::vector<BGPRoute> get_bgp_routes() const;
+    std::vector<router_sim::RouteInfo> get_routes() const;
 
     // Neighbor management
     bool add_neighbor(const std::string& address, const std::map<std::string, std::string>& config);
     bool remove_neighbor(const std::string& address);
     std::vector<NeighborInfo> get_neighbors() const;
     BGPNeighbor get_neighbor(const std::string& address) const;
+    bool is_neighbor_established(const std::string& address) const;
 
     // Configuration
-    void update_configuration(const std::map<std::string, std::string>& config);
-    std::map<std::string, std::string> get_configuration() const;
+    bool update_config(const std::map<std::string, std::string>& config);
+    std::map<std::string, std::string> get_config() const;
 
     // Policy management
     bool set_export_policy(const std::string& policy_name, const std::string& policy_definition);
@@ -94,7 +105,7 @@ public:
 
     // Callbacks
     void set_route_update_callback(RouteUpdateCallback callback);
-    void set_neighbor_callback(NeighborCallback callback);
+    void set_neighbor_update_callback(NeighborCallback callback);
 
     // Statistics
     ProtocolStatistics get_statistics() const;
@@ -149,11 +160,10 @@ private:
     // Policy application
     bool apply_route_policy(const std::string& policy_name, BGPRoute& route);
     
-    // Additional helper methods
+    // Internal processing methods
     void process_incoming_messages();
     void send_keepalives();
     void process_route_updates();
-    void check_session_timeouts();
 };
 
 } // namespace router_sim
