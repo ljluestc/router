@@ -1,30 +1,16 @@
 #pragma once
 
+#include "common_types.h"
 #include <memory>
 #include <vector>
 #include <mutex>
 #include <chrono>
 #include <atomic>
 #include <limits>
+#include <functional>
+#include <map>
 
 namespace RouterSim {
-
-// Packet representation
-struct Packet {
-    uint64_t id;
-    uint32_t size;
-    uint32_t priority;
-    std::string source_ip;
-    std::string dest_ip;
-    uint16_t source_port;
-    uint16_t dest_port;
-    uint8_t protocol;
-    std::chrono::steady_clock::time_point timestamp;
-    
-    Packet() : id(0), size(0), priority(0), source_port(0), dest_port(0), protocol(0) {
-        timestamp = std::chrono::steady_clock::now();
-    }
-};
 
 // Token Bucket Implementation
 class TokenBucket {
@@ -34,7 +20,7 @@ public:
     
     // Core functionality
     bool consume(uint64_t tokens);
-    bool consumePacket(const Packet& packet);
+    bool consumePacket(const PacketInfo& packet);
     void refillTokens();
     
     // Configuration
@@ -86,8 +72,8 @@ public:
     ~WFQ();
     
     // Core functionality
-    bool enqueue(uint32_t queue_id, const Packet& packet);
-    bool dequeue(Packet& packet);
+    bool enqueue(uint32_t queue_id, const PacketInfo& packet);
+    bool dequeue(PacketInfo& packet);
     
     // Configuration
     void setQueueWeight(uint32_t queue_id, uint32_t weight);
@@ -154,8 +140,8 @@ public:
     
     // Core functionality
     bool initialize();
-    bool processPacket(const Packet& packet);
-    bool dequeuePacket(Packet& packet);
+    bool processPacket(const PacketInfo& packet);
+    bool dequeuePacket(PacketInfo& packet);
     
     // Configuration
     void setTokenBucketConfig(uint64_t capacity, uint64_t refill_rate, uint64_t burst_size);
@@ -189,6 +175,62 @@ private:
     uint64_t bytes_dropped_;
     
     mutable std::mutex mutex_;
+};
+
+// Traffic Shaping Manager - Manages multiple traffic shapers
+class TrafficShapingManager {
+public:
+    TrafficShapingManager();
+    ~TrafficShapingManager();
+    
+    // Core functionality
+    bool initialize();
+    bool start();
+    bool stop();
+    bool is_running() const;
+    
+    // Interface management
+    bool add_interface(const std::string& interface_name);
+    bool remove_interface(const std::string& interface_name);
+    bool configure_interface(const std::string& interface_name, 
+                            ShapingAlgorithm algorithm,
+                            const std::map<std::string, std::string>& config);
+    
+    // Packet processing
+    bool process_packet(const std::string& interface_name, const PacketInfo& packet);
+    
+    // Statistics
+    std::map<std::string, TrafficStats> get_interface_statistics() const;
+    TrafficStats get_global_statistics() const;
+    
+    // Configuration
+    bool load_config(const std::string& config_file);
+    bool save_config(const std::string& config_file) const;
+    
+    // Callbacks
+    void set_packet_callback(PacketCallback callback);
+    void set_drop_callback(DropCallback callback);
+
+private:
+    std::atomic<bool> running_;
+    std::atomic<bool> initialized_;
+    std::map<std::string, std::unique_ptr<TrafficShaper>> interfaces_;
+    mutable std::mutex interfaces_mutex_;
+    
+    // Callbacks
+    PacketCallback packet_callback_;
+    DropCallback drop_callback_;
+    
+    // Statistics
+    TrafficStats global_stats_;
+    mutable std::mutex stats_mutex_;
+    
+    // Internal methods
+    void processing_loop();
+    bool process_packet_internal(const PacketInfo& packet);
+    void update_statistics(const PacketInfo& packet, bool dropped);
+    void notify_packet_processed(const PacketInfo& packet);
+    void notify_packet_dropped(const PacketInfo& packet, const std::string& reason);
 };
 
 } // namespace RouterSim

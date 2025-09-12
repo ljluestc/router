@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../common_types.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -10,11 +11,6 @@
 #include <functional>
 
 namespace router_sim {
-
-// Forward declarations
-struct RouteInfo;
-struct NeighborInfo;
-struct ProtocolStatistics;
 
 // BGP-specific structures
 struct BGPRoute {
