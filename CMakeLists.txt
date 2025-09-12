@@ -15,8 +15,15 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 find_package(GTest REQUIRED)
 
-# FRR dependencies
-pkg_check_modules(FRR REQUIRED frr)
+# FRR dependencies (optional)
+pkg_check_modules(FRR frr)
+if(FRR_FOUND)
+    message(STATUS "FRR found - enabling FRR integration")
+    add_definitions(-DHAVE_FRR)
+else()
+    message(WARNING "FRR not found - building without FRR integration")
+    message(STATUS "To enable FRR integration, install libfrr-dev and frr-dev packages")
+endif()
 
 # Network libraries
 find_library(PCAP_LIB pcap)
@@ -50,12 +57,17 @@ add_executable(router_sim ${ROUTER_SOURCES})
 
 # Link libraries
 target_link_libraries(router_sim
-    ${FRR_LIBRARIES}
     ${PCAP_LIB}
     ${NETLINK_LIB}
     Threads::Threads
     yaml-cpp
 )
+
+# Add FRR libraries if available
+if(FRR_FOUND)
+    target_link_libraries(router_sim ${FRR_LIBRARIES})
+    target_include_directories(router_sim PRIVATE ${FRR_INCLUDE_DIRS})
+endif()
 
 # Test executable
 add_executable(router_tests

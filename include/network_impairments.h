@@ -1,65 +1,90 @@
 #pragma once
 
 #include <string>
-#include <map>
-#include <memory>
+#include <vector>
+#include <mutex>
+#include <atomic>
 
 namespace RouterSim {
 
-// Network impairment types
-enum class ImpairmentType {
-    DELAY,
-    LOSS,
-    JITTER,
-    DUPLICATE,
-    REORDER,
-    CORRUPTION
-};
-
-// Impairment configuration
+// Network Impairment Configuration
 struct ImpairmentConfig {
-    ImpairmentType type;
-    std::string interface;
-    std::map<std::string, std::string> parameters;
-    bool enabled;
-    
-    ImpairmentConfig() : type(ImpairmentType::DELAY), enabled(false) {}
+    uint32_t delay_ms = 0;           // Base delay in milliseconds
+    uint32_t jitter_ms = 0;          // Jitter in milliseconds
+    double loss_percentage = 0.0;    // Packet loss percentage (0-100)
+    double duplication_percentage = 0.0; // Packet duplication percentage (0-100)
+    double reorder_percentage = 0.0; // Packet reordering percentage (0-100)
+    uint32_t reorder_gap = 0;        // Reordering gap
+    double corruption_percentage = 0.0; // Packet corruption percentage (0-100)
+    uint64_t bandwidth_bps = 0;      // Bandwidth limit in bits per second
 };
 
-// Network impairments manager
-class NetemImpairments {
+// Network Impairments Class
+class NetworkImpairments {
 public:
-    NetemImpairments();
-    ~NetemImpairments();
+    NetworkImpairments();
+    ~NetworkImpairments();
     
     // Core functionality
     bool initialize();
-    bool add_impairment(const ImpairmentConfig& config);
-    bool remove_impairment(const std::string& interface);
-    bool update_impairment(const ImpairmentConfig& config);
+    void cleanup();
     
-    // Interface management
-    bool enable_impairments(const std::string& interface);
-    bool disable_impairments(const std::string& interface);
-    bool are_impairments_enabled(const std::string& interface) const;
+    // Individual impairment methods
+    bool applyDelay(const std::string& interface, uint32_t delay_ms, uint32_t jitter_ms = 0);
+    bool applyLoss(const std::string& interface, double loss_percentage);
+    bool applyBandwidth(const std::string& interface, uint64_t bandwidth_bps);
+    bool applyDuplication(const std::string& interface, double duplication_percentage);
+    bool applyReordering(const std::string& interface, double reorder_percentage, uint32_t gap = 0);
+    bool applyCorruption(const std::string& interface, double corruption_percentage);
+    
+    // Complex impairment (combines multiple effects)
+    bool applyComplexImpairment(const std::string& interface, const ImpairmentConfig& config);
+    
+    // Management
+    bool clearImpairments(const std::string& interface);
+    bool clearAllImpairments();
+    
+    // Information
+    std::vector<std::string> getNetworkInterfaces() const;
+    std::string getInterfaceStatus(const std::string& interface) const;
     
     // Statistics
-    struct Statistics {
-        uint64_t packets_processed;
-        uint64_t packets_delayed;
-        uint64_t packets_dropped;
-        uint64_t packets_duplicated;
-        uint64_t packets_reordered;
-        uint64_t packets_corrupted;
+    struct InterfaceStatistics {
+        std::string interface_name;
+        std::string status;
     };
     
-    Statistics get_statistics() const;
-    void reset_statistics();
+    struct Statistics {
+        bool enabled;
+        uint64_t total_packets_processed;
+        uint64_t total_bytes_processed;
+        uint64_t packets_dropped;
+        uint64_t bytes_dropped;
+        std::vector<InterfaceStatistics> interface_stats;
+    };
+    
+    Statistics getStatistics() const;
+    void reset();
+    
+    // Utility methods
+    bool isEnabled() const { return enabled_; }
 
 private:
-    bool initialized_;
-    std::map<std::string, ImpairmentConfig> impairments_;
-    Statistics statistics_;
+    // Internal methods
+    bool checkTCAvailability() const;
+    bool checkNetemModule() const;
+    std::string executeCommand(const std::string& command) const;
+    
+    // State
+    std::atomic<bool> enabled_;
+    
+    // Statistics
+    uint64_t total_packets_processed_;
+    uint64_t total_bytes_processed_;
+    uint64_t packets_dropped_;
+    uint64_t bytes_dropped_;
+    
+    mutable std::mutex mutex_;
 };
 
 } // namespace RouterSim
